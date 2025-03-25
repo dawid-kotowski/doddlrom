@@ -24,7 +24,7 @@ stationary_problem = StationaryProblem(
 # Define the instationary problem
 problem = InstationaryProblem(
     T=1.,
-    initial_data=ExpressionFunction('20 * (x[0] < 1e-10)', 2),
+    initial_data=ExpressionFunction('(-(x[1] - 0.5)**2 + 0.25) * (x[0] < 1e-10)', 2),
     stationary_part=stationary_problem,
     name='advection_problem'
 )
@@ -36,7 +36,7 @@ fom, fom_data = discretize_instationary_cg(problem, diameter=0.1, nt=100)
 parameter_space = fom.parameters.space({'nu': (0, 10), 'mu': (0.2, np.pi-0.2)})
 
 # Generate training and validation sets
-training_set = parameter_space.sample_uniformly(2)
+training_set = parameter_space.sample_uniformly(10)
 solution_set = fom.solution_space.empty()
 
 # Create an empty list to hold the training data
@@ -45,8 +45,14 @@ training_data = []
 # Solve the full-order model for each parameter in the training set
 for mu_nu in training_set:
     solution = fom.solve(mu_nu)
-    fom.visualize(solution)
+    #fom.visualize(solution)
     solution_set.append(solution)
     solution_flat = solution.to_numpy().flatten()
     training_data.append((mu_nu['mu'], mu_nu['nu'], solution_flat))
 
+# Convert the training data list to a structured numpy array
+dtype = [('mu', 'O'), ('nu', 'O'), ('solution', 'O')]
+training_data_array = np.array(training_data, dtype=dtype)
+
+# Save the numpy array to a file
+np.save('training_data.npy', training_data_array)
