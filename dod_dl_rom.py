@@ -7,6 +7,7 @@ from torch.utils.data import Dataset, DataLoader
 
 # Some Constants
 time_end = 1.
+nt = 100
 
 # Initialize linear weights
 def initialize_weights(module):
@@ -47,18 +48,23 @@ class Alpha(nn.Module):
         self.fc = nn.Linear(physical_dim + 1, 1, bias=True)
 
     def forward(self, nu, t):
-        input_tensor = torch.cat((nu, t.unsqueeze(-1)), dim=-1)
+        # Convert t to a tensor if it's not already one
+        if not torch.is_tensor(t):
+            t = torch.tensor(t, dtype=nu.dtype, device=nu.device)
+        # Ensure t has a proper shape for concatenation
+        t = t.unsqueeze(-1)  # Now shape becomes (1,) if t was a scalar
+        input_tensor = torch.cat((nu, t.expand(nu.shape[0], 1)), dim=-1)
         out = self.fc(input_tensor)
         return out
 
 
 # Define Root Module with time-continuity
 class RootModule(nn.Module):
-    def __init__(self, N_h, L, geometric_dim, rank, physical_dim, with_bias=True, param_dtype=torch.float32):
+    def __init__(self, N_h, L, seed_dim, rank, physical_dim, with_bias=True, param_dtype=torch.float32):
         super().__init__()
         self.N_h = N_h
         self.L = L
-        self.width = geometric_dim
+        self.width = seed_dim
         self.rank = rank
         self.with_bias = with_bias
         self.param_dtype = param_dtype
@@ -99,26 +105,26 @@ class RootModule(nn.Module):
                 self.b_init(self.bs[i])
 
     def forward(self, mu, nu, t):
+        # Use a temporary variable x for iterative updates.
+        x = mu  # x should have shape (B, width) where width == N_h
         for i in range(self.L):
-            alpha_val = self.alphas[i](nu, t).unsqueeze(1)  # now shape (B, 1, 1)
-            A_exp = self.As[i].unsqueeze(0)  # now shape (1, N_h, rank)
-            AB = (A_exp * alpha_val) @ self.Bs[i]  # result shape: (B, N_h, width)
-            W = self.Ws[i] + AB
-            mu = mu.unsqueeze(2)  # shape: (B, width, 1)
-            mu = torch.bmm(W, mu)  # shape: (B, N_h, 1)
-            mu = mu.squeeze(2)  # shape: (B, N_h)
-
+            alpha_val = self.alphas[i](nu, t).unsqueeze(1)  # (B, 1, 1)
+            A_exp = self.As[i].unsqueeze(0)  # (1, N_h, rank)
+            AB = (A_exp * alpha_val) @ self.Bs[i]  # (B, N_h, width)
+            W = self.Ws[i] + AB  # (B, N_h, width)
+            x_unsq = x.unsqueeze(2)  # (B, width, 1) -> here width should equal N_h
+            x = torch.bmm(W, x_unsq).squeeze(2)  # (B, N_h, 1) -> (B, N_h)
             if self.with_bias:
-                mu += self.bs[i].unsqueeze(0).expand_as(mu)
+                x = x + self.bs[i].unsqueeze(0).expand_as(x)
+        return x
 
-        return mu
 
 # Define Complete DOD DL Model (returns a tensor of size [N_h, n])
 class DOD_DL(nn.Module):
     def __init__(self, N_h, L, seed_dim, geometric_dim, rank, physical_dim, n):
         super(DOD_DL, self).__init__()
-        self.seed_module = SeedModule(1, seed_dim)
-        self.root_modules = nn.ModuleList([RootModule(N_h, L, geometric_dim,
+        self.seed_module = SeedModule(geometric_dim, seed_dim)
+        self.root_modules = nn.ModuleList([RootModule(N_h, L, seed_dim,
                                                       rank, physical_dim) for _ in range(n)])
 
     def forward(self, mu, nu, t):
@@ -131,7 +137,6 @@ class DOD_DL(nn.Module):
 class DOD_DL_Trainer:
     def __init__(self, nn_model, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
-        self.T = time_end
         self.learning_rate = learning_rate
         self.restarts = restart
         self.epochs = epochs
@@ -149,8 +154,8 @@ class DOD_DL_Trainer:
         batch_size = mu_batch.size(0)  # Get the batch size (can be problem, if set is non-divisible)
         temp_loss = 0.
 
-        for i in range(101):
-            output = self.model(mu_batch, nu_batch, i/self.T)
+        for i in range(nt + 1):
+            output = self.model(mu_batch, nu_batch, i/(nt + 1))
 
             # Perform batch matrix multiplications
             v_u = torch.bmm(output, solution_batch[:, i, :].unsqueeze(2))
@@ -199,3 +204,140 @@ class DOD_DL_Trainer:
         self.model.load_state_dict(best_model)
         return best_loss
 
+# Define Phi_1 module for allocation
+class Phi1Module(nn.Module):
+    def __init__(self, geometric_dim, m_0, n_0, layer_sizes, leaky_relu_slope=0.1):
+        super(Phi1Module, self).__init__()
+        self.m = m_0
+        self.n = n_0
+        if layer_sizes is None:
+            layer_sizes = [1]
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(geometric_dim, layer_sizes[0]))
+        for i in range(len(layer_sizes) - 1):
+            self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+            if i < len(layer_sizes) - 1:
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+        self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n_0 * m_0))
+
+    def forward(self, x):
+        for layer_forward in self.layers:
+            x = layer_forward(x)
+        x = x.view(-1, self.m, self.n)
+        return x
+
+# Define Phi_2 module for allocation
+class Phi2Module(nn.Module):
+    def __init__(self, physical_dim, m_0, n_0, layer_sizes, leaky_relu_slope=0.1):
+        super(Phi2Module, self).__init__()
+        self.m = m_0
+        self.n = n_0
+        if layer_sizes is None:
+            layer_sizes = [1]
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(physical_dim, layer_sizes[0]))
+        for i in range(len(layer_sizes) - 1):
+            self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+            if i < len(layer_sizes) - 1:
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+        self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n_0 * m_0))
+
+    def forward(self, x):
+        for layer_forward in self.layers:
+            x = layer_forward(x)
+        x = x.view(-1, self.m, self.n)
+        return x
+
+# Define Complete parameter-to-DOD-coefficients Model (returns a vector of size [n])
+class Coeff_DOD_DL(nn.Module):
+    def __init__(self, geometric_dim, physical_dim, m_0, n_0, layer_sizes=None):
+        super(Coeff_DOD_DL, self).__init__()
+        self.phi_1_module = Phi1Module(geometric_dim, m_0, n_0, layer_sizes)
+        self.phi_2_module = Phi2Module(physical_dim, m_0, n_0, layer_sizes)
+
+    def forward(self, mu, nu):
+        phi_1 = self.phi_1_module(mu)
+        phi_2 = self.phi_2_module(nu)
+        phi = phi_1 * phi_2
+        phi_sum = torch.sum(phi, dim=1).squeeze()
+        return phi_sum
+
+
+# Define the Trainer
+class Coeff_DOD_DL_Trainer:
+    def __init__(self, dod_model, coeffnn_model, train_valid_set, epochs=1, restarts=1, learning_rate=1e-3,
+                 batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
+        self.learning_rate = learning_rate
+        self.epochs = epochs
+        self.restarts = restarts
+        self.batch_size = batch_size
+        self.dod = dod_model.to(device)
+        self.model = coeffnn_model.to(device)
+        self.device = device
+
+        G = torch.tensor(np.load('gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+
+        train_data = train_valid_set('train')
+        valid_data = train_valid_set('valid')
+
+        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
+
+        # Pre-expand G for the batch size
+        self.G_expanded = G.unsqueeze(0).expand(self.batch_size, -1, -1)
+
+    def loss_function(self, mu_batch, nu_batch, solution_batch):
+        batch_size = mu_batch.size(0)  # Get the batch size (can be problem, if set is non-divisible)
+        temp_error = 0.
+
+        for i in range(nt + 1):
+            output = self.model(mu_batch, nu_batch)
+            dod_output = self.dod(mu_batch, nu_batch, i/(nt + 1))
+
+            # Reshape solution_batch to a 3D tensor with shape [batch_size, N_h, 1]
+            solution_batch = solution_batch[:, i, :].unsqueeze(2)
+
+            # Perform batch matrix multiplications
+            u_proj = torch.bmm(dod_output, torch.bmm(self.G_expanded, solution_batch)).squeeze(2)
+
+            error = output - u_proj
+            temp_error += torch.sum(torch.norm(error, dim=1) ** 2)
+        loss = temp_error / batch_size
+
+        return loss
+
+    def train(self):
+        best_model = None
+        best_loss = float('inf')
+
+        for _ in range(self.restarts):
+            self.model.apply(initialize_weights)
+            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+            for epoch in range(self.epochs):
+                self.model.train()
+                total_loss = 0
+                for mu_batch, nu_batch, solution_batch in self.train_loader:
+                    optimizer.zero_grad()
+                    loss = self.loss_function(mu_batch, nu_batch, solution_batch)
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += loss.item()
+
+                print(f"At Epoch {epoch} the loss is {total_loss / len(self.train_loader)}")
+
+            self.model.eval()
+            with torch.no_grad():
+                val_loss = 0
+                for mu_batch, nu_batch, solution_batch in self.valid_loader:
+                    val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
+                val_loss /= len(self.valid_loader)
+
+            if val_loss < best_loss:
+                best_loss = val_loss
+                best_model = self.model.state_dict()
+
+            print(f'Restart Coefficient Finder. Gen Count at {_ + 1} with current best loss {best_loss}')
+
+        # Load the best model
+        self.model.load_state_dict(best_model)
+        return best_loss
