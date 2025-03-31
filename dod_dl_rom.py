@@ -275,7 +275,7 @@ class Coeff_DOD_DL_Trainer:
         self.model = coeffnn_model.to(device)
         self.device = device
 
-        G = torch.tensor(np.load('gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.G = torch.tensor(np.load('gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
@@ -283,26 +283,30 @@ class Coeff_DOD_DL_Trainer:
         self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
         self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
 
-        # Pre-expand G for the batch size
-        self.G_expanded = G.unsqueeze(0).expand(self.batch_size, -1, -1)
-
     def loss_function(self, mu_batch, nu_batch, solution_batch):
-        batch_size = mu_batch.size(0)  # Get the batch size (can be problem, if set is non-divisible)
-        temp_error = 0.
+        batch_size = mu_batch.size(0)
+        G_expanded = self.G.unsqueeze(0).expand(batch_size, -1, -1)
 
+        temp_error = 0.0
         for i in range(nt + 1):
+            # Get the coefficient model output; expected shape: (B, n)
             output = self.model(mu_batch, nu_batch)
-            dod_output = self.dod(mu_batch, nu_batch, i/(nt + 1))
+            # Get the DOD model output; expected shape: (B, n, N_h)
+            dod_output = self.dod(mu_batch, nu_batch, i / (nt + 1))
 
-            # Reshape solution_batch to a 3D tensor with shape [batch_size, N_h, 1]
-            solution_batch = solution_batch[:, i, :].unsqueeze(2)
+            # Extract the solution slice at time step i; expected shape: (B, N_h, 1)
+            solution_slice = solution_batch[:, i, :].unsqueeze(2)
 
-            # Perform batch matrix multiplications
-            u_proj = torch.bmm(dod_output, torch.bmm(self.G_expanded, solution_batch)).squeeze(2)
+            # Compute u_proj:
+            #   First: torch.bmm(G_expanded, solution_slice) has shape (B, N_h, 1)
+            #   Then: torch.bmm(dod_output, ...) has shape (B, n, 1)
+            u_proj = torch.bmm(dod_output, torch.bmm(G_expanded, solution_slice)).squeeze(2)  # now (B, n)
 
-            error = output - u_proj
+            error = output - u_proj  # should be (B, n)
             temp_error += torch.sum(torch.norm(error, dim=1) ** 2)
+
         loss = temp_error / batch_size
+        return loss
 
         return loss
 
