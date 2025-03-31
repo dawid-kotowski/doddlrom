@@ -37,7 +37,6 @@ parameter_space = fom.parameters.space({'nu': (0, 10), 'mu': (0.2, np.pi-0.2)})
 
 # Generate training and validation sets
 training_set = parameter_space.sample_uniformly(10)
-solution_set = fom.solution_space.empty()
 
 # Create an empty list to hold the training data
 training_data = []
@@ -46,8 +45,7 @@ training_data = []
 for mu_nu in training_set:
     solution = fom.solve(mu_nu)
     #fom.visualize(solution)
-    solution_set.append(solution)
-    solution_flat = solution.to_numpy().flatten()
+    solution_flat = solution.to_numpy()
     training_data.append((mu_nu['mu'], mu_nu['nu'], solution_flat))
 
 # Convert the training data list to a structured numpy array
@@ -56,3 +54,12 @@ training_data_array = np.array(training_data, dtype=dtype)
 
 # Save the numpy array to a file
 np.save('training_data.npy', training_data_array)
+
+
+# Calculate the Gram matrix for the fom
+G = fom.h1_0_semi_product.matrix.toarray()
+
+# Save G to file
+gram = np.array(G, dtype=np.float32)
+np.save('gram_matrix.npy', gram)
+
