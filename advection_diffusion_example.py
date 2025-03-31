@@ -25,19 +25,20 @@ class FetchTrainAndValidSet:
 
 
 # Usage example
-N_h = 221
-rank = 10
+N_h = 41
+rank = 5
+L = 2
 n = 4
 m = 5
 parameter_mu_dim = 1
 parameter_nu_dim = 1
-preprocess_dim = 221
+preprocess_dim = 41
 
 # Fetch Training and Validation set
 train_valid_data = FetchTrainAndValidSet(0.8)
 
 # Initialize the DOD model
-DOD_DL_model = DOD_DL(N_h, 5, preprocess_dim, parameter_mu_dim, rank, parameter_nu_dim, n)
+DOD_DL_model = DOD_DL(N_h, L, preprocess_dim, parameter_mu_dim, rank, parameter_nu_dim, n)
 
 # Initialize the DOD trainer
 DOD_DL_trainer = DOD_DL_Trainer(DOD_DL_model, train_valid_data, 2, 2, 1e-3, 32)

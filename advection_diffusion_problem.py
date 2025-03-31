@@ -30,7 +30,7 @@ problem = InstationaryProblem(
 )
 
 # Discretize the problem
-fom, fom_data = discretize_instationary_cg(problem, diameter=0.1, nt=100)
+fom, fom_data = discretize_instationary_cg(problem, diameter=0.25, nt=100)
 
 # Define the parameter space with ranges for 'mu' and 'nu'
 parameter_space = fom.parameters.space({'nu': (0, 10), 'mu': (0.2, np.pi-0.2)})
