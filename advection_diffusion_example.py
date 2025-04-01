@@ -41,7 +41,7 @@ train_valid_data = FetchTrainAndValidSet(0.8)
 DOD_DL_model = DOD_DL(N_h, L, preprocess_dim, parameter_mu_dim, rank, parameter_nu_dim, n)
 
 # Initialize the DOD trainer
-DOD_DL_trainer = DOD_DL_Trainer(DOD_DL_model, train_valid_data, 2, 2, 1e-3, 32)
+DOD_DL_trainer = DOD_DL_Trainer(DOD_DL_model, train_valid_data, 50, 5, 1e-3, 32)
 
 # Train the DOD model
 best_loss = DOD_DL_trainer.train()
@@ -52,7 +52,7 @@ Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, [20])
 
 # Initialize the Coefficient Finding trainer
 Coeff_trainer = Coeff_DOD_DL_Trainer(DOD_DL_model, Coeff_model,
-                                   train_valid_data, 5, 1, 1e-3, 32)
+                                   train_valid_data, 50, 5, 1e-3, 32)
 
 # Train the Coefficient model
 best_loss2 = Coeff_trainer.train()
