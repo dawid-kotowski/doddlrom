@@ -7,7 +7,7 @@ from torch.utils.data import Dataset, DataLoader
 
 # Some Constants
 time_end = 1.
-nt = 100
+nt = 10
 
 # Initialize linear weights
 def initialize_weights(module):
@@ -306,8 +306,6 @@ class Coeff_DOD_DL_Trainer:
             temp_error += torch.sum(torch.norm(error, dim=1) ** 2)
 
         loss = temp_error / batch_size
-        return loss
-
         return loss
 
     def train(self):

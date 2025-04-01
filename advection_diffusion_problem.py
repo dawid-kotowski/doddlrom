@@ -30,13 +30,13 @@ problem = InstationaryProblem(
 )
 
 # Discretize the problem
-fom, fom_data = discretize_instationary_cg(problem, diameter=0.25, nt=100)
+fom, fom_data = discretize_instationary_cg(problem, diameter=0.15, nt=10)
 
 # Define the parameter space with ranges for 'mu' and 'nu'
 parameter_space = fom.parameters.space({'nu': (0, 10), 'mu': (0.2, np.pi-0.2)})
 
 # Generate training and validation sets
-training_set = parameter_space.sample_uniformly(10)
+training_set = parameter_space.sample_uniformly(30)
 
 # Create an empty list to hold the training data
 training_data = []
@@ -44,9 +44,9 @@ training_data = []
 # Solve the full-order model for each parameter in the training set
 for mu_nu in training_set:
     solution = fom.solve(mu_nu)
-    #fom.visualize(solution)
     solution_flat = solution.to_numpy()
     training_data.append((mu_nu['mu'], mu_nu['nu'], solution_flat))
+fom.visualize(solution)
 
 # Convert the training data list to a structured numpy array
 dtype = [('mu', 'O'), ('nu', 'O'), ('solution', 'O')]

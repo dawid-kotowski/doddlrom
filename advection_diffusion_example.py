@@ -25,14 +25,14 @@ class FetchTrainAndValidSet:
 
 
 # Usage example
-N_h = 41
-rank = 5
-L = 2
+N_h = 113
+rank = 10
+L = 1
 n = 4
-m = 5
+m = 4
 parameter_mu_dim = 1
 parameter_nu_dim = 1
-preprocess_dim = 41
+preprocess_dim = 113
 
 # Fetch Training and Validation set
 train_valid_data = FetchTrainAndValidSet(0.8)
@@ -41,18 +41,18 @@ train_valid_data = FetchTrainAndValidSet(0.8)
 DOD_DL_model = DOD_DL(N_h, L, preprocess_dim, parameter_mu_dim, rank, parameter_nu_dim, n)
 
 # Initialize the DOD trainer
-DOD_DL_trainer = DOD_DL_Trainer(DOD_DL_model, train_valid_data, 50, 5, 1e-3, 32)
+DOD_DL_trainer = DOD_DL_Trainer(DOD_DL_model, train_valid_data, 50, 2, 1e-3, 128)
 
 # Train the DOD model
 best_loss = DOD_DL_trainer.train()
 print(f"Best validation loss: {best_loss}")
 
 # Initialize the Coefficient Finding model
-Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, [20])
+Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, [10, 5])
 
 # Initialize the Coefficient Finding trainer
 Coeff_trainer = Coeff_DOD_DL_Trainer(DOD_DL_model, Coeff_model,
-                                   train_valid_data, 50, 5, 1e-3, 32)
+                                   train_valid_data, 50, 2, 1e-3, 128)
 
 # Train the Coefficient model
 best_loss2 = Coeff_trainer.train()

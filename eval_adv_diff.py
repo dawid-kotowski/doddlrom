@@ -4,19 +4,19 @@ import numpy as np
 import torch
 
 # Usage example
-N_h = 41
-rank = 5
-L = 2
+N_h = 113
+rank = 10
+L = 1
 n = 4
-m = 5
+m = 4
 parameter_mu_dim = 1
 parameter_nu_dim = 1
-preprocess_dim = 41
-nt = 100
+preprocess_dim = 113
+nt = 10
 
 # Initialize the models
 DOD_DL_model = DOD_DL(N_h, L, preprocess_dim, parameter_mu_dim, rank, parameter_nu_dim, n)
-Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, [20])
+Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, [10, 5])
 
 # Load state_dicts
 DOD_DL_model.load_state_dict(torch.load('DOD_Module.pth'))
@@ -26,7 +26,7 @@ Coeff_model.eval()
 
 # Get some Validation Data
 loaded_data = np.load('training_data.npy', allow_pickle=True)
-np.random.shuffle(loaded_data)
+# np.random.shuffle(loaded_data) # somehow shuffles all arrays ?
 training_data = loaded_data[:4]
 
 # Define Full Order Model again
@@ -52,7 +52,7 @@ problem = InstationaryProblem(
     stationary_part=stationary_problem,
     name='advection_problem'
 )
-fom, fom_data = discretize_instationary_cg(problem, diameter=0.25, nt=100)
+fom, fom_data = discretize_instationary_cg(problem, diameter=0.15, nt=nt)
 
 # Set up solutions
 true_solution = fom.solution_space.empty()
