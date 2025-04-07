@@ -5,6 +5,7 @@ import torch
 
 # Usage example
 N_h = 113
+N_A = 10
 rank = 10
 L = 1
 n = 4
@@ -15,7 +16,7 @@ preprocess_dim = 113
 nt = 10
 
 # Initialize the models
-DOD_DL_model = DOD_DL(N_h, L, preprocess_dim, parameter_mu_dim, rank, parameter_nu_dim, n)
+DOD_DL_model = DOD_DL(1, parameter_mu_dim, [20, 10], n, N_A)
 Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, [10, 5])
 
 # Load state_dicts
@@ -66,14 +67,17 @@ for entry in training_data:
     u_i = fom.solution_space.from_numpy(entry['solution'])
     true_solution.append(u_i)
 
+    # Load ambient
+    A = torch.tensor(np.load('ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+
     # DOD solution
     dod_solution = []
     for j in range(nt + 1):
         time = torch.tensor(j / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
-        time = time.unsqueeze(0)
-        dod_dl_output = DOD_DL_model(mu_i, nu_i, time).squeeze(0).T
-        coeff_output = Coeff_model(mu_i, nu_i)
-        u_i_dod = torch.matmul(dod_dl_output, coeff_output)
+        time = time.unsqueeze(0).unsqueeze(1)
+        dod_dl_output = DOD_DL_model(mu_i, time).squeeze(0).T
+        coeff_output = Coeff_model(mu_i, nu_i, time)
+        u_i_dod = torch.matmul(torch.matmul(A, dod_dl_output), coeff_output)
         dod_solution.append(u_i_dod)  # append each [N_h] vector
     # Stack along the time axis to get shape [nt+1, N_h]
     u_i_dod = torch.stack(dod_solution, dim=0)

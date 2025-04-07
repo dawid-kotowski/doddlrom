@@ -1,5 +1,5 @@
 import torch
-from dod_dl_rom import DOD_DL_Trainer, DOD_DL, Coeff_DOD_DL_Trainer, Coeff_DOD_DL
+from dod_dl_rom import DOD_DL, DOD_DL_Trainer, Coeff_DOD_DL_Trainer, Coeff_DOD_DL
 import numpy as np
 
 
@@ -26,6 +26,7 @@ class FetchTrainAndValidSet:
 
 # Usage example
 N_h = 113
+N_A = 10
 rank = 10
 L = 1
 n = 4
@@ -38,10 +39,10 @@ preprocess_dim = 113
 train_valid_data = FetchTrainAndValidSet(0.8)
 
 # Initialize the DOD model
-DOD_DL_model = DOD_DL(N_h, L, preprocess_dim, parameter_mu_dim, rank, parameter_nu_dim, n)
+DOD_DL_model = DOD_DL(1, parameter_mu_dim, [20, 10], n, N_A)
 
 # Initialize the DOD trainer
-DOD_DL_trainer = DOD_DL_Trainer(DOD_DL_model, train_valid_data, 50, 2, 1e-3, 128)
+DOD_DL_trainer = DOD_DL_Trainer(DOD_DL_model, train_valid_data, N_A, 100, 10, 1e-3, 128)
 
 # Train the DOD model
 best_loss = DOD_DL_trainer.train()
@@ -52,7 +53,7 @@ Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, [10, 5])
 
 # Initialize the Coefficient Finding trainer
 Coeff_trainer = Coeff_DOD_DL_Trainer(DOD_DL_model, Coeff_model,
-                                   train_valid_data, 50, 2, 1e-3, 128)
+                                   train_valid_data, 100, 10, 1e-3, 128)
 
 # Train the Coefficient model
 best_loss2 = Coeff_trainer.train()
