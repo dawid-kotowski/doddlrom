@@ -152,7 +152,7 @@ class DOD_DL_Trainer:
                     optimizer.step()
                     total_loss += loss.item()
 
-                print(f"At Epoch {epoch} the loss is {total_loss / len(self.train_loader)}")
+                print(f"Model: DOD_DL, Restart: {_ + 1}, Epoch: {epoch} Loss: {total_loss / len(self.train_loader)}")
 
             self.model.eval()
             with torch.no_grad():
@@ -165,7 +165,7 @@ class DOD_DL_Trainer:
                 best_loss = val_loss
                 best_model = self.model.state_dict()
 
-            print(f'Restart DOD_DL_. Gen Count at {_ + 1} with current best loss {best_loss}')
+            print(f'Restart DOD_DL. Gen Count at {_ + 1} with current best loss {best_loss}')
 
         # Load the best model
         self.model.load_state_dict(best_model)
@@ -301,7 +301,7 @@ class Coeff_DOD_DL_Trainer:
                     optimizer.step()
                     total_loss += loss.item()
 
-                print(f"At Epoch {epoch} the loss is {total_loss / len(self.train_loader)}")
+                print(f"Model: Coeff_DL, Restart: {_ + 1}, Epoch: {epoch} Loss: {total_loss / len(self.train_loader)}")
 
             self.model.eval()
             with torch.no_grad():

@@ -33,13 +33,17 @@ n = 4
 m = 4
 parameter_mu_dim = 1
 parameter_nu_dim = 1
-preprocess_dim = 113
+preprocess_dim = 2
+dod_structure = [20, 10]
+phi_structure = [16, 8]
+nt = 10
+diameter = 0.15
 
 # Fetch Training and Validation set
 train_valid_data = FetchTrainAndValidSet(0.8)
 
 # Initialize the DOD model
-DOD_DL_model = DOD_DL(1, parameter_mu_dim, [20, 10], n, N_A)
+DOD_DL_model = DOD_DL(1, parameter_mu_dim, dod_structure, n, N_A)
 
 # Initialize the DOD trainer
 DOD_DL_trainer = DOD_DL_Trainer(DOD_DL_model, train_valid_data, N_A, 100, 10, 1e-3, 128)
@@ -49,7 +53,7 @@ best_loss = DOD_DL_trainer.train()
 print(f"Best validation loss: {best_loss}")
 
 # Initialize the Coefficient Finding model
-Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, [10, 5])
+Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_structure)
 
 # Initialize the Coefficient Finding trainer
 Coeff_trainer = Coeff_DOD_DL_Trainer(DOD_DL_model, Coeff_model,
