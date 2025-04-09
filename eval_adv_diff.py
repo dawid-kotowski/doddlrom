@@ -12,12 +12,15 @@ n = 4
 m = 4
 parameter_mu_dim = 1
 parameter_nu_dim = 1
-preprocess_dim = 113
+preprocess_dim = 2
+dod_structure = [20, 10]
+phi_structure = [16, 8]
 nt = 10
+diameter = 0.15
 
 # Initialize the models
-DOD_DL_model = DOD_DL(1, parameter_mu_dim, [20, 10], n, N_A)
-Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, [10, 5])
+DOD_DL_model = DOD_DL(1, parameter_mu_dim, dod_structure, n, N_A)
+Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_structure)
 
 # Load state_dicts
 DOD_DL_model.load_state_dict(torch.load('DOD_Module.pth'))
@@ -27,7 +30,7 @@ Coeff_model.eval()
 
 # Get some Validation Data
 loaded_data = np.load('training_data.npy', allow_pickle=True)
-# np.random.shuffle(loaded_data) # somehow shuffles all arrays ?
+np.random.shuffle(loaded_data) 
 training_data = loaded_data[:4]
 
 # Define Full Order Model again
@@ -53,10 +56,12 @@ problem = InstationaryProblem(
     stationary_part=stationary_problem,
     name='advection_problem'
 )
-fom, fom_data = discretize_instationary_cg(problem, diameter=0.15, nt=nt)
+fom, fom_data = discretize_instationary_cg(problem, diameter=diameter, nt=nt)
 
 # Set up solutions
 true_solution = fom.solution_space.empty()
+A = torch.tensor(np.load('ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+
 for entry in training_data:
     mu_i = torch.tensor(entry['mu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
     mu_i = mu_i.unsqueeze(0)
@@ -66,9 +71,6 @@ for entry in training_data:
     # True solution
     u_i = fom.solution_space.from_numpy(entry['solution'])
     true_solution.append(u_i)
-
-    # Load ambient
-    A = torch.tensor(np.load('ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
 
     # DOD solution
     dod_solution = []

@@ -2,8 +2,9 @@ from pymor.basic import *
 import numpy as np
 
 # Constants
-nt = 10
 N_A = 10
+nt = 10
+diameter = 0.15
 
 # Define the advection function dependent on 'mu'
 def advection_function(x, mu):
@@ -34,10 +35,10 @@ problem = InstationaryProblem(
 )
 
 # Discretize the problem
-fom, fom_data = discretize_instationary_cg(problem, diameter=0.15, nt=nt)
+fom, fom_data = discretize_instationary_cg(problem, diameter=diameter, nt=nt)
 
 # Define the parameter space with ranges for 'mu' and 'nu'
-parameter_space = fom.parameters.space({'nu': (0, 10), 'mu': (0.2, np.pi-0.2)})
+parameter_space = fom.parameters.space({'nu': (0.5, 1), 'mu': (0.2, np.pi-0.2)})
 
 # Generate training and validation sets
 training_set = parameter_space.sample_uniformly(30)
