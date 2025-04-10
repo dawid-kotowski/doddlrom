@@ -478,9 +478,9 @@ class AE_DOD_DL_Trainer:
             u_ambient_proj = solution_slice.unsqueeze(2) # shape: (B, N_A, 1)
 
             # Get the Dynmaics output; expected shape: (B, N)
-            dynamics_proj = torch.bmm(DOD_DL_output.transpose(1, 2), u_ambient_proj)
+            dynamics_proj = torch.bmm(DOD_DL_output, u_ambient_proj).squeeze(2)
             # Encoder output; expected shape: (B, N)
-            encoder_output = self.de_model(dynamics_proj)
+            encoder_output = self.en_model(dynamics_proj)
 
             dynam_error = dynamics_proj - decoder_output  # (B, n)
             proj_error = encoder_output - coeff_output # (B, n)

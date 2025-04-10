@@ -1,32 +1,41 @@
 from pymor.basic import *
-from dod_dl_rom import DOD_DL, Coeff_DOD_DL
+from dod_dl_rom import DOD_DL, Coeff_DOD_DL, Decoder
 import numpy as np
 import torch
 
 # Usage example
-N_h = 113
-N_A = 10
+N_h = 221
+N_A = 40
 rank = 10
 L = 1
+N = 10
 n = 4
 m = 4
 parameter_mu_dim = 1
 parameter_nu_dim = 1
 preprocess_dim = 2
 dod_structure = [20, 10]
-phi_structure = [16, 8]
+phi_N_structure = [40, 20]
+phi_n_structure = [16, 8]
 nt = 10
-diameter = 0.15
+diameter = 0.1
 
 # Initialize the models
-DOD_DL_model = DOD_DL(1, parameter_mu_dim, dod_structure, n, N_A)
-Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_structure)
+DOD_DL_model = DOD_DL(1, parameter_mu_dim, dod_structure, N, N_A)
+Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, N, phi_N_structure)
+Decoder_model = Decoder(N, 1, 1, n, 1, kernel=3, stride=2, padding=1)
+AE_Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
 
 # Load state_dicts
 DOD_DL_model.load_state_dict(torch.load('DOD_Module.pth'))
 DOD_DL_model.eval()
 Coeff_model.load_state_dict(torch.load('DOD_Coefficient_Module.pth'))
 Coeff_model.eval()
+checkpoint = torch.load('AE_DOD_DL_Module.pth')
+Decoder_model.load_state_dict(checkpoint['decoder'])
+AE_Coeff_model.load_state_dict(checkpoint['coeff_model'])
+Decoder_model.eval()
+AE_Coeff_model.eval()
 
 # Get some Validation Data
 loaded_data = np.load('training_data.npy', allow_pickle=True)
@@ -72,21 +81,33 @@ for entry in training_data:
     u_i = fom.solution_space.from_numpy(entry['solution'])
     true_solution.append(u_i)
 
-    # DOD solution
-    dod_solution = []
+    # Coeff_DL + AE_DOD_DL solution
+    coeff_dl_solution = []
+    ae_dl_solution = []
     for j in range(nt + 1):
         time = torch.tensor(j / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
         time = time.unsqueeze(0).unsqueeze(1)
         dod_dl_output = DOD_DL_model(mu_i, time).squeeze(0).T
         coeff_output = Coeff_model(mu_i, nu_i, time)
-        u_i_dod = torch.matmul(torch.matmul(A, dod_dl_output), coeff_output)
-        dod_solution.append(u_i_dod)  # append each [N_h] vector
+        u_i_coeff_dl = torch.matmul(torch.matmul(A, dod_dl_output), coeff_output)
+        coeff_dl_solution.append(u_i_coeff_dl)  # append each [N_h] vector
+
+        coeff_n_output = AE_Coeff_model(mu_i, nu_i, time).unsqueeze(0)
+        decoded_output = Decoder_model(coeff_n_output).squeeze(0)
+        u_i_ae_dl = torch.matmul(torch.matmul(A, dod_dl_output), decoded_output)
+        ae_dl_solution.append(u_i_ae_dl)
+
     # Stack along the time axis to get shape [nt+1, N_h]
-    u_i_dod = torch.stack(dod_solution, dim=0)
-    u_i_dod = u_i_dod.detach().numpy()
-    u_i_dod = fom.solution_space.from_numpy(u_i_dod)
+    coeff_dl_sol = torch.stack(coeff_dl_solution, dim=0)
+    coeff_dl_sol = coeff_dl_sol.detach().numpy()
+    coeff_dl_sol = fom.solution_space.from_numpy(coeff_dl_sol)
+
+    ae_dl_sol = torch.stack(ae_dl_solution, dim=0)
+    ae_dl_sol = ae_dl_sol.detach().numpy()
+    ae_dl_sol = fom.solution_space.from_numpy(ae_dl_sol)
 
     # Visualize
-    fom.visualize((u_i, u_i_dod),
+    fom.visualize((u_i, coeff_dl_sol, ae_dl_sol),
                   legend=(f'True solution for mu:{mu_i}, nu:{nu_i}',
-                          f'Deep Orthogonal Decomposition mu:{mu_i}, nu:{nu_i}'))
+                          f'Linear Coefficient DOD-DL-ROM for mu:{mu_i}, nu:{nu_i}',
+                          f'AE reduced DOD-DL-ROm for mu:{mu_i}, nu:{nu_i}'))

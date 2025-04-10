@@ -48,8 +48,8 @@ train_valid_data = FetchTrainAndValidSet(0.8)
 DOD_DL_model = DOD_DL(1, parameter_mu_dim, dod_structure, N, N_A)
 
 # Initialize the DOD trainer
-DOD_DL_trainer = DOD_DL_Trainer(DOD_DL_model, train_valid_data, N_A, epochs=10, 
-                                restart=2, learning_rate=1e-3, batch_size=128)
+DOD_DL_trainer = DOD_DL_Trainer(DOD_DL_model, train_valid_data, N_A, epochs=50, 
+                                restart=10, learning_rate=1e-3, batch_size=128)
 
 # Train the DOD model
 best_loss = DOD_DL_trainer.train()
@@ -60,7 +60,7 @@ Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, N, phi_N_struc
 
 # Initialize the Coefficient Finding trainer
 Coeff_trainer = Coeff_DOD_DL_Trainer(N_A, DOD_DL_model, Coeff_model,
-                                   train_valid_data, epochs=10, restarts=2, 
+                                   train_valid_data, epochs=50, restarts=10, 
                                    learning_rate=1e-3, batch_size=128)
 
 # Train the Coefficient model
@@ -74,7 +74,7 @@ AE_Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_st
 
 # Initialize the AE Coefficient Finding trainer
 AE_DOD_DL_trainer = AE_DOD_DL_Trainer(N_A, DOD_DL_model, AE_Coeff_model, En_model, De_model,
-                                    train_valid_data, epochs=10, restarts=2, learning_rate=1e-3, batch_size=128)
+                                    train_valid_data, epochs=200, restarts=10, learning_rate=1e-3, batch_size=128)
 
 # Train the AE Coefficient model
 best_loss3 = AE_DOD_DL_trainer.train()
