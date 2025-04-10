@@ -2,9 +2,9 @@ from pymor.basic import *
 import numpy as np
 
 # Constants
-N_A = 10
+N_A = 40
 nt = 10
-diameter = 0.15
+diameter = 0.1
 
 # Define the advection function dependent on 'mu'
 def advection_function(x, mu):

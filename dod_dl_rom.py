@@ -259,8 +259,8 @@ class Coeff_DOD_DL(nn.Module):
 
 # Define the Trainer
 class Coeff_DOD_DL_Trainer:
-    def __init__(self, DOD_DL_model, coeffnn_model, train_valid_set, epochs=1, restarts=1, learning_rate=1e-3,
-                 batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
+    def __init__(self, N_A, DOD_DL_model, coeffnn_model, train_valid_set, epochs, restarts, learning_rate,
+                 batch_size, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.restarts = restarts
@@ -275,8 +275,8 @@ class Coeff_DOD_DL_Trainer:
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(Reduced_DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(Reduced_DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(Reduced_DatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(Reduced_DatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
@@ -291,10 +291,10 @@ class Coeff_DOD_DL_Trainer:
             DOD_DL_output = self.DOD_DL(mu_batch, t_batch)
 
             # Extract the solution slice at time step i; expected shape: (B, N_A)
-            u_ambient_proj = solution_batch[:, i, :]
+            u_ambient_proj = solution_batch[:, i, :].unsqueeze(2)
 
             # u_proj: (B, n, 1) then squeezed to (B, n)
-            u_proj = (torch.bmm(DOD_DL_output.transpose(1, 2), u_ambient_proj)).squeeze(2)
+            u_proj = (torch.bmm(DOD_DL_output, u_ambient_proj)).squeeze(2)
 
             error = output - u_proj  # (B, n)
             temp_error += torch.sum(torch.norm(error, dim=1) ** 2)
@@ -437,7 +437,7 @@ class Decoder(nn.Module):
     
 # Define the Trainer
 class AE_DOD_DL_Trainer:
-    def __init__(self, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, error_weight=0.5,
+    def __init__(self, N_A, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, error_weight=0.5,
                  epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.learning_rate = learning_rate
         self.error_weight = error_weight
@@ -456,8 +456,8 @@ class AE_DOD_DL_Trainer:
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(Reduced_DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(Reduced_DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(Reduced_DatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(Reduced_DatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
