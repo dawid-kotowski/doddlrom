@@ -4,6 +4,7 @@ import torch.nn.functional as func
 import torch.optim as optim
 import numpy as np
 import math
+import copy
 from torch.utils.data import Dataset, DataLoader
 
 # Some Constants
@@ -11,11 +12,11 @@ time_end = 1.
 nt = 10
 
 # Initialize linear weights
-def initialize_weights(module):
-    if isinstance(module, nn.Linear):
-        nn.init.kaiming_normal_(module.weight, nonlinearity='relu')
-        if module.bias is not None:
-            nn.init.constant_(module.bias, 0)
+def initialize_weights(m):
+    if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        nn.init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
 
 # Define DatasetLoader
 class DatasetLoader(Dataset):
@@ -33,7 +34,7 @@ class DatasetLoader(Dataset):
         return mu, nu, solution
 
 # Define DatasetLoader for DOD_DL
-class DOD_DL_DatasetLoader(Dataset):
+class Reduced_DatasetLoader(Dataset):
     def __init__(self, data, G, A, N_A):
         self.data = data
         self.G = G
@@ -46,9 +47,10 @@ class DOD_DL_DatasetLoader(Dataset):
     def __getitem__(self, idx):
         entry = self.data[idx]
         mu = torch.tensor(entry['mu'], dtype=torch.float32)
+        nu = torch.tensor(entry['nu'], dtype=torch.float32)
         u = torch.tensor(entry['solution'], dtype=torch.float32)
         u_new = u @ self.G @ self.A
-        return mu, u_new
+        return mu, nu, u_new
 
 ''' 
 ------------------------------------
@@ -119,8 +121,8 @@ class DOD_DL_Trainer:
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(DOD_DL_DatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(DOD_DL_DatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(Reduced_DatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(Reduced_DatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, solution_batch):
         batch_size = mu_batch.size(0)  # Get the batch size (can be problem, if set is non-divisible)
@@ -153,7 +155,7 @@ class DOD_DL_Trainer:
             for epoch in range(self.epochs):
                 self.model.train()
                 total_loss = 0
-                for mu_batch, solution_batch in self.train_loader:
+                for mu_batch, nu_batch, solution_batch in self.train_loader:
                     optimizer.zero_grad()
                     loss = self.loss_function(mu_batch, solution_batch)
                     loss.backward()
@@ -165,7 +167,7 @@ class DOD_DL_Trainer:
             self.model.eval()
             with torch.no_grad():
                 val_loss = 0
-                for mu_batch, solution_batch in self.valid_loader:
+                for mu_batch, nu_batch, solution_batch in self.valid_loader:
                     val_loss += self.loss_function(mu_batch, solution_batch).item()
                 val_loss /= len(self.valid_loader)
 
@@ -273,14 +275,11 @@ class Coeff_DOD_DL_Trainer:
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(Reduced_DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(Reduced_DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
-        G_red = self.A.t() @ self.G @ self.A
-        G_expanded = G_red.unsqueeze(0).expand(batch_size, -1, -1)
-
         temp_error = 0.0
         for i in range(nt + 1):
             t_batch = torch.stack(
@@ -288,19 +287,14 @@ class Coeff_DOD_DL_Trainer:
             ).unsqueeze(1)
             # Get the coefficient model output; expected shape: (B, n)
             output = self.model(mu_batch, nu_batch, t_batch)
-            # Get the DOD_DL_ model output; expected shape: (B, n, N_h)
+            # Get the DOD_DL_ model output; expected shape: (B, n, N_A)
             DOD_DL_output = self.DOD_DL(mu_batch, t_batch)
 
-            # Extract the solution slice at time step i; expected shape: (B, N_h)
-            solution_slice = solution_batch[:, i, :]
-            solution_reduced = solution_slice @ self.A
-            solution_reduced = solution_reduced.unsqueeze(2) # shape: (B, N_A, 1)
+            # Extract the solution slice at time step i; expected shape: (B, N_A)
+            u_ambient_proj = solution_batch[:, i, :]
 
-            # Now perform the batch matrix multiplications:
-            # inner: (B, N_A, 1)
-            inner = torch.bmm(G_expanded, solution_reduced)
             # u_proj: (B, n, 1) then squeezed to (B, n)
-            u_proj = torch.bmm(DOD_DL_output, inner).squeeze(2)
+            u_proj = (torch.bmm(DOD_DL_output.transpose(1, 2), u_ambient_proj)).squeeze(2)
 
             error = output - u_proj  # (B, n)
             temp_error += torch.sum(torch.norm(error, dim=1) ** 2)
@@ -440,27 +434,135 @@ class Decoder(nn.Module):
         x_unflat = x_unflat.view(B, *self.encoder_output_shape)
         x_recon = self.decoder(x_unflat)
         return x_recon.view(B, -1)[:, :self.output_dim]
+    
+# Define the Trainer
+class AE_DOD_DL_Trainer:
+    def __init__(self, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, error_weight=0.5,
+                 epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
+        self.learning_rate = learning_rate
+        self.error_weight = error_weight
+        self.epochs = epochs
+        self.restarts = restarts
+        self.batch_size = batch_size
+        self.DOD_DL = DOD_DL_model.to(device)
+        self.en_model = Encoder_model.to(device)
+        self.de_model = Decoder_model.to(device)
+        self.coeff_model = Coeff_DOD_DL_model.to(device)
+        self.device = device
 
-# Define Complete parameter-to-DOD_DL_AE Model (returns [B, n])
-class AE_DOD_DL(nn.Module):
-    def __init__(self, geometric_dim, physical_dim, N, m_0, n_0, 
-                 phi_layer_sizes=None, num_layers=1, in_channels=1, hidden_channels=1,
-                 ae_kernel=3, ae_stride=2, ae_padding=1):
-        super(AE_DOD_DL, self).__init__()
-        self.encoder = Encoder(N, in_channels, hidden_channels, latent_dim=n_0, 
-                               num_layers=num_layers, kernel=ae_kernel, stride=ae_stride,
-                                padding=ae_padding)
-        self.decoder = Decoder(N, in_channels, hidden_channels, latent_dim=n_0, 
-                               num_layers=num_layers, kernel=ae_kernel, stride=ae_stride,
-                                padding=ae_padding)
-        self.phi_1_module = Phi1Module(geometric_dim, m_0, n_0, phi_layer_sizes)
-        self.phi_2_module = Phi2Module(physical_dim, m_0, n_0, phi_layer_sizes)
+        self.G = torch.tensor(np.load('gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.A = torch.tensor(np.load('ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
 
-    def forward(self, mu, nu, t):
-        mu_t = torch.cat((mu, t), dim=1)
-        nu_t = torch.cat((nu, t), dim=1)
-        phi_1 = self.phi_1_module(mu_t)
-        phi_2 = self.phi_2_module(nu_t)
-        phi = phi_1 * phi_2
-        phi_sum = torch.sum(phi, dim=1).squeeze()
-        return self.decoder(phi_sum)
+        train_data = train_valid_set('train')
+        valid_data = train_valid_set('valid')
+
+        self.train_loader = DataLoader(Reduced_DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(Reduced_DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
+
+    def loss_function(self, mu_batch, nu_batch, solution_batch):
+        batch_size = mu_batch.size(0)
+        temp_error = 0.0
+        for i in range(nt + 1):
+            t_batch = torch.stack(
+                [torch.tensor(i / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+            ).unsqueeze(1)
+            # Get the coefficient model output; expected shape: (B, n)
+            coeff_output = self.coeff_model(mu_batch, nu_batch, t_batch)
+            # Get the non linear expansion output; expected shape: (B, N)
+            decoder_output = self.de_model(coeff_output)
+            # Get the DOD_DL_ model output; expected shape: (B, N, N_A)
+            DOD_DL_output = self.DOD_DL(mu_batch, t_batch)
+
+            # Extract the solution slice at time step i; expected shape: (B, N_A)
+            solution_slice = solution_batch[:, i, :]
+            u_ambient_proj = solution_slice.unsqueeze(2) # shape: (B, N_A, 1)
+
+            # Get the Dynmaics output; expected shape: (B, N)
+            dynamics_proj = torch.bmm(DOD_DL_output.transpose(1, 2), u_ambient_proj)
+            # Encoder output; expected shape: (B, N)
+            encoder_output = self.de_model(dynamics_proj)
+
+            dynam_error = dynamics_proj - decoder_output  # (B, n)
+            proj_error = encoder_output - coeff_output # (B, n)
+            temp_error += (self.error_weight / 2 * torch.sum(torch.norm(dynam_error, dim=1) ** 2) 
+                           + (1-self.error_weight) / 2 * torch.sum(torch.norm(proj_error, dim=1) ** 2))
+
+        loss = temp_error / batch_size
+        return loss
+
+    def train(self):
+        best_model = None
+        best_loss = float('inf')
+
+        # Multiple restarts loop
+        for restart in range(self.restarts):
+            # Reinitialize the trainable models (except DOD_DL_model which remains fixed)
+            self.coeff_model.apply(initialize_weights)
+            self.en_model.apply(initialize_weights)
+            self.de_model.apply(initialize_weights)
+            
+            # Combine parameters of the three modules for the optimizer
+            params = list(self.coeff_model.parameters()) + \
+                     list(self.en_model.parameters()) + \
+                     list(self.de_model.parameters())
+            optimizer = optim.Adam(params, lr=self.learning_rate)
+            
+            for epoch in range(self.epochs):
+                # Set all models to train mode
+                self.coeff_model.train()
+                self.en_model.train()
+                self.de_model.train()
+                self.DOD_DL.train()  # Even if not trained, set to train for consistency
+                
+                total_loss = 0.0
+                for mu_batch, nu_batch, solution_batch in self.train_loader:
+                    # Transfer data to device
+                    mu_batch = mu_batch.to(self.device)
+                    nu_batch = nu_batch.to(self.device)
+                    solution_batch = solution_batch.to(self.device)
+                    
+                    optimizer.zero_grad()
+                    loss = self.loss_function(mu_batch, nu_batch, solution_batch)
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += loss.item()
+                    
+                avg_loss = total_loss / len(self.train_loader)
+                print(f"Model: AE_DOD_DL, Restart: {restart + 1}, Epoch: {epoch + 1}, Loss: {avg_loss:.4f}")
+                
+            # Evaluate on validation set
+            self.coeff_model.eval()
+            self.en_model.eval()
+            self.de_model.eval()
+            self.DOD_DL.eval()
+            
+            val_loss = 0.0
+            with torch.no_grad():
+                for mu_batch, nu_batch, solution_batch in self.valid_loader:
+                    mu_batch = mu_batch.to(self.device)
+                    nu_batch = nu_batch.to(self.device)
+                    solution_batch = solution_batch.to(self.device)
+                    val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
+                avg_val_loss = val_loss / len(self.valid_loader)
+                print(f"Restart: {restart + 1}, Validation Loss: {avg_val_loss:.4f}")
+            
+            # Save the best model (only saving coeff, encoder, and decoder)
+            if avg_val_loss < best_loss:
+                best_loss = avg_val_loss
+                best_model = {
+                    "encoder": copy.deepcopy(self.en_model.state_dict()),
+                    "decoder": copy.deepcopy(self.de_model.state_dict()),
+                    "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
+                }
+                print(f"Updated best AE_DOD_DL model at restart {restart + 1} with validation loss {best_loss:.4f}")
+        
+        # Load the best model's state dictionaries into the models
+        if best_model is not None:
+            self.en_model.load_state_dict(best_model["encoder"])
+            self.de_model.load_state_dict(best_model["decoder"])
+            self.coeff_model.load_state_dict(best_model["coeff_model"])
+            print("Loaded best model state dicts.")
+        else:
+            print("No best model was found.")
+            
+        return best_loss
