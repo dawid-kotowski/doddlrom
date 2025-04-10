@@ -252,7 +252,8 @@ class Coeff_DOD_DL(nn.Module):
         phi_1 = self.phi_1_module(mu_t)
         phi_2 = self.phi_2_module(nu_t)
         phi = phi_1 * phi_2
-        return phi
+        phi_sum = torch.sum(phi, dim=1).squeeze()
+        return phi_sum
 
 # Define the Trainer
 class Coeff_DOD_DL_Trainer:
@@ -461,4 +462,5 @@ class AE_DOD_DL(nn.Module):
         phi_1 = self.phi_1_module(mu_t)
         phi_2 = self.phi_2_module(nu_t)
         phi = phi_1 * phi_2
-        return self.decoder(phi)
+        phi_sum = torch.sum(phi, dim=1).squeeze()
+        return self.decoder(phi_sum)

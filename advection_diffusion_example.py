@@ -58,7 +58,7 @@ Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_structu
 
 # Initialize the Coefficient Finding trainer
 Coeff_trainer = Coeff_DOD_DL_Trainer(DOD_DL_model, Coeff_model,
-                                   train_valid_data, epochs=500, restarts=5, 
+                                   train_valid_data, epochs=50, restarts=5, 
                                    learning_rate=1e-3, batch_size=128)
 
 # Train the Coefficient model
