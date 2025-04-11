@@ -18,6 +18,27 @@ def initialize_weights(m):
         if m.bias is not None:
             nn.init.zeros_(m.bias)
 
+# Define Training/Validation Splitter
+class FetchTrainAndValidSet:
+    def __init__(self, train_to_val_ratio):
+        # 0.8 = train_to_val_ratio means 80 % of training data and 20 % of validation data
+        self.train_to_val_ratio = train_to_val_ratio
+        loaded_data = np.load('training/training_data.npy', allow_pickle=True)
+        np.random.shuffle(loaded_data)
+        num_samples = len(loaded_data)
+        num_train_samples = int(train_to_val_ratio * num_samples)
+        self.training_data = loaded_data[:num_train_samples]
+        self.validation_data = loaded_data[num_train_samples:]
+
+
+    def __call__(self, set_type):
+        if set_type == 'train':
+            return self.training_data
+        elif set_type == 'valid':
+            return self.validation_data
+        else:
+            return 'Type Undefined'
+
 # Define DatasetLoader
 class DatasetLoader(Dataset):
     def __init__(self, data):
