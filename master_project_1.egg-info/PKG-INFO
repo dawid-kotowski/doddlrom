@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: master_project_1
+Version: 0.1
+Summary: Implements variants of the DOD-DL-ROM. Additionally some examples are provided
+Author: Dawid Kotowski
+Author-email: dkotowsk@uni-muenster.de
+Dynamic: author
+Dynamic: author-email
+Dynamic: summary

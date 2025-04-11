@@ -1,21 +1,21 @@
 from pymor.basic import *
-from dod_dl_rom import DOD_DL, Coeff_DOD_DL, Decoder
+from master_project_1 import DOD_DL, Coeff_DOD_DL, Decoder
 import numpy as np
 import torch
 
 # Usage example
 N_h = 221
-N_A = 40
+N_A = 64
 rank = 10
 L = 1
-N = 10
+N = 16
 n = 4
 m = 4
 parameter_mu_dim = 1
 parameter_nu_dim = 1
 preprocess_dim = 2
-dod_structure = [20, 10]
-phi_N_structure = [40, 20]
+dod_structure = [128, 64]
+phi_N_structure = [32, 16]
 phi_n_structure = [16, 8]
 nt = 10
 diameter = 0.1
@@ -27,18 +27,18 @@ Decoder_model = Decoder(N, 1, 1, n, 1, kernel=3, stride=2, padding=1)
 AE_Coeff_model = Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
 
 # Load state_dicts
-DOD_DL_model.load_state_dict(torch.load('DOD_Module.pth'))
+DOD_DL_model.load_state_dict(torch.load('training/DOD_Module.pth'))
 DOD_DL_model.eval()
-Coeff_model.load_state_dict(torch.load('DOD_Coefficient_Module.pth'))
+Coeff_model.load_state_dict(torch.load('training/DOD_Coefficient_Module.pth'))
 Coeff_model.eval()
-checkpoint = torch.load('AE_DOD_DL_Module.pth')
+checkpoint = torch.load('training/AE_DOD_DL_Module.pth')
 Decoder_model.load_state_dict(checkpoint['decoder'])
 AE_Coeff_model.load_state_dict(checkpoint['coeff_model'])
 Decoder_model.eval()
 AE_Coeff_model.eval()
 
 # Get some Validation Data
-loaded_data = np.load('training_data.npy', allow_pickle=True)
+loaded_data = np.load('training/training_data.npy', allow_pickle=True)
 np.random.shuffle(loaded_data) 
 training_data = loaded_data[:4]
 
@@ -69,7 +69,7 @@ fom, fom_data = discretize_instationary_cg(problem, diameter=diameter, nt=nt)
 
 # Set up solutions
 true_solution = fom.solution_space.empty()
-A = torch.tensor(np.load('ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+A = torch.tensor(np.load('training/ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
 
 for entry in training_data:
     mu_i = torch.tensor(entry['mu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')

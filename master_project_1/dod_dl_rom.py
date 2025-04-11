@@ -114,8 +114,8 @@ class DOD_DL_Trainer:
         self.batch_size = batch_size
         self.model = nn_model.to(device)
         self.device = device
-        self.A = torch.tensor(np.load('ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        self.G = torch.tensor(np.load('gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.A = torch.tensor(np.load('training/ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.G = torch.tensor(np.load('training/gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
 
 
         train_data = train_valid_set('train')
@@ -269,8 +269,8 @@ class Coeff_DOD_DL_Trainer:
         self.model = coeffnn_model.to(device)
         self.device = device
 
-        self.G = torch.tensor(np.load('gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        self.A = torch.tensor(np.load('ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.G = torch.tensor(np.load('training/gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.A = torch.tensor(np.load('training/ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
@@ -450,8 +450,8 @@ class AE_DOD_DL_Trainer:
         self.coeff_model = Coeff_DOD_DL_model.to(device)
         self.device = device
 
-        self.G = torch.tensor(np.load('gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        self.A = torch.tensor(np.load('ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.G = torch.tensor(np.load('training/gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.A = torch.tensor(np.load('training/ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')

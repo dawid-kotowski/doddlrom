@@ -2,7 +2,7 @@ from pymor.basic import *
 import numpy as np
 
 # Constants
-N_A = 40
+N_A = 64
 nt = 10
 diameter = 0.1
 
@@ -60,7 +60,7 @@ dtype = [('mu', 'O'), ('nu', 'O'), ('solution', 'O')]
 training_data_array = np.array(training_data, dtype=dtype)
 
 # Save the numpy array to a file
-np.save('training_data.npy', training_data_array)
+np.save('training/training_data.npy', training_data_array)
 
 # Calculate the POD according to the full data
 pod_modes, singular_values = pod(solution_set, product=fom.h1_0_semi_product, modes=N_A)
@@ -68,12 +68,12 @@ A = pod_modes.to_numpy().T
 
 # Save POD to file
 ambient = np.array(A, dtype=np.float32)
-np.save('ambient_matrix.npy', ambient)
+np.save('training/ambient_matrix.npy', ambient)
 
 # Calculate the Gram matrix for the fom
 G = fom.h1_0_semi_product.matrix.toarray()
 
 # Save G to file
 gram = np.array(G, dtype=np.float32)
-np.save('gram_matrix.npy', gram)
+np.save('training/gram_matrix.npy', gram)
 

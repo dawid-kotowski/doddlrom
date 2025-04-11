@@ -1,5 +1,5 @@
 import torch
-from dod_dl_rom import DOD_DL, DOD_DL_Trainer, Coeff_DOD_DL_Trainer, Coeff_DOD_DL, Encoder, Decoder, AE_DOD_DL_Trainer
+from master_project_1 import DOD_DL, DOD_DL_Trainer, Coeff_DOD_DL_Trainer, Coeff_DOD_DL, Encoder, Decoder, AE_DOD_DL_Trainer
 import numpy as np
 
 
@@ -7,7 +7,7 @@ class FetchTrainAndValidSet:
     def __init__(self, train_to_val_ratio):
         # 0.8 = train_to_val_ratio means 80 % of training data and 20 % of validation data
         self.train_to_val_ratio = train_to_val_ratio
-        loaded_data = np.load('training_data.npy', allow_pickle=True)
+        loaded_data = np.load('training/training_data.npy', allow_pickle=True)
         np.random.shuffle(loaded_data)
         num_samples = len(loaded_data)
         num_train_samples = int(train_to_val_ratio * num_samples)
@@ -26,17 +26,17 @@ class FetchTrainAndValidSet:
 
 # Usage example
 N_h = 221
-N_A = 40
+N_A = 64
 rank = 10
 L = 1
-N = 10
+N = 16
 n = 4
 m = 4
 parameter_mu_dim = 1
 parameter_nu_dim = 1
 preprocess_dim = 2
-dod_structure = [20, 10]
-phi_N_structure = [40, 20]
+dod_structure = [128, 64]
+phi_N_structure = [32, 16]
 phi_n_structure = [16, 8]
 nt = 10
 diameter = 0.1
@@ -81,12 +81,12 @@ best_loss3 = AE_DOD_DL_trainer.train()
 print(f"Best validation loss: {best_loss3}")
 
 # Save the Models to a file
-torch.save(DOD_DL_model.state_dict(), 'DOD_Module.pth')
-torch.save(Coeff_model.state_dict(), 'DOD_Coefficient_Module.pth')
+torch.save(DOD_DL_model.state_dict(), 'training/DOD_Module.pth')
+torch.save(Coeff_model.state_dict(), 'training/DOD_Coefficient_Module.pth')
 torch.save({
     'encoder': En_model.state_dict(),
     'decoder': De_model.state_dict(),
     'coeff_model': AE_Coeff_model.state_dict(),
-}, 'AE_DOD_DL_Module.pth')
+}, 'training/AE_DOD_DL_Module.pth')
 
 
