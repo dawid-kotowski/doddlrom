@@ -39,6 +39,27 @@ class FetchTrainAndValidSet:
         else:
             return 'Type Undefined'
 
+# Define Training/Validation Splitter for the stationary model
+class StatFetchTrainAndValidSet:
+    def __init__(self, train_to_val_ratio):
+        # 0.8 = train_to_val_ratio means 80 % of training data and 20 % of validation data
+        self.train_to_val_ratio = train_to_val_ratio
+        loaded_data = np.load('training/stationary_training_data.npy', allow_pickle=True)
+        np.random.shuffle(loaded_data)
+        num_samples = len(loaded_data)
+        num_train_samples = int(train_to_val_ratio * num_samples)
+        self.training_data = loaded_data[:num_train_samples]
+        self.validation_data = loaded_data[num_train_samples:]
+
+
+    def __call__(self, set_type):
+        if set_type == 'train':
+            return self.training_data
+        elif set_type == 'valid':
+            return self.validation_data
+        else:
+            return 'Type Undefined'
+
 # Define DatasetLoader
 class DatasetLoader(Dataset):
     def __init__(self, data):
@@ -72,6 +93,25 @@ class Reduced_DatasetLoader(Dataset):
         u = torch.tensor(entry['solution'], dtype=torch.float32)
         u_new = u @ self.G @ self.A
         return mu, nu, u_new
+
+# Define DatasetLoader for stationary DOD
+class DODDataset(Dataset):
+    def __init__(self, data, G, A, N_A):
+        self.data = data
+        self.G = G
+        self.A = A
+        self.N_A = N_A
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        entry = self.data[idx]
+        mu = torch.tensor(entry['mu'], dtype=torch.float32)
+        u = torch.tensor(entry['solution'], dtype=torch.float32)
+        u_new = torch.matmul(self.A.T, torch.matmul(self.G, u))
+        u_new = u_new[:self.N_A]
+        return mu, u_new
 
 ''' 
 ------------------------------------
@@ -111,7 +151,8 @@ class RootModule(nn.Module):
             mu_t = layer_forward(mu_t)
         return mu_t
 
-# Define Complete DOD_DL_ DL Model (returns a tensor of size [N_A, N])
+# Define Complete DOD_DL_ DL Model 
+# returns a tensor of size [N_A, N]
 class DOD_DL(nn.Module):
     def __init__(self, seed_dim, geometric_dim, root_layer_sizes, N, N_A):
         super(DOD_DL, self).__init__()
@@ -262,7 +303,8 @@ class Phi2Module(nn.Module):
         nu_t = nu_t.view(-1, self.m, self.n)
         return nu_t
 
-# Define Complete parameter-to-DOD_DL-coefficients Model (returns [B, n])
+# Define Complete parameter-to-DOD_DL-coefficients Model 
+# returns [B, n]
 class Coeff_DOD_DL(nn.Module):
     def __init__(self, geometric_dim, physical_dim, m_0, n_0, layer_sizes=None):
         super(Coeff_DOD_DL, self).__init__()
@@ -359,7 +401,8 @@ class Coeff_DOD_DL_Trainer:
         self.model.load_state_dict(best_model)
         return best_loss
 
-# Define Encoder takes [B, input_dim] return [B, loop(floor((input_dim + 2p - k) / s) + 1)] 
+# Define Encoder 
+# takes [B, input_dim] return [B, loop(floor((input_dim + 2p - k) / s) + 1)] 
 class Encoder(nn.Module):
     def __init__(self, input_dim, in_channels, hidden_channels, latent_dim,
                 num_layers, kernel, stride, padding):
@@ -413,7 +456,8 @@ class Encoder(nn.Module):
         z = self.linear(conv_out)  # Latent vector
         return z
 
-# Define Decoder takes [B, loop(floor((input_dim + 2p - k) / s) + 1)] return [B, input_dim]
+# Define Decoder 
+# takes [B, loop(floor((input_dim + 2p - k) / s) + 1)] return [B, input_dim]
 class Decoder(nn.Module):
     def __init__(self, output_dim, out_channels, hidden_channels, latent_dim, 
                  num_layers, kernel, stride, padding):
@@ -586,4 +630,422 @@ class AE_DOD_DL_Trainer:
         else:
             print("No best model was found.")
             
+        return best_loss
+
+'''
+-----------------------------------
+Having considered the DOD-algorithm in analogy to the POD-DL-ROM 
+one might instead go with a rather differently influenced idea;
+assuming we have sufficent quick KnW decay regarding the time-separated snapshot
+manifold, one can instead of relying on the direct Input of a NN to 
+introduce time dependency, try achieving this using a CoLoRA inspired 
+architecture with a previous stationary solution starting point, i.e.
+
+u(mu,  nu, t) = C_L(...C_2(C_1(V_0(mu) phi_0(mu, nu))))
+
+with C_i(X) := W_i X + A_i diag(a_i(nu, t)) B_i X + b_i     for i <= L
+-----------------------------------
+'''
+# Define the stationary DOD for the stationary equivalent of the problem
+class StatSeedModule(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(StatSeedModule, self).__init__()
+        self.fc = nn.Linear(input_dim, output_dim)
+
+    def forward(self, x):
+        x = func.leaky_relu(self.fc(x), 0.1)
+        return x
+class StatRootModule(nn.Module):
+    def __init__(self, input_dim, output_dim, root_layer_sizes, leaky_relu_slope=0.1):
+        super(StatRootModule, self).__init__()
+        if root_layer_sizes is None:
+            root_layer_sizes = [1]
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(input_dim, root_layer_sizes[0]))
+        for i in range(len(root_layer_sizes) - 1):
+            self.layers.append(nn.Linear(root_layer_sizes[i], root_layer_sizes[i + 1]))
+            if i < len(root_layer_sizes) - 1:
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+        self.layers.append(nn.Linear(root_layer_sizes[len(root_layer_sizes) - 1], output_dim))
+
+    def forward(self, x):
+        for layer_forward in self.layers:
+            x = layer_forward(x)
+        return x
+class DOD(nn.Module):
+    def __init__(self, seed_dim, num_roots, root_output_dim, root_layer_sizes=None):
+        super(DOD, self).__init__()
+        self.seed_module = StatSeedModule(1, seed_dim)
+        self.root_modules = nn.ModuleList([StatRootModule(seed_dim, root_output_dim, root_layer_sizes) for _ in range(num_roots)])
+
+    def forward(self, mu):
+        seed_output = self.seed_module(mu)
+        root_outputs = [root(seed_output) for root in self.root_modules]
+        v_mu_reduced = torch.stack(root_outputs, dim=0).transpose(0, 1)
+        return v_mu_reduced
+
+# Define the stationary Coefficient Finder for the stationary equivalent of the problem
+class StatPhi1Module(nn.Module):
+    def __init__(self, parameter1_dim, m_0, n_0, layer_sizes, leaky_relu_slope=0.1):
+        super(StatPhi1Module, self).__init__()
+        self.m = m_0
+        self.n = n_0
+        if layer_sizes is None:
+            layer_sizes = [1]
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(parameter1_dim, layer_sizes[0]))
+        for i in range(len(layer_sizes) - 1):
+            self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+            if i < len(layer_sizes) - 1:
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+        self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n_0 * m_0))
+
+    def forward(self, x):
+        for layer_forward in self.layers:
+            x = layer_forward(x)
+        x = x.view(-1, self.m, self.n)
+        return x
+class StatPhi2Module(nn.Module):
+    def __init__(self, parameter2_dim, m_0, n_0, layer_sizes, leaky_relu_slope=0.1):
+        super(StatPhi2Module, self).__init__()
+        self.m = m_0
+        self.n = n_0
+        if layer_sizes is None:
+            layer_sizes = [1]
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(parameter2_dim, layer_sizes[0]))
+        for i in range(len(layer_sizes) - 1):
+            self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+            if i < len(layer_sizes) - 1:
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+        self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n_0 * m_0))
+
+    def forward(self, x):
+        for layer_forward in self.layers:
+            x = layer_forward(x)
+        x = x.view(-1, self.m, self.n)
+        return x
+class CoeffDOD(nn.Module):
+    def __init__(self, param_mu_space_dim, param_nu_space_dim, m_0, n_0, layer_sizes=None):
+        super(CoeffDOD, self).__init__()
+        self.phi_1_module = StatPhi1Module(param_mu_space_dim, m_0, n_0, layer_sizes)
+        self.phi_2_module = StatPhi2Module(param_nu_space_dim, m_0, n_0, layer_sizes)
+
+    def forward(self, mu, nu):
+        phi_1 = self.phi_1_module(mu)
+        phi_2 = self.phi_2_module(nu)
+        phi = phi_1 * phi_2
+        phi_sum = torch.sum(phi, dim=1).squeeze()
+        return phi_sum
+
+# Define the trainer for these
+class DODTrainer:
+    def __init__(self, nn_model, ambient_dim, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
+                 batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
+        self.learning_rate = learning_rate
+        self.restarts = restart
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.model = nn_model.to(device)
+        self.device = device
+        self.N_A = ambient_dim
+        self.G = torch.tensor(np.load('training/stationary_gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.A = torch.tensor(np.load('training/stationary_ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+
+        train_data = train_valid_set('train')
+        valid_data = train_valid_set('valid')
+
+        self.train_loader = DataLoader(DODDataset(train_data, self.G, self.A, self.N_A), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(DODDataset(valid_data, self.G, self.A, self.N_A), batch_size=self.batch_size, shuffle=False)
+
+
+    def loss_function(self, mu_batch, solution_batch):
+        batch_size = mu_batch.size(0)  # Get the batch size (can be problem, if set is non-divisible)
+
+        output = self.model(mu_batch)
+
+        # Reshape solution_batch to a 3D tensor with shape [batch_size, N_A, 1]
+        solution_batch = solution_batch.unsqueeze(2)
+
+        # Perform batch matrix multiplications
+        v_u = torch.bmm(output, solution_batch)
+        u_proj = torch.bmm(output.transpose(1, 2), v_u)
+
+        error = solution_batch - u_proj
+        loss = torch.sum(torch.norm(error, dim=1) ** 2) / batch_size
+
+        return loss
+
+    def train(self):
+        best_model = None
+        best_loss = float('inf')
+
+        for _ in range(self.restarts):
+            self.model.apply(initialize_weights)
+            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+            for epoch in range(self.epochs):
+                self.model.train()
+                total_loss = 0
+                for mu_batch, solution_batch in self.train_loader:
+                    optimizer.zero_grad()
+                    loss = self.loss_function(mu_batch, solution_batch)
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += loss.item()
+
+                print(f"Model: stationary_DOD, Restart: {_ + 1}, Epoch: {epoch} Loss: {total_loss / len(self.train_loader)}")
+
+            self.model.eval()
+            with torch.no_grad():
+                val_loss = 0
+                for mu_batch, solution_batch in self.valid_loader:
+                    val_loss += self.loss_function(mu_batch, solution_batch).item()
+                val_loss /= len(self.valid_loader)
+
+            if val_loss < best_loss:
+                best_loss = val_loss
+                best_model = self.model.state_dict()
+
+            print(f'Restart stationary_DOD. Gen Count at {_ + 1} with current best loss {best_loss}')
+
+        # Load the best model
+        self.model.load_state_dict(best_model)
+        return best_loss
+class CoeffDODTrainer:
+    def __init__(self, dod_model, coeffnn_model, ambient_dim, train_valid_set, epochs=1, restarts=1, learning_rate=1e-3,
+                 batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
+        self.learning_rate = learning_rate
+        self.epochs = epochs
+        self.restarts = restarts
+        self.batch_size = batch_size
+        self.dod = dod_model.to(device)
+        self.model = coeffnn_model.to(device)
+        self.device = device
+        self.N_A = ambient_dim
+
+        G = torch.tensor(np.load('training/gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        A = torch.tensor(np.load('training/ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+
+        train_data = train_valid_set('train')
+        valid_data = train_valid_set('valid')
+
+        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
+
+        # Pre-expand A and G for the batch size
+        self.A_expanded = A.unsqueeze(0).expand(self.batch_size, -1, -1)
+        self.G_expanded = G.unsqueeze(0).expand(self.batch_size, -1, -1)
+
+    def loss_function(self, mu_batch, nu_batch, solution_batch):
+        batch_size = mu_batch.size(0)  # Get the batch size (can be problem, if set is non-divisible)
+
+        output = self.model(mu_batch, nu_batch)
+        dod_output = self.dod(mu_batch)
+
+        # Adjust pre-expanded matrices to the current batch size
+        A_expanded = self.A_expanded[:batch_size]
+        G_expanded = self.G_expanded[:batch_size]
+
+        # Reshape solution_batch to a 3D tensor with shape [batch_size, N_h, 1]
+        solution_batch = solution_batch.unsqueeze(2)
+
+        # Perform batch matrix multiplications
+        v_transposed = torch.bmm(dod_output, A_expanded.transpose(1, 2))
+        u_proj = torch.bmm(v_transposed, torch.bmm(G_expanded, solution_batch)).squeeze(2)
+
+        error = output - u_proj
+        loss = torch.sum(torch.norm(error, dim=1) ** 2) / batch_size
+
+        return loss
+
+    def train(self):
+        best_model = None
+        best_loss = float('inf')
+
+        for _ in range(self.restarts):
+            self.model.apply(initialize_weights)
+            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+            for epoch in range(self.epochs):
+                self.model.train()
+                total_loss = 0
+                for mu_batch, nu_batch, solution_batch in self.train_loader:
+                    optimizer.zero_grad()
+                    loss = self.loss_function(mu_batch, nu_batch, solution_batch)
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += loss.item()
+
+                print(f"Model: stationary_CoeffDOD, Restart: {_ + 1}, Epoch: {epoch} Loss: {total_loss / len(self.train_loader)}")
+
+            self.model.eval()
+            with torch.no_grad():
+                val_loss = 0
+                for mu_batch, nu_batch, solution_batch in self.valid_loader:
+                    val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
+                val_loss /= len(self.valid_loader)
+
+            if val_loss < best_loss:
+                best_loss = val_loss
+                best_model = self.model.state_dict()
+
+            print(f'Restart stationary Coefficient Finder. Gen Count at {_ + 1} with current best loss {best_loss}')
+
+        # Load the best model
+        self.model.load_state_dict(best_model)
+        return best_loss
+
+# Define Hyper Network for time and physical parameter
+class Alpha(nn.Module):
+    def __init__(self, physical_dim):
+        super(Alpha, self).__init__()
+        self.fc = nn.Linear(physical_dim + 1, 1, bias=True)
+
+    def forward(self, nu, t):
+        # Convert t to a tensor if it's not already one
+        if not torch.is_tensor(t):
+            t = torch.tensor(t, dtype=nu.dtype, device=nu.device)
+        # Ensure t has a proper shape for concatenation
+        t = t.unsqueeze(-1)  # Now shape becomes (1,) if t was a scalar
+        input_tensor = torch.cat((nu, t.expand(nu.shape[0], 1)), dim=-1)
+        out = self.fc(input_tensor)
+        return out
+
+# Define CoLoRA total module 
+# takes [B, N_A] \times [B, Theta'] \times [B, 1]
+# yields [B, N_A]
+class CoLoRA_DL(nn.Module):
+    def __init__(self, out_dim, L, dyn_dim, physical_dim, with_bias=True):
+        super(CoLoRA_DL, self).__init__()
+        self.out_dim = out_dim
+        self.L = L
+        self.dyn_dim = dyn_dim
+        self.with_bias = with_bias
+
+        self.w_init = nn.init.kaiming_normal_
+        self.z_init = nn.init.zeros_
+
+        self.Ws = nn.ParameterList([
+            nn.Parameter(torch.empty((self.out_dim, self.out_dim), dtype=torch.float32))
+            for _ in range(L)
+        ])
+        self.As = nn.ParameterList([
+            nn.Parameter(torch.empty((self.out_dim, self.dyn_dim), dtype=torch.float32))
+            for _ in range(L)
+        ])
+        self.Bs = nn.ParameterList([
+            nn.Parameter(torch.empty((self.dyn_dim, self.out_dim), dtype=torch.float32))
+            for _ in range(L)
+        ])
+
+        self.alphas = nn.ModuleList([Alpha(physical_dim) for _ in range(L)])
+
+        if self.with_bias:
+            self.bs = nn.ParameterList([
+                nn.Parameter(torch.zeros(self.N_h, dtype=torch.float32))
+                for _ in range(L)
+            ])
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        for i in range(self.L):
+            self.z_init(self.Ws[i])
+            self.w_init(self.As[i])
+            self.w_init(self.Bs[i])
+            if self.with_bias:
+                self.z_init(self.bs[i])
+
+    def forward(self, X, nu, t):
+        # Use a temporary variable x for iterative updates.
+        # x should have shape (B, out_dim)
+        for i in range(self.L):
+            alpha_val = self.alphas[i](nu, t).unsqueeze(1)  # (B, 1, 1)
+            A_exp = self.As[i].unsqueeze(0)  # (1, N_h, rank)
+            AB = (A_exp * alpha_val) @ self.Bs[i]  # (B, N_h, width)
+            W = self.Ws[i] + AB  # (B, N_h, width)
+            x_unsq = X.unsqueeze(2)  # (B, width, 1) -> here width should equal N_h
+            X = torch.bmm(W, x_unsq).squeeze(2)  # (B, N_h, 1) -> (B, N_h)
+            if self.with_bias:
+                X = X + self.bs[i].unsqueeze(0).expand_as(X)
+        return X
+
+# Define CoLoRA trainer
+class CoLoRA_DL_Trainer():
+    def __init__(self, N_A, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, epochs, restarts, learning_rate,
+                 batch_size, device='cuda' if torch.cuda.is_available() else 'cpu'):
+        self.learning_rate = learning_rate
+        self.epochs = epochs
+        self.restarts = restarts
+        self.batch_size = batch_size
+        self.DOD_0 = DOD_0_model.to(device)
+        self.model_0 = coeffnn_0_model.to(device)
+        self.colora_model = colora_model.to(device)
+        self.device = device
+
+        self.G = torch.tensor(np.load('training/gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.A = torch.tensor(np.load('training/ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+
+        train_data = train_valid_set('train')
+        valid_data = train_valid_set('valid')
+
+        self.train_loader = DataLoader(Reduced_DatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(Reduced_DatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
+
+    def loss_function(self, mu_batch, nu_batch, solution_batch):
+        batch_size = mu_batch.size(0)
+        temp_error = 0.0
+        for i in range(nt + 1):
+            t_batch = torch.stack(
+                [torch.tensor(i / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+            ).unsqueeze(1)
+            # Get the stationary coefficient model output; expected shape: (B, n)
+            coeff_0_output = self.model_0(mu_batch, nu_batch)
+            # Get the stationary DOD model output; expected shape: (B, n, N_A)
+            DOD_0_output = self.DOD_0(mu_batch, t_batch)
+            # Get the CoLoRA prediction output
+            output = self.colora_model(torch.bmm(DOD_0_output.transpose(1, 2), coeff_0_output), mu_batch, nu_batch, t_batch)
+
+            # Extract the solution slice at time step i; expected shape: (B, N_A)
+            u_proj = solution_batch[:, i, :].unsqueeze(2)
+
+            error = output - u_proj  # (B, N_A)
+            temp_error += torch.sum(torch.norm(error, dim=1) ** 2)
+
+        loss = temp_error / batch_size
+        return loss
+    
+    def train(self):
+        best_model = None
+        best_loss = float('inf')
+
+        for _ in range(self.restarts):
+            self.colora_model.apply(initialize_weights)
+            optimizer = optim.Adam(self.colora_model.parameters(), lr=self.learning_rate)
+            for epoch in range(self.epochs):
+                self.colora_model.train()
+                total_loss = 0
+                for mu_batch, nu_batch, solution_batch in self.train_loader:
+                    optimizer.zero_grad()
+                    loss = self.loss_function(mu_batch, nu_batch, solution_batch)
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += loss.item()
+
+                print(f"Model: CoLoRA_DL, Restart: {_ + 1}, Epoch: {epoch} Loss: {total_loss / len(self.train_loader)}")
+
+            self.colora_model.eval()
+            with torch.no_grad():
+                val_loss = 0
+                for mu_batch, nu_batch, solution_batch in self.valid_loader:
+                    val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
+                val_loss /= len(self.valid_loader)
+
+            if val_loss < best_loss:
+                best_loss = val_loss
+                best_model = self.colora_model.state_dict()
+
+            print(f'Restart CoLoRA_DL. Gen Count at {_ + 1} with current best loss {best_loss}')
+
+        # Load the best model
+        self.colora_model.load_state_dict(best_model)
         return best_loss

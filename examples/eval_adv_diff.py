@@ -55,13 +55,13 @@ stationary_problem = StationaryProblem(
         [ExpressionFunction('1 - x[0]', 2), ExpressionFunction('x[0]', 2)],
         [ProjectionParameterFunctional('nu', 1), 1]
     ),
-    dirichlet_data=ConstantFunction(dim_domain=2, value=0.),
+    dirichlet_data=ExpressionFunction('(-(x[1] - 0.5)**2 + 0.25) * (x[0] < 1e-10)', 2),
     advection=advection_generic_function,
     name='advection_problem'
 )
 problem = InstationaryProblem(
     T=1.,
-    initial_data=ExpressionFunction('(-(x[1] - 0.5)**2 + 0.25) * (x[0] < 1e-10)', 2),
+    initial_data=ConstantFunction(0, 2),
     stationary_part=stationary_problem,
     name='advection_problem'
 )
