@@ -905,7 +905,6 @@ class Alpha(nn.Module):
         if not torch.is_tensor(t):
             t = torch.tensor(t, dtype=nu.dtype, device=nu.device)
         # Ensure t has a proper shape for concatenation
-        t = t.unsqueeze(-1)  # Now shape becomes (1,) if t was a scalar
         input_tensor = torch.cat((nu, t.expand(nu.shape[0], 1)), dim=-1)
         out = self.fc(input_tensor)
         return out
@@ -941,7 +940,7 @@ class CoLoRA_DL(nn.Module):
 
         if self.with_bias:
             self.bs = nn.ParameterList([
-                nn.Parameter(torch.zeros(self.N_h, dtype=torch.float32))
+                nn.Parameter(torch.zeros(self.out_dim, dtype=torch.float32))
                 for _ in range(L)
             ])
 
@@ -956,15 +955,13 @@ class CoLoRA_DL(nn.Module):
                 self.z_init(self.bs[i])
 
     def forward(self, X, nu, t):
-        # Use a temporary variable x for iterative updates.
-        # x should have shape (B, out_dim)
         for i in range(self.L):
+            X = X.unsqueeze(2) if X.ndim == 2 else X # assert (B, N_A, 1)
             alpha_val = self.alphas[i](nu, t).unsqueeze(1)  # (B, 1, 1)
-            A_exp = self.As[i].unsqueeze(0)  # (1, N_h, rank)
-            AB = (A_exp * alpha_val) @ self.Bs[i]  # (B, N_h, width)
-            W = self.Ws[i] + AB  # (B, N_h, width)
-            x_unsq = X.unsqueeze(2)  # (B, width, 1) -> here width should equal N_h
-            X = torch.bmm(W, x_unsq).squeeze(2)  # (B, N_h, 1) -> (B, N_h)
+            A_exp = self.As[i].unsqueeze(0)  # (1, N_A, dyn_dim)
+            AB = (A_exp * alpha_val) @ self.Bs[i]  # (B, N_A, N_A)
+            W = self.Ws[i] + AB  # (B, N_A, N_A)
+            X = torch.bmm(W, X).squeeze(2)  # (B, N_A, 1) -> (B, N_A)
             if self.with_bias:
                 X = X + self.bs[i].unsqueeze(0).expand_as(X)
         return X
@@ -998,15 +995,15 @@ class CoLoRA_DL_Trainer():
             t_batch = torch.stack(
                 [torch.tensor(i / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
             ).unsqueeze(1)
-            # Get the stationary coefficient model output; expected shape: (B, n)
-            coeff_0_output = self.model_0(mu_batch, nu_batch)
+            # Get the stationary coefficient model output; expected shape: (B, n, 1)
+            coeff_0_output = self.model_0(mu_batch, nu_batch).unsqueeze(2)
             # Get the stationary DOD model output; expected shape: (B, n, N_A)
-            DOD_0_output = self.DOD_0(mu_batch, t_batch)
+            DOD_0_output = self.DOD_0(mu_batch)
             # Get the CoLoRA prediction output
-            output = self.colora_model(torch.bmm(DOD_0_output.transpose(1, 2), coeff_0_output), mu_batch, nu_batch, t_batch)
+            output = self.colora_model(torch.bmm(DOD_0_output.transpose(1, 2), coeff_0_output), nu_batch, t_batch)
 
             # Extract the solution slice at time step i; expected shape: (B, N_A)
-            u_proj = solution_batch[:, i, :].unsqueeze(2)
+            u_proj = solution_batch[:, i, :]
 
             error = output - u_proj  # (B, N_A)
             temp_error += torch.sum(torch.norm(error, dim=1) ** 2)

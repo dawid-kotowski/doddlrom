@@ -87,7 +87,7 @@ CoLoRA_DL_model = dr.CoLoRA_DL(N_A, L, dynamic_dim, parameter_nu_dim)
 
 # Initialize the CoLoRA_DL trainer
 CoLoRa_DL_Trainer = dr.CoLoRA_DL_Trainer(N_A, stat_DOD_model, stat_Coeff_model, 
-                                         CoLoRA_DL_model, stat_train_valid_data, 
+                                         CoLoRA_DL_model, train_valid_data, 
                                          epochs=2, restarts=2, learning_rate=1e-3, 
                                          batch_size=128)
 
@@ -103,8 +103,8 @@ torch.save({
     'decoder': De_model.state_dict(),
     'coeff_model': AE_Coeff_model.state_dict(),
 }, 'training/AE_DOD_DL_Module.pth')
-torch.save(stat_DOD_model.stat_dict(), 'training/stat_DOD_Module.pth')
-torch.save(stat_Coeff_model.stat_dict(), 'training/stat_CoeffDOD_Module.pth')
+torch.save(stat_DOD_model.state_dict(), 'training/stat_DOD_Module.pth')
+torch.save(stat_Coeff_model.state_dict(), 'training/stat_CoeffDOD_Module.pth')
 torch.save(CoLoRA_DL_model.state_dict(), 'training/CoLoRA_Module.pth')
 
 
