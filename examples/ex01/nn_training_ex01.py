@@ -23,7 +23,7 @@ nt = 10
 diameter = 0.1
 
 # Fetch Training and Validation set
-train_valid_data = dr.FetchTrainAndValidSet(0.8, 'ex01')
+train_valid_data = dr.FetchReducedTrainAndValidSet(0.8, 'ex01')
 stat_train_valid_data = dr.StatFetchTrainAndValidSet(0.8, 'ex01')
 
 # Initialize the DOD model

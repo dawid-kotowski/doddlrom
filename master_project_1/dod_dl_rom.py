@@ -19,11 +19,11 @@ def initialize_weights(m):
             nn.init.zeros_(m.bias)
 
 # Define Training/Validation Splitter
-class FetchTrainAndValidSet:
+class FetchReducedTrainAndValidSet:
     def __init__(self, train_to_val_ratio, example_name):
         # 0.8 = train_to_val_ratio means 80 % of training data and 20 % of validation data
         self.train_to_val_ratio = train_to_val_ratio
-        path = f'examples/{example_name}/training_data/training_data_{example_name}.npy'
+        path = f'examples/{example_name}/training_data/reduced_training_data_{example_name}.npy'
         loaded_data = np.load(path, allow_pickle=True)
         np.random.shuffle(loaded_data)
         num_samples = len(loaded_data)
@@ -76,25 +76,6 @@ class DatasetLoader(Dataset):
         nu = torch.tensor(entry['nu'], dtype=torch.float32)
         solution = torch.tensor(entry['solution'], dtype=torch.float32)
         return mu, nu, solution
-
-# Define DatasetLoader for DOD_DL
-class ReducedDatasetLoader(Dataset):
-    def __init__(self, data, G, A, N_A):
-        self.data = data
-        self.G = G
-        self.A = A
-        self.N_A = N_A
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        entry = self.data[idx]
-        mu = torch.tensor(entry['mu'], dtype=torch.float32)
-        nu = torch.tensor(entry['nu'], dtype=torch.float32)
-        u = torch.tensor(entry['solution'], dtype=torch.float32)
-        u_new = u @ self.G @ self.A
-        return mu, nu, u_new
 
 # Define DatasetLoader for stationary DOD
 class StatReducedDatasetLoader(Dataset):
@@ -178,15 +159,12 @@ class DOD_DL_Trainer:
         self.batch_size = batch_size
         self.model = nn_model.to(device)
         self.device = device
-        self.A = torch.tensor(np.load(f'examples/{example_name}/training_data/ambient_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        self.G = torch.tensor(np.load(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(ReducedDatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(ReducedDatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, solution_batch):
         batch_size = mu_batch.size(0)  # Get the batch size (can be problem, if set is non-divisible)
@@ -194,7 +172,7 @@ class DOD_DL_Trainer:
 
         for i in range(nt + 1):
             t_batch = torch.stack(
-                [torch.tensor(i/(nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+                [torch.tensor(i * time_end/(nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
             ).unsqueeze(1)
             output = self.model(mu_batch, t_batch)
 
@@ -334,21 +312,18 @@ class Coeff_DOD_DL_Trainer:
         self.model = coeffnn_model.to(device)
         self.device = device
 
-        self.A = torch.tensor(np.load(f'examples/{example_name}/training_data/ambient_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        self.G = torch.tensor(np.load(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(ReducedDatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(ReducedDatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
         temp_error = 0.0
         for i in range(nt + 1):
             t_batch = torch.stack(
-                [torch.tensor(i / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+                [torch.tensor(i * time_end / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
             ).unsqueeze(1)
             # Get the coefficient model output; expected shape: (B, n)
             output = self.model(mu_batch, nu_batch, t_batch)
@@ -517,21 +492,18 @@ class AE_DOD_DL_Trainer:
         self.coeff_model = Coeff_DOD_DL_model.to(device)
         self.device = device
 
-        self.A = torch.tensor(np.load(f'examples/{example_name}/training_data/ambient_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        self.G = torch.tensor(np.load(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(ReducedDatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(ReducedDatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
         temp_error = 0.0
         for i in range(nt + 1):
             t_batch = torch.stack(
-                [torch.tensor(i / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+                [torch.tensor(i * time_end / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
             ).unsqueeze(1)
             # Get the coefficient model output; expected shape: (B, n)
             coeff_output = self.coeff_model(mu_batch, nu_batch, t_batch)
@@ -981,21 +953,18 @@ class CoLoRA_DL_Trainer():
         self.colora_model = colora_model.to(device)
         self.device = device
 
-        self.A = torch.tensor(np.load(f'examples/{example_name}/training_data/ambient_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        self.G = torch.tensor(np.load(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(ReducedDatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(ReducedDatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
         temp_error = 0.0
         for i in range(nt + 1):
             t_batch = torch.stack(
-                [torch.tensor(i / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+                [torch.tensor(i * time_end / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
             ).unsqueeze(1)
             # Get the stationary coefficient model output; expected shape: (B, n, 1)
             coeff_0_output = self.model_0(mu_batch, nu_batch).unsqueeze(2)

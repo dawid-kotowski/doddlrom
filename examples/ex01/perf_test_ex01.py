@@ -4,11 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Fixed Constants
-N_h = 365
+N_h = 5101
 N_A = 64
 rank = 10
 L = 3
-dynamic_dim = 4
 N = 16
 # unspecified final dim n
 m = 4
@@ -25,7 +24,7 @@ generalepochs = 5
 generalrestarts = 2
 
 # Fetch Training and Validation set
-train_valid_data = dr.FetchTrainAndValidSet(0.8, 'ex01')
+train_valid_data = dr.FetchReducedTrainAndValidSet(0.8, 'ex01')
 stat_train_valid_data = dr.StatFetchTrainAndValidSet(0.8, 'ex01')
 
 # Initialize random Performance Check set
@@ -59,7 +58,7 @@ ambient_abs_error_colora_dl = []
 ambient_rel_error_colora_dl = []
 for n in range(2, 8):
     # Initialize the DOD model
-    DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, N, N_A)
+    DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, n, N_A)
 
     # Initialize the DOD trainer
     DOD_DL_trainer = dr.DOD_DL_Trainer(DOD_DL_model, train_valid_data, N_A, 'ex01',
@@ -70,7 +69,7 @@ for n in range(2, 8):
     best_loss = DOD_DL_trainer.train()
 
     # Initialize the Coefficient Finding model
-    Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, N, phi_N_structure)
+    Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
 
     # Initialize the Coefficient Finding trainer
     Coeff_trainer = dr.Coeff_DOD_DL_Trainer(N_A, DOD_DL_model, Coeff_model,
@@ -81,19 +80,30 @@ for n in range(2, 8):
     # Train the Coefficient model
     best_loss2 = Coeff_trainer.train()
 
+    # Initialize the DOD model
+    DOD_DL_AE_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, N, N_A)
+
+    # Initialize the DOD trainer
+    DOD_DL_AE_trainer = dr.DOD_DL_Trainer(DOD_DL_AE_model, train_valid_data, N_A, 'ex01',
+                                    generalepochs, generalrestarts, learning_rate=1e-3, 
+                                    batch_size=128)
+
+    # Train the DOD model
+    best_loss3 = DOD_DL_AE_trainer.train()
+
     # Initialize the AE Coefficient Finding model
     En_model = dr.Encoder(N, 1, 1, n, 1, kernel=3, stride=2, padding=1)
     De_model = dr.Decoder(N, 1, 1, n, 1, kernel=3, stride=2, padding=1)
     AE_Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
 
     # Initialize the AE Coefficient Finding trainer
-    AE_DOD_DL_trainer = dr.AE_DOD_DL_Trainer(N_A, DOD_DL_model, AE_Coeff_model, En_model, De_model,
+    AE_DOD_DL_trainer = dr.AE_DOD_DL_Trainer(N_A, DOD_DL_AE_model, AE_Coeff_model, En_model, De_model,
                                         train_valid_data, 'ex01',
                                         generalepochs, generalrestarts, learning_rate=1e-3, 
                                         batch_size=128)
 
     # Train the AE Coefficient model
-    best_loss3 = AE_DOD_DL_trainer.train()
+    best_loss4 = AE_DOD_DL_trainer.train()
 
     # Initialize and train the stationary DOD model
     stat_DOD_model = dr.DOD(preprocess_dim, n, N_A, stat_dod_structure)
@@ -101,7 +111,7 @@ for n in range(2, 8):
                                     stat_train_valid_data, 'ex01', 
                                     generalepochs, generalrestarts, learning_rate=1e-3, 
                                     batch_size=128)
-    best_loss4 = stat_DOD_Trainer.train()
+    best_loss5 = stat_DOD_Trainer.train()
 
     # Initialize and train the stationary Coefficient Finding model
     stat_Coeff_model = dr.CoeffDOD(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
@@ -109,10 +119,10 @@ for n in range(2, 8):
                                             stat_train_valid_data, 'ex01',
                                             generalepochs, generalrestarts, learning_rate=1e-3, 
                                             batch_size=128)
-    best_loss5 = stat_Coeff_Trainer.train()
+    best_loss6 = stat_Coeff_Trainer.train()
 
     # Initialize the CoLoRA_DL model
-    CoLoRA_DL_model = dr.CoLoRA_DL(N_A, L, dynamic_dim, parameter_nu_dim)
+    CoLoRA_DL_model = dr.CoLoRA_DL(N_A, L, n, parameter_nu_dim)
 
     # Initialize the CoLoRA_DL trainer
     CoLoRa_DL_Trainer = dr.CoLoRA_DL_Trainer(N_A, stat_DOD_model, stat_Coeff_model, 
@@ -121,7 +131,7 @@ for n in range(2, 8):
                                             batch_size=128)
 
     # Train the CoLoRA_DL
-    best_loss6 = CoLoRa_DL_Trainer.train()
+    best_loss7 = CoLoRa_DL_Trainer.train()
 
 
     '''
@@ -133,6 +143,7 @@ for n in range(2, 8):
     # Set all to evalutate
     DOD_DL_model.eval()
     Coeff_model.eval()
+    DOD_DL_AE_model.eval()
     De_model.eval()
     AE_Coeff_model.eval()
     stat_DOD_model.eval()
@@ -165,13 +176,14 @@ for n in range(2, 8):
             time = torch.tensor(j / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
             time = time.unsqueeze(0).unsqueeze(1)
             dod_dl_output = DOD_DL_model(mu_i, time).squeeze(0).T
+            dod_dl_ae_output = DOD_DL_model(mu_i, time).squeeze(0).T
             coeff_output = Coeff_model(mu_i, nu_i, time)
             u_i_coeff_dl = torch.matmul(torch.matmul(A, dod_dl_output), coeff_output)
-            coeff_dl_solution.append(u_i_coeff_dl)  # append each [N_h] vector
+            coeff_dl_solution.append(u_i_coeff_dl)
 
             coeff_n_output = AE_Coeff_model(mu_i, nu_i, time).unsqueeze(0)
             decoded_output = De_model(coeff_n_output).squeeze(0)
-            u_i_ae_dl = torch.matmul(torch.matmul(A, dod_dl_output), decoded_output)
+            u_i_ae_dl = torch.matmul(torch.matmul(A, dod_dl_ae_output), decoded_output)
             ae_dl_solution.append(u_i_ae_dl)
 
             stat_coeff_n_output = stat_Coeff_model(mu_i, nu_i).unsqueeze(0).unsqueeze(2)

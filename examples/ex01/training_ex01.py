@@ -4,7 +4,7 @@ import numpy as np
 # Constants
 N_A = 64
 nt = 10
-diameter = 0.08
+diameter = 0.02
 
 # Define the advection function dependent on 'mu'
 def advection_function(x, mu):
@@ -84,6 +84,15 @@ G = fom.h1_0_semi_product.matrix.toarray()
 gram = np.array(G, dtype=np.float32)
 np.save('examples/ex01/training_data/gram_matrix_ex01.npy', gram)
 
+# Save reduced training data to file
+reduced_training_data = []
+for mu_nu in training_set:
+    solution = fom.solve(mu_nu)
+    solution_flat = solution.to_numpy()
+    reduced_solution = solution_flat @ G @ A
+    reduced_training_data.append((mu_nu['mu'], mu_nu['nu'], reduced_solution))
+reduced_training_data_array = np.array(reduced_training_data, dtype=dtype)
+np.save('examples/ex01/training_data/reduced_training_data_ex01.npy', reduced_training_data_array)
 
 '''
 ----------------------------
