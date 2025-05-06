@@ -11,7 +11,7 @@ from torch.utils.data import Dataset, DataLoader
 time_end = 1.
 nt = 10
 
-# Initialize linear weights
+# Initialize weights
 def initialize_weights(m):
     if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
         nn.init.xavier_uniform_(m.weight)
@@ -20,10 +20,11 @@ def initialize_weights(m):
 
 # Define Training/Validation Splitter
 class FetchTrainAndValidSet:
-    def __init__(self, train_to_val_ratio):
+    def __init__(self, train_to_val_ratio, example_name):
         # 0.8 = train_to_val_ratio means 80 % of training data and 20 % of validation data
         self.train_to_val_ratio = train_to_val_ratio
-        loaded_data = np.load('training/training_data.npy', allow_pickle=True)
+        path = f'examples/{example_name}/training_data/training_data_{example_name}.npy'
+        loaded_data = np.load(path, allow_pickle=True)
         np.random.shuffle(loaded_data)
         num_samples = len(loaded_data)
         num_train_samples = int(train_to_val_ratio * num_samples)
@@ -41,10 +42,11 @@ class FetchTrainAndValidSet:
 
 # Define Training/Validation Splitter for the stationary model
 class StatFetchTrainAndValidSet:
-    def __init__(self, train_to_val_ratio):
+    def __init__(self, train_to_val_ratio, example_name):
         # 0.8 = train_to_val_ratio means 80 % of training data and 20 % of validation data
         self.train_to_val_ratio = train_to_val_ratio
-        loaded_data = np.load('training/stationary_training_data.npy', allow_pickle=True)
+        path = f'examples/{example_name}/training_data/stationary_training_data_{example_name}.npy'
+        loaded_data = np.load(path, allow_pickle=True)
         np.random.shuffle(loaded_data)
         num_samples = len(loaded_data)
         num_train_samples = int(train_to_val_ratio * num_samples)
@@ -76,7 +78,7 @@ class DatasetLoader(Dataset):
         return mu, nu, solution
 
 # Define DatasetLoader for DOD_DL
-class Reduced_DatasetLoader(Dataset):
+class ReducedDatasetLoader(Dataset):
     def __init__(self, data, G, A, N_A):
         self.data = data
         self.G = G
@@ -95,7 +97,7 @@ class Reduced_DatasetLoader(Dataset):
         return mu, nu, u_new
 
 # Define DatasetLoader for stationary DOD
-class DODDataset(Dataset):
+class StatReducedDatasetLoader(Dataset):
     def __init__(self, data, G, A, N_A):
         self.data = data
         self.G = G
@@ -168,7 +170,7 @@ class DOD_DL(nn.Module):
 
 # Define DOD_DL_-DL training
 class DOD_DL_Trainer:
-    def __init__(self, nn_model, train_valid_set, N_A, epochs=1, restart=1, learning_rate=1e-3,
+    def __init__(self, nn_model, train_valid_set, N_A, example_name, epochs=1, restart=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.learning_rate = learning_rate
         self.restarts = restart
@@ -176,15 +178,15 @@ class DOD_DL_Trainer:
         self.batch_size = batch_size
         self.model = nn_model.to(device)
         self.device = device
-        self.A = torch.tensor(np.load('training/ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        self.G = torch.tensor(np.load('training/gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.A = torch.tensor(np.load(f'examples/{example_name}/training_data/ambient_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.G = torch.tensor(np.load(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
 
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(Reduced_DatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(Reduced_DatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(ReducedDatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(ReducedDatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, solution_batch):
         batch_size = mu_batch.size(0)  # Get the batch size (can be problem, if set is non-divisible)
@@ -322,7 +324,7 @@ class Coeff_DOD_DL(nn.Module):
 
 # Define the Trainer
 class Coeff_DOD_DL_Trainer:
-    def __init__(self, N_A, DOD_DL_model, coeffnn_model, train_valid_set, epochs, restarts, learning_rate,
+    def __init__(self, N_A, DOD_DL_model, coeffnn_model, train_valid_set, example_name, epochs, restarts, learning_rate,
                  batch_size, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.learning_rate = learning_rate
         self.epochs = epochs
@@ -332,14 +334,14 @@ class Coeff_DOD_DL_Trainer:
         self.model = coeffnn_model.to(device)
         self.device = device
 
-        self.G = torch.tensor(np.load('training/gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        self.A = torch.tensor(np.load('training/ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.A = torch.tensor(np.load(f'examples/{example_name}/training_data/ambient_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.G = torch.tensor(np.load(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(Reduced_DatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(Reduced_DatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(ReducedDatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(ReducedDatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
@@ -502,7 +504,7 @@ class Decoder(nn.Module):
     
 # Define the Trainer
 class AE_DOD_DL_Trainer:
-    def __init__(self, N_A, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, error_weight=0.5,
+    def __init__(self, N_A, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, example_name, error_weight=0.5,
                  epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.learning_rate = learning_rate
         self.error_weight = error_weight
@@ -515,14 +517,14 @@ class AE_DOD_DL_Trainer:
         self.coeff_model = Coeff_DOD_DL_model.to(device)
         self.device = device
 
-        self.G = torch.tensor(np.load('training/gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        self.A = torch.tensor(np.load('training/ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.A = torch.tensor(np.load(f'examples/{example_name}/training_data/ambient_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.G = torch.tensor(np.load(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(Reduced_DatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(Reduced_DatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(ReducedDatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(ReducedDatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
@@ -740,7 +742,7 @@ class CoeffDOD(nn.Module):
 
 # Define the trainer for these
 class DODTrainer:
-    def __init__(self, nn_model, ambient_dim, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
+    def __init__(self, nn_model, ambient_dim, train_valid_set, example_name, epochs=1, restart=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.learning_rate = learning_rate
         self.restarts = restart
@@ -749,14 +751,14 @@ class DODTrainer:
         self.model = nn_model.to(device)
         self.device = device
         self.N_A = ambient_dim
-        self.G = torch.tensor(np.load('training/stationary_gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        self.A = torch.tensor(np.load('training/stationary_ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.A = torch.tensor(np.load(f'examples/{example_name}/training_data/stationary_ambient_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.G = torch.tensor(np.load(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(DODDataset(train_data, self.G, self.A, self.N_A), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(DODDataset(valid_data, self.G, self.A, self.N_A), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(StatReducedDatasetLoader(train_data, self.G, self.A, self.N_A), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(StatReducedDatasetLoader(valid_data, self.G, self.A, self.N_A), batch_size=self.batch_size, shuffle=False)
 
 
     def loss_function(self, mu_batch, solution_batch):
@@ -812,7 +814,7 @@ class DODTrainer:
         self.model.load_state_dict(best_model)
         return best_loss
 class CoeffDODTrainer:
-    def __init__(self, dod_model, coeffnn_model, ambient_dim, train_valid_set, epochs=1, restarts=1, learning_rate=1e-3,
+    def __init__(self, dod_model, coeffnn_model, ambient_dim, train_valid_set, example_name, epochs=1, restarts=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.learning_rate = learning_rate
         self.epochs = epochs
@@ -823,8 +825,8 @@ class CoeffDODTrainer:
         self.device = device
         self.N_A = ambient_dim
 
-        G = torch.tensor(np.load('training/gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        A = torch.tensor(np.load('training/ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        A = torch.tensor(np.load(f'examples/{example_name}/training_data/stationary_ambient_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        G = torch.tensor(np.load(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
@@ -968,7 +970,7 @@ class CoLoRA_DL(nn.Module):
 
 # Define CoLoRA trainer
 class CoLoRA_DL_Trainer():
-    def __init__(self, N_A, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, epochs, restarts, learning_rate,
+    def __init__(self, N_A, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, example_name, epochs, restarts, learning_rate,
                  batch_size, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.learning_rate = learning_rate
         self.epochs = epochs
@@ -979,14 +981,14 @@ class CoLoRA_DL_Trainer():
         self.colora_model = colora_model.to(device)
         self.device = device
 
-        self.G = torch.tensor(np.load('training/gram_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        self.A = torch.tensor(np.load('training/ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.A = torch.tensor(np.load(f'examples/{example_name}/training_data/ambient_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
+        self.G = torch.tensor(np.load(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(Reduced_DatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(Reduced_DatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(ReducedDatasetLoader(train_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(ReducedDatasetLoader(valid_data, self.G, self.A, N_A), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
@@ -1046,3 +1048,34 @@ class CoLoRA_DL_Trainer():
         # Load the best model
         self.colora_model.load_state_dict(best_model)
         return best_loss
+
+'''
+---------------------
+Further additions for testing
+---------------------
+'''
+
+# Works on numpy and torch
+class L2Norm():
+    def __init__(self, G):
+        self.G = G
+
+    def __call__(self, *args, **kwds):
+        if isinstance(*args, torch.Tensor):
+            return torch.sum(torch.sqrt(torch.einsum('ij,jk,ik->i', *args, self.G, *args)))
+        elif isinstance(*args, np.ndarray):
+            return np.sum(np.sqrt(np.einsum('ij,jk,ik->i', *args, self.G, *args)))
+        else:
+            print("Type Error in L2 Norm")
+            pass
+
+# Define a mean error Finder
+class MeanError():
+    def __init__(self, norm):
+        self.norm = norm
+    def __call__(self, data, **kwds):
+        error = 0
+        for entry in data:
+            error += self.norm(entry)
+        return error / len(data)
+

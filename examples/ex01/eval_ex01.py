@@ -32,24 +32,24 @@ stat_Coeff_model = dr.CoeffDOD(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_s
 CoLoRA_DL_model = dr.CoLoRA_DL(N_A, L, dynamic_dim, parameter_nu_dim)
 
 # Load state_dicts
-DOD_DL_model.load_state_dict(torch.load('training/DOD_Module.pth'))
+DOD_DL_model.load_state_dict(torch.load('examples/ex01/state_dicts/DOD_Module.pth'))
 DOD_DL_model.eval()
-Coeff_model.load_state_dict(torch.load('training/DOD_Coefficient_Module.pth'))
+Coeff_model.load_state_dict(torch.load('examples/ex01/state_dicts/DOD_Coefficient_Module.pth'))
 Coeff_model.eval()
-checkpoint = torch.load('training/AE_DOD_DL_Module.pth')
+checkpoint = torch.load('examples/ex01/state_dicts/AE_DOD_DL_Module.pth')
 Decoder_model.load_state_dict(checkpoint['decoder'])
 AE_Coeff_model.load_state_dict(checkpoint['coeff_model'])
 Decoder_model.eval()
 AE_Coeff_model.eval()
-stat_DOD_model.load_state_dict(torch.load('training/stat_DOD_Module.pth'))
-stat_Coeff_model.load_state_dict(torch.load('training/stat_CoeffDOD_Module.pth'))
+stat_DOD_model.load_state_dict(torch.load('examples/ex01/state_dicts/stat_DOD_Module.pth'))
+stat_Coeff_model.load_state_dict(torch.load('examples/ex01/state_dicts/stat_CoeffDOD_Module.pth'))
 stat_DOD_model.eval()
 stat_Coeff_model.eval()
-CoLoRA_DL_model.load_state_dict(torch.load('training/CoLoRA_Module.pth'))
+CoLoRA_DL_model.load_state_dict(torch.load('examples/ex01/state_dicts/CoLoRA_Module.pth'))
 CoLoRA_DL_model.eval()
 
 # Get some Validation Data
-loaded_data = np.load('training/training_data.npy', allow_pickle=True)
+loaded_data = np.load('examples/ex01/training_data/training_data_ex01.npy', allow_pickle=True)
 np.random.shuffle(loaded_data) 
 training_data = loaded_data[:4]
 
@@ -80,7 +80,7 @@ fom, fom_data = discretize_instationary_cg(problem, diameter=diameter, nt=nt)
 
 # Set up solutions
 true_solution = fom.solution_space.empty()
-A = torch.tensor(np.load('training/ambient_matrix.npy', allow_pickle=True), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+A = torch.tensor(np.load('examples/ex01/training_data/ambient_matrix_ex01.npy', allow_pickle=True), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
 
 for entry in training_data:
     mu_i = torch.tensor(entry['mu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')

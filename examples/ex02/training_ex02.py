@@ -11,9 +11,18 @@ def advection_function(x, mu):
     mu_value = mu['mu']
     return np.array([[np.cos(mu_value)*30, np.sin(mu_value)*30] for _ in range(x.shape[0])])
 
+# Define some initial condition
+def bump_function(x):
+    if abs(x[0]) < 1 and abs(x[1]) < 1:
+        return np.array([[np.exp(-1 / (1 - x[0]**2)), np.exp(-1 / (1 - x[1]**2))] for _ in range(x.shape[0])])
+    else:
+        return np.array([[0, 0] for _ in range(x.shape[0])])
+    
+
 # Define the stationary problem
 advection_params = Parameters({'mu': 1})
 advection_generic_function = GenericFunction(advection_function, dim_domain=2, shape_range=(2,), parameters=advection_params)
+initial_condition_function = GenericFunction(bump_function, dim_domain=2, shape_range=(2, ))
 stationary_problem = StationaryProblem(
     domain=RectDomain(),
     rhs=ExpressionFunction('0', 2),
@@ -21,7 +30,6 @@ stationary_problem = StationaryProblem(
         [ExpressionFunction('1 - x[0]', 2), ExpressionFunction('x[0]', 2)],
         [ProjectionParameterFunctional('nu', 1), 1]
     ),
-    dirichlet_data=ExpressionFunction('(-(x[1] - 0.5)**2 + 0.25) * (x[0] < 1e-10)', 2),
     advection=advection_generic_function,
     name='advection_problem'
 )
@@ -29,7 +37,7 @@ stationary_problem = StationaryProblem(
 # Define the instationary problem
 problem = InstationaryProblem(
     T=1.,
-    initial_data=ConstantFunction(0., 2),
+    initial_data=initial_condition_function,
     stationary_part=stationary_problem,
     name='advection_problem'
 )
@@ -67,7 +75,7 @@ dtype = [('mu', 'O'), ('nu', 'O'), ('solution', 'O')]
 training_data_array = np.array(training_data, dtype=dtype)
 
 # Save the numpy array to a file
-np.save('training/training_data.npy', training_data_array)
+np.save('examples/ex02/training_data/training_data_ex02.npy', training_data_array)
 
 # Calculate the POD according to the full data
 pod_modes, singular_values = pod(solution_set, product=fom.h1_0_semi_product, modes=N_A)
@@ -75,14 +83,14 @@ A = pod_modes.to_numpy().T
 
 # Save POD to file
 ambient = np.array(A, dtype=np.float32)
-np.save('training/ambient_matrix.npy', ambient)
+np.save('examples/ex02/training_data/ambient_matrix_ex02.npy', ambient)
 
 # Calculate the Gram matrix for the fom
 G = fom.h1_0_semi_product.matrix.toarray()
 
 # Save G to file
 gram = np.array(G, dtype=np.float32)
-np.save('training/gram_matrix.npy', gram)
+np.save('examples/ex02/training_data/gram_matrix_ex02.npy', gram)
 
 
 '''
@@ -103,7 +111,7 @@ stat_solution_set = stat_fom.solution_space.empty()
 
 # Correction for Dirichlet and save
 u_0 = stat_fom.solve(stat_parameter_space.sample_uniformly(1)[0])
-np.save("training/Dirchilet shift", u_0.to_numpy())
+np.save("examples/ex02/training_data/Dirchilet_shift_ex02.npy", u_0.to_numpy())
 
 # Solve the stationary full-order-model for each parameter
 for mu_nu in training_set:
@@ -118,7 +126,7 @@ dtype = [('mu', 'O'), ('nu', 'O'), ('solution', 'O')]
 stat_training_data_array = np.array(stat_training_data, dtype=dtype)
 
 # Save the numpy array to a file
-np.save('training/stationary_training_data.npy', stat_training_data_array)
+np.save('examples/ex02/training_data/stationary_training_data_ex02.npy', stat_training_data_array)
 
 # Calculate the POD according to the full data
 stat_pod_modes, stat_singular_values = pod(stat_solution_set, product=stat_fom.h1_0_semi_product, modes=N_A)
@@ -126,11 +134,11 @@ stat_A = stat_pod_modes.to_numpy().T
 
 # Save POD to file
 stat_ambient = np.array(stat_A, dtype=np.float32)
-np.save('training/stationary_ambient_matrix.npy', stat_ambient)
+np.save('examples/ex02/training_data/stationary_ambient_matrix_ex02.npy', stat_ambient)
 
 # Calculate the Gram matrix for the fom
 stat_G = stat_fom.h1_0_semi_product.matrix.toarray()
 
 # Save G to file
 stat_gram = np.array(stat_G, dtype=np.float32)
-np.save('training/stationary_gram_matrix.npy', stat_gram)
+np.save('examples/ex02/training_data/stationary_gram_matrix_ex02.npy', stat_gram)
