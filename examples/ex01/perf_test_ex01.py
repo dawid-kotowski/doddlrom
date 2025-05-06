@@ -45,10 +45,19 @@ Start of Performance Loop
 -------------------------
 '''
 
-performance_error_lin_dod_dl = []
-performance_error_ae_dod_dl = []
-performance_error_colora_dl = []
-for n in range(3, 8):
+abs_error_lin_dod_dl = []
+rel_error_lin_dod_dl = []
+abs_error_ae_dod_dl = []
+rel_error_ae_dod_dl = []
+abs_error_colora_dl = []
+rel_error_colora_dl = []
+ambient_abs_error_lin_dod_dl = []
+ambient_rel_error_lin_dod_dl = []
+ambient_abs_error_ae_dod_dl = []
+ambient_rel_error_ae_dod_dl = []
+ambient_abs_error_colora_dl = []
+ambient_rel_error_colora_dl = []
+for n in range(2, 8):
     # Initialize the DOD model
     DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, N, N_A)
 
@@ -134,7 +143,9 @@ for n in range(3, 8):
     coeff_dl_solutions = []
     ae_dl_solutions = []
     colora_dl_solutions = []
-    A = torch.tensor(np.load('examples/ex01/training_data/ambient_matrix_ex01.npy', allow_pickle=True), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+    G = np.load('examples/ex01/training_data/gram_matrix_ex01.npy', allow_pickle=True)
+    A_np = np.load('examples/ex01/training_data/ambient_matrix_ex01.npy', allow_pickle=True)
+    A = torch.tensor(A_np, dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
     for entry in performance_data:
         mu_i = torch.tensor(entry['mu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
         mu_i = mu_i.unsqueeze(0)
@@ -143,6 +154,8 @@ for n in range(3, 8):
 
         # True solution
         u_i = entry['solution']
+        norm_u_i = l2_norm(u_i)
+        proj_u_i = u_i @ G @ A_np @ A_np.T
 
         # Coeff_DL + AE_DOD_DL + CoLoRA_DL solution
         coeff_dl_solution = []
@@ -174,30 +187,89 @@ for n in range(3, 8):
 
         ae_dl_sol = torch.stack(ae_dl_solution, dim=0)
         ae_dl_sol = ae_dl_sol.detach().numpy()
-        ae_dl_solution.append(ae_dl_sol)
+        ae_dl_solutions.append(ae_dl_sol)
 
         colora_dl_sol = torch.stack(colora_dl_solution, dim=0)
         colora_dl_sol = colora_dl_sol.detach().numpy()
         colora_dl_solutions.append(colora_dl_sol)
     
-    # Append Error for Batch
-    performance_error_lin_dod_dl.append(error_loader(u_i - coeff_dl_solutions))
-    performance_error_ae_dod_dl.append(error_loader(u_i - ae_dl_solutions))
-    performance_error_colora_dl.append(error_loader(u_i - colora_dl_solutions))
+    # Append Error for Full sized Batch
+    abs_error_lin_dod_dl.append(error_loader(u_i - coeff_dl_solutions))
+    rel_error_lin_dod_dl.append(error_loader(u_i - coeff_dl_solutions) / norm_u_i)
+    abs_error_ae_dod_dl.append(error_loader(u_i - ae_dl_solutions))
+    rel_error_ae_dod_dl.append(error_loader(u_i - ae_dl_solutions) / norm_u_i)
+    abs_error_colora_dl.append(error_loader(u_i - colora_dl_solutions))
+    rel_error_colora_dl.append(error_loader(u_i - colora_dl_solutions) / norm_u_i)
 
-# Plot Errors
-x = list(range(len(performance_error_ae_dod_dl)))
-plt.plot(x, performance_error_ae_dod_dl, label='AE DOD DL', 
-         color='blue', linestyle='--', linewidth=2)
-plt.plot(x, performance_error_lin_dod_dl, label='Linear DOD DL', 
-         color='green', linestyle='-', linewidth=2)
-plt.plot(x, performance_error_colora_dl, label='CoLoRA DL', 
-         color='red', linestyle=':', linewidth=2)
-plt.title('Absolut L^2-Errors')
-plt.xlabel('Reduced Dimension n')
-plt.ylabel('Absolut Error')
-plt.grid(True)
-plt.legend()
+    # Append Error for Ambient Batch
+    ambient_abs_error_lin_dod_dl.append(error_loader(proj_u_i - coeff_dl_solutions))
+    ambient_rel_error_lin_dod_dl.append(error_loader(proj_u_i - coeff_dl_solutions) / norm_u_i)
+    ambient_abs_error_ae_dod_dl.append(error_loader(proj_u_i - ae_dl_solutions))
+    ambient_rel_error_ae_dod_dl.append(error_loader(proj_u_i - ae_dl_solutions) / norm_u_i)
+    ambient_abs_error_colora_dl.append(error_loader(proj_u_i - colora_dl_solutions))
+    ambient_rel_error_colora_dl.append(error_loader(proj_u_i - colora_dl_solutions) / norm_u_i)
+
+'''
+----------------
+----------------
+Plot Errors
+----------------
+----------------
+'''
+x = np.linspace(2, 8, 6, dtype=int)
+
+# Define color and style map for consistency
+plot_styles = {
+    'AE DOD DL':     {'color': 'blue',  'linestyle': '--'},
+    'Linear DOD DL': {'color': 'green', 'linestyle': '-'},
+    'CoLoRA DL':     {'color': 'red',   'linestyle': ':'},
+}
+
+# Start 2x2 subplot grid
+fig, axs = plt.subplots(2, 2, figsize=(12, 10))
+axs = axs.flatten()  # for easy indexing
+
+# --- Plot 1: Absolute L2 Errors ---
+axs[0].plot(x, abs_error_ae_dod_dl, label='AE DOD DL', **plot_styles['AE DOD DL'])
+axs[0].plot(x, abs_error_lin_dod_dl, label='Linear DOD DL', **plot_styles['Linear DOD DL'])
+axs[0].plot(x, abs_error_colora_dl, label='CoLoRA DL', **plot_styles['CoLoRA DL'])
+axs[0].set_title('Absolute $L^2$-Errors')
+axs[0].set_xlabel('Reduced Dimension $n$')
+axs[0].set_ylabel('Absolute Error')
+axs[0].grid(True)
+axs[0].legend()
+
+# --- Plot 2: Relative L2 Errors ---
+axs[1].plot(x, rel_error_ae_dod_dl, label='AE DOD DL', **plot_styles['AE DOD DL'])
+axs[1].plot(x, rel_error_lin_dod_dl, label='Linear DOD DL', **plot_styles['Linear DOD DL'])
+axs[1].plot(x, rel_error_colora_dl, label='CoLoRA DL', **plot_styles['CoLoRA DL'])
+axs[1].set_title('Relative $L^2$-Errors')
+axs[1].set_xlabel('Reduced Dimension $n$')
+axs[1].set_ylabel('Relative Error')
+axs[1].grid(True)
+axs[1].legend()
+
+# --- Plot 3: Absolute Ambient-Accounted Errors ---
+axs[2].plot(x, ambient_abs_error_ae_dod_dl, label='AE DOD DL', **plot_styles['AE DOD DL'])
+axs[2].plot(x, ambient_abs_error_lin_dod_dl, label='Linear DOD DL', **plot_styles['Linear DOD DL'])
+axs[2].plot(x, ambient_abs_error_colora_dl, label='CoLoRA DL', **plot_styles['CoLoRA DL'])
+axs[2].set_title('Ambient Absolute $L^2$-Errors')
+axs[2].set_xlabel('Reduced Dimension $n$')
+axs[2].set_ylabel('Absolute Error')
+axs[2].grid(True)
+axs[2].legend()
+
+# --- Plot 4: Relative Ambient-Accounted Errors ---
+axs[3].plot(x, ambient_rel_error_ae_dod_dl, label='AE DOD DL', **plot_styles['AE DOD DL'])
+axs[3].plot(x, ambient_rel_error_lin_dod_dl, label='Linear DOD DL', **plot_styles['Linear DOD DL'])
+axs[3].plot(x, ambient_rel_error_colora_dl, label='CoLoRA DL', **plot_styles['CoLoRA DL'])
+axs[3].set_title('Ambient Relative $L^2$-Errors')
+axs[3].set_xlabel('Reduced Dimension $n$')
+axs[3].set_ylabel('Relative Error')
+axs[3].grid(True)
+axs[3].legend()
+
+plt.tight_layout()
 plt.show()
     
 
