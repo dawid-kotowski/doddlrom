@@ -23,6 +23,7 @@ nt = 10
 diameter = 0.1
 generalepochs = 80
 generalrestarts = 5
+generalpatience = 3
 
 # Fetch Training and Validation set
 train_valid_data = dr.FetchReducedTrainAndValidSet(0.8, 'ex01')
@@ -59,7 +60,7 @@ for n in tqdm(range(2, 8), desc="Reduced Dimension"):
     # Initialize the DOD trainer
     DOD_DL_trainer = dr.DOD_DL_Trainer(DOD_DL_model, train_valid_data, N_A, 'ex01',
                                     generalepochs, generalrestarts, learning_rate=1e-3, 
-                                    batch_size=128)
+                                    batch_size=128, patience=generalpatience)
 
     # Train the DOD model
     best_loss = DOD_DL_trainer.train()
@@ -71,7 +72,7 @@ for n in tqdm(range(2, 8), desc="Reduced Dimension"):
     Coeff_trainer = dr.Coeff_DOD_DL_Trainer(N_A, DOD_DL_model, Coeff_model,
                                     train_valid_data, 'ex01', 
                                     generalepochs, generalrestarts, learning_rate=1e-3, 
-                                    batch_size=128)
+                                    batch_size=128, patience=generalpatience)
 
     # Train the Coefficient model
     best_loss2 = Coeff_trainer.train()
@@ -108,7 +109,7 @@ for n in tqdm(range(2, 8), desc="Reduced Dimension"):
     stat_DOD_Trainer = dr.DODTrainer(stat_DOD_model, N_A, 
                                     stat_train_valid_data, 'ex01', 
                                     generalepochs, generalrestarts, learning_rate=1e-3, 
-                                    batch_size=128)
+                                    batch_size=128, patience=generalpatience)
     best_loss5 = stat_DOD_Trainer.train()
 
     # Initialize and train the stationary Coefficient Finding model
@@ -116,7 +117,7 @@ for n in tqdm(range(2, 8), desc="Reduced Dimension"):
     stat_Coeff_Trainer = dr.CoeffDODTrainer(stat_DOD_model, stat_Coeff_model, N_A,
                                             stat_train_valid_data, 'ex01',
                                             generalepochs, generalrestarts, learning_rate=1e-3, 
-                                            batch_size=128)
+                                            batch_size=128, patience=generalpatience)
     best_loss6 = stat_Coeff_Trainer.train()
 
     # Initialize the CoLoRA_DL model
@@ -126,7 +127,7 @@ for n in tqdm(range(2, 8), desc="Reduced Dimension"):
     CoLoRa_DL_Trainer = dr.CoLoRA_DL_Trainer(N_A, stat_DOD_model, stat_Coeff_model, 
                                             CoLoRA_DL_model, train_valid_data, 'ex01',
                                             generalepochs, generalrestarts, learning_rate=1e-3, 
-                                            batch_size=128)
+                                            batch_size=128, patience=generalpatience)
 
     # Train the CoLoRA_DL
     best_loss7 = CoLoRa_DL_Trainer.train()
@@ -141,13 +142,11 @@ for n in tqdm(range(2, 8), desc="Reduced Dimension"):
     # Set all to evalutate
     DOD_DL_model.eval()
     Coeff_model.eval()
-
     ''' ==============AE MODEL==================
     DOD_DL_AE_model.eval()
     De_model.eval()
     AE_Coeff_model.eval()
     '''
-
     stat_DOD_model.eval()
     stat_Coeff_model.eval()
     CoLoRA_DL_model.eval()

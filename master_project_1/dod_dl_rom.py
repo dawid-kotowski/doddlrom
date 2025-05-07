@@ -177,7 +177,7 @@ class DOD_DL_Trainer:
 
         tqdm.write("Model DOD DL is being trained...")
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts DOD DL", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
@@ -348,7 +348,7 @@ class Coeff_DOD_DL_Trainer:
 
         tqdm.write("Model Coeff DOD DL is being trained...")
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts Coeff DOD DL", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
@@ -555,7 +555,7 @@ class AE_DOD_DL_Trainer:
         tqdm.write("Model AE DOD DL is being trained...")
 
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts AE DOD DL", leave=False):
             self.coeff_model.apply(initialize_weights)
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
@@ -775,7 +775,7 @@ class DODTrainer:
 
         tqdm.write("Model stat DOD is being trained...")
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts stat DOD", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
@@ -863,7 +863,7 @@ class CoeffDODTrainer:
 
         tqdm.write("Model stat Coeff DOD is being trained...")
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts stat Coeff DOD", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
@@ -1032,7 +1032,7 @@ class CoLoRA_DL_Trainer():
 
         tqdm.write("Model CoLoRA is being trained...")
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts CoLoRA DL", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
