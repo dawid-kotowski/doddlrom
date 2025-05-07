@@ -21,6 +21,9 @@ phi_n_structure = [16, 8]
 stat_dod_structure = [128, 64]
 nt = 10
 diameter = 0.1
+generalepochs = 500
+generalrestarts = 2
+generalpatience = 3
 
 # Fetch Training and Validation set
 train_valid_data = dr.FetchReducedTrainAndValidSet(0.8, 'ex01')
@@ -31,8 +34,8 @@ DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, N, N_A
 
 # Initialize the DOD trainer
 DOD_DL_trainer = dr.DOD_DL_Trainer(DOD_DL_model, train_valid_data, N_A, 'ex01',
-                                   epochs=200,restart=2, learning_rate=1e-3, 
-                                   batch_size=128)
+                                   generalepochs,generalrestarts, learning_rate=1e-3, 
+                                   batch_size=128, patience=generalpatience)
 
 # Train the DOD model
 best_loss = DOD_DL_trainer.train()
@@ -44,8 +47,8 @@ Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, N, phi_N_st
 # Initialize the Coefficient Finding trainer
 Coeff_trainer = dr.Coeff_DOD_DL_Trainer(N_A, DOD_DL_model, Coeff_model,
                                    train_valid_data, 'ex01', 
-                                   epochs=200, restarts=2, learning_rate=1e-3, 
-                                   batch_size=128)
+                                   generalepochs, generalrestarts, learning_rate=1e-3, 
+                                   batch_size=128, patience=generalpatience)
 
 # Train the Coefficient model
 best_loss2 = Coeff_trainer.train()
@@ -59,8 +62,8 @@ AE_Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n
 # Initialize the AE Coefficient Finding trainer
 AE_DOD_DL_trainer = dr.AE_DOD_DL_Trainer(N_A, DOD_DL_model, AE_Coeff_model, En_model, De_model,
                                     train_valid_data, 'ex01',
-                                    epochs=200, restarts=2, learning_rate=1e-3, 
-                                    batch_size=128)
+                                    generalepochs, generalrestarts, learning_rate=1e-3, 
+                                    batch_size=128, patience=generalpatience)
 
 # Train the AE Coefficient model
 best_loss3 = AE_DOD_DL_trainer.train()
@@ -70,16 +73,16 @@ print(f"Best validation loss: {best_loss3}")
 stat_DOD_model = dr.DOD(preprocess_dim, n, N_A, stat_dod_structure)
 stat_DOD_Trainer = dr.DODTrainer(stat_DOD_model, N_A, 
                                  stat_train_valid_data, 'ex01', 
-                                 epochs=200, restart=2, learning_rate=1e-3, 
-                                 batch_size=128)
+                                 generalepochs, generalrestarts, learning_rate=1e-3, 
+                                 batch_size=128, patience=generalpatience)
 best_loss4 = stat_DOD_Trainer.train()
 
 # Initialize and train the stationary Coefficient Finding model
 stat_Coeff_model = dr.CoeffDOD(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
 stat_Coeff_Trainer = dr.CoeffDODTrainer(stat_DOD_model, stat_Coeff_model, N_A,
                                         stat_train_valid_data, 'ex01',
-                                        epochs=200, restarts=2, learning_rate=1e-3, 
-                                        batch_size=128)
+                                        generalepochs, generalrestarts, learning_rate=1e-3, 
+                                        batch_size=128, patience=generalpatience)
 best_loss5 = stat_Coeff_Trainer.train()
 
 # Initialize the CoLoRA_DL model
@@ -88,8 +91,8 @@ CoLoRA_DL_model = dr.CoLoRA_DL(N_A, L, dynamic_dim, parameter_nu_dim)
 # Initialize the CoLoRA_DL trainer
 CoLoRa_DL_Trainer = dr.CoLoRA_DL_Trainer(N_A, stat_DOD_model, stat_Coeff_model, 
                                          CoLoRA_DL_model, train_valid_data, 'ex01',
-                                         epochs=200, restarts=2, learning_rate=1e-3, 
-                                         batch_size=128)
+                                         generalepochs, generalrestarts, learning_rate=1e-3, 
+                                         batch_size=128, patience=generalpatience)
 
 # Train the CoLoRA_DL
 best_loss6 = CoLoRa_DL_Trainer.train()

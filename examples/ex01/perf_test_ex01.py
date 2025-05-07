@@ -21,8 +21,8 @@ phi_n_structure = [16, 8]
 stat_dod_structure = [128, 64]
 nt = 10
 diameter = 0.1
-generalepochs = 80
-generalrestarts = 5
+generalepochs = 500
+generalrestarts = 2
 generalpatience = 3
 
 # Fetch Training and Validation set
