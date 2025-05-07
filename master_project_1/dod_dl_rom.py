@@ -136,13 +136,14 @@ class DOD_DL(nn.Module):
 
 class DOD_DL_Trainer:
     def __init__(self, nn_model, train_valid_set, N_A, example_name, epochs=1, restart=1, learning_rate=1e-3,
-                 batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
+                 batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience = 3):
         self.learning_rate = learning_rate
         self.restarts = restart
         self.epochs = epochs
         self.batch_size = batch_size
         self.model = nn_model.to(device)
         self.device = device
+        self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
@@ -171,6 +172,7 @@ class DOD_DL_Trainer:
 
     def train(self):
         best_model = None
+        best_loss_restart = float('inf')
         best_loss = float('inf')
 
         tqdm.write("Model DOD DL is being trained...")
@@ -179,35 +181,48 @@ class DOD_DL_Trainer:
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
+            epochs_no_improve = 0
+
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
                 total_loss = 0
 
-                for mu_batch, nu_batch, solution_batch in tqdm(self.train_loader, desc="Batches", leave=False):
+                for mu_batch, nu_batch, solution_batch in self.train_loader:
                     optimizer.zero_grad()
                     loss = self.loss_function(mu_batch, solution_batch)
                     loss.backward()
                     optimizer.step()
                     total_loss += loss.item()
 
+                self.model.eval()
+                with torch.no_grad():
+                    val_loss = 0
+                    for mu_batch, nu_batch, solution_batch in self.valid_loader:
+                        val_loss += self.loss_function(mu_batch, solution_batch).item()
+                    val_loss /= len(self.valid_loader)
 
-            self.model.eval()
-            with torch.no_grad():
-                val_loss = 0
-                for mu_batch, nu_batch, solution_batch in self.valid_loader:
-                    val_loss += self.loss_function(mu_batch, solution_batch).item()
-                val_loss /= len(self.valid_loader)
+                if val_loss < best_loss_restart:
+                    best_loss_restart = val_loss
+                    best_model = self.model.state_dict()
+                    epochs_no_improve = 0
+                else:
+                    epochs_no_improve += 1
+                    if epochs_no_improve >= self.patience:
+                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        best_loss_restart = float('inf')
+                        break
 
-            if val_loss < best_loss:
-                best_loss = val_loss
+                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
+
+
+            if best_loss_restart < best_loss:
                 best_model = self.model.state_dict()
+                best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of DOD_DL: {best_loss:.6f}')
-
+            tqdm.write(f'Current best loss of DOD DL: {best_loss:.6f}')
 
         self.model.load_state_dict(best_model)
         return best_loss
-
 
 ''' 
 ------------------------------------
@@ -286,7 +301,7 @@ class Coeff_DOD_DL(nn.Module):
 # Define the Trainer
 class Coeff_DOD_DL_Trainer:
     def __init__(self, N_A, DOD_DL_model, coeffnn_model, train_valid_set, example_name, epochs, restarts, learning_rate,
-                 batch_size, device='cuda' if torch.cuda.is_available() else 'cpu'):
+                 batch_size, device='cuda' if torch.cuda.is_available() else 'cpu', patience = 3):
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.restarts = restarts
@@ -294,6 +309,7 @@ class Coeff_DOD_DL_Trainer:
         self.DOD_DL = DOD_DL_model.to(device)
         self.model = coeffnn_model.to(device)
         self.device = device
+        self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
@@ -327,6 +343,7 @@ class Coeff_DOD_DL_Trainer:
 
     def train(self):
         best_model = None
+        best_loss_restart = float('inf')
         best_loss = float('inf')
 
         tqdm.write("Model Coeff DOD DL is being trained...")
@@ -334,9 +351,13 @@ class Coeff_DOD_DL_Trainer:
         for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+
+            epochs_no_improve = 0
+
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
                 total_loss = 0
+
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
                     optimizer.zero_grad()
                     loss = self.loss_function(mu_batch, nu_batch, solution_batch)
@@ -344,20 +365,33 @@ class Coeff_DOD_DL_Trainer:
                     optimizer.step()
                     total_loss += loss.item()
 
-            self.model.eval()
-            with torch.no_grad():
-                val_loss = 0
-                for mu_batch, nu_batch, solution_batch in self.valid_loader:
-                    val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
-                val_loss /= len(self.valid_loader)
+                self.model.eval()
+                with torch.no_grad():
+                    val_loss = 0
+                    for mu_batch, nu_batch, solution_batch in self.valid_loader:
+                        val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
+                    val_loss /= len(self.valid_loader)
 
-            if val_loss < best_loss:
-                best_loss = val_loss
+                if val_loss < best_loss_restart:
+                    best_loss_restart = val_loss
+                    best_model = self.model.state_dict()
+                    epochs_no_improve = 0
+                else:
+                    epochs_no_improve += 1
+                    if epochs_no_improve >= self.patience:
+                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        best_loss_restart = float('inf')
+                        break
+
+                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
+
+
+            if best_loss_restart < best_loss:
                 best_model = self.model.state_dict()
+                best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of DOD DL: {best_loss:.6f}')
+            tqdm.write(f'Current best loss of Coeff DOD DL: {best_loss:.6f}')
 
-        # Load the best model
         self.model.load_state_dict(best_model)
         return best_loss
 
@@ -463,7 +497,7 @@ class Decoder(nn.Module):
 # Define the Trainer
 class AE_DOD_DL_Trainer:
     def __init__(self, N_A, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, example_name, error_weight=0.5,
-                 epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
+                 epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
         self.error_weight = error_weight
         self.epochs = epochs
@@ -474,6 +508,7 @@ class AE_DOD_DL_Trainer:
         self.de_model = Decoder_model.to(device)
         self.coeff_model = Coeff_DOD_DL_model.to(device)
         self.device = device
+        self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
@@ -515,72 +550,74 @@ class AE_DOD_DL_Trainer:
     def train(self):
         best_model = None
         best_loss = float('inf')
+        best_loss_restart = float('inf')
 
         tqdm.write("Model AE DOD DL is being trained...")
 
 
         for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
-            # Reinitialize the trainable models (except DOD_DL_model which remains fixed)
             self.coeff_model.apply(initialize_weights)
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
             
-            # Combine parameters of the three modules for the optimizer
             params = list(self.coeff_model.parameters()) + \
                      list(self.en_model.parameters()) + \
                      list(self.de_model.parameters())
             optimizer = optim.Adam(params, lr=self.learning_rate)
+
+            epochs_no_improve = 0
             
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
-                # Set all models to train mode
                 self.coeff_model.train()
                 self.en_model.train()
                 self.de_model.train()
-                self.DOD_DL.train()  # Even if not trained, set to train for consistency
-                
+                self.DOD_DL.train()  
                 total_loss = 0.0
+
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
-                    # Transfer data to device
-                    mu_batch = mu_batch.to(self.device)
-                    nu_batch = nu_batch.to(self.device)
-                    solution_batch = solution_batch.to(self.device)
-                    
                     optimizer.zero_grad()
                     loss = self.loss_function(mu_batch, nu_batch, solution_batch)
                     loss.backward()
                     optimizer.step()
                     total_loss += loss.item()
-                    
-                avg_loss = total_loss / len(self.train_loader)
                 
-            # Evaluate on validation set
-            self.coeff_model.eval()
-            self.en_model.eval()
-            self.de_model.eval()
-            self.DOD_DL.eval()
+                self.coeff_model.eval()
+                self.en_model.eval()
+                self.de_model.eval()
+                self.DOD_DL.eval()
+                with torch.no_grad():
+                    val_loss = 0.0
+                    for mu_batch, nu_batch, solution_batch in self.valid_loader:
+                        val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
+                    val_loss /= len(self.valid_loader)
             
-            val_loss = 0.0
-            with torch.no_grad():
-                for mu_batch, nu_batch, solution_batch in self.valid_loader:
-                    mu_batch = mu_batch.to(self.device)
-                    nu_batch = nu_batch.to(self.device)
-                    solution_batch = solution_batch.to(self.device)
-                    val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
-                avg_val_loss = val_loss / len(self.valid_loader)
-            
-            # Save the best model (only saving coeff, encoder, and decoder)
-            if avg_val_loss < best_loss:
-                best_loss = avg_val_loss
+                if val_loss < best_loss_restart:
+                    best_loss_restart = val_loss
+                    best_model = {
+                        "encoder": copy.deepcopy(self.en_model.state_dict()),
+                        "decoder": copy.deepcopy(self.de_model.state_dict()),
+                        "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
+                    }
+                else:
+                    epochs_no_improve += 1
+                    if epochs_no_improve >= self.patience:
+                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        best_loss_restart = float('inf')
+                        break
+
+
+                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
+
+            if best_loss_restart < best_loss:
                 best_model = {
-                    "encoder": copy.deepcopy(self.en_model.state_dict()),
-                    "decoder": copy.deepcopy(self.de_model.state_dict()),
-                    "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
-                }
+                        "encoder": copy.deepcopy(self.en_model.state_dict()),
+                        "decoder": copy.deepcopy(self.de_model.state_dict()),
+                        "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
+                    }
+                best_loss = best_loss_restart
 
             tqdm.write(f'Current best loss of AE DOD DL: {best_loss:.6f}')
 
-        
-        # Load the best model's state dictionaries into the models
         if best_model is not None:
             self.en_model.load_state_dict(best_model["encoder"])
             self.de_model.load_state_dict(best_model["decoder"])
@@ -697,7 +734,7 @@ class CoeffDOD(nn.Module):
 # Define the trainer for these
 class DODTrainer:
     def __init__(self, nn_model, ambient_dim, train_valid_set, example_name, epochs=1, restart=1, learning_rate=1e-3,
-                 batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
+                 batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
         self.restarts = restart
         self.epochs = epochs
@@ -705,6 +742,7 @@ class DODTrainer:
         self.model = nn_model.to(device)
         self.device = device
         self.N_A = ambient_dim
+        self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
@@ -732,17 +770,21 @@ class DODTrainer:
 
     def train(self):
         best_model = None
+        best_loss_restart = float('inf')
         best_loss = float('inf')
 
-        tqdm.write("Model stationary DOD is being trained...")
-
+        tqdm.write("Model stat DOD is being trained...")
 
         for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+
+            epochs_no_improve = 0
+
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
                 total_loss = 0
+
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
                     optimizer.zero_grad()
                     loss = self.loss_function(mu_batch, solution_batch)
@@ -750,26 +792,38 @@ class DODTrainer:
                     optimizer.step()
                     total_loss += loss.item()
 
+                self.model.eval()
+                with torch.no_grad():
+                    val_loss = 0
+                    for mu_batch, nu_batch, solution_batch in self.valid_loader:
+                        val_loss += self.loss_function(mu_batch, solution_batch).item()
+                    val_loss /= len(self.valid_loader)
 
-            self.model.eval()
-            with torch.no_grad():
-                val_loss = 0
-                for mu_batch, nu_batch, solution_batch in self.valid_loader:
-                    val_loss += self.loss_function(mu_batch, solution_batch).item()
-                val_loss /= len(self.valid_loader)
+                if val_loss < best_loss_restart:
+                    best_loss_restart = val_loss
+                    best_model = self.model.state_dict()
+                    epochs_no_improve = 0
+                else:
+                    epochs_no_improve += 1
+                    if epochs_no_improve >= self.patience:
+                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        best_loss_restart = float('inf')
+                        break
 
-            if val_loss < best_loss:
-                best_loss = val_loss
+                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
+
+
+            if best_loss_restart < best_loss:
                 best_model = self.model.state_dict()
+                best_loss = best_loss_restart
 
             tqdm.write(f'Current best loss of stat DOD: {best_loss:.6f}')
 
-        # Load the best model
         self.model.load_state_dict(best_model)
         return best_loss
 class CoeffDODTrainer:
     def __init__(self, dod_model, coeffnn_model, ambient_dim, train_valid_set, example_name, epochs=1, restarts=1, learning_rate=1e-3,
-                 batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
+                 batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.restarts = restarts
@@ -778,6 +832,7 @@ class CoeffDODTrainer:
         self.model = coeffnn_model.to(device)
         self.device = device
         self.N_A = ambient_dim
+        self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
@@ -803,16 +858,21 @@ class CoeffDODTrainer:
 
     def train(self):
         best_model = None
+        best_loss_restart = float('inf')
         best_loss = float('inf')
 
-        tqdm.write("Model stationary Coeff DOD is being trained...")
+        tqdm.write("Model stat Coeff DOD is being trained...")
 
         for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+
+            epochs_no_improve = 0
+
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
                 total_loss = 0
+
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
                     optimizer.zero_grad()
                     loss = self.loss_function(mu_batch, nu_batch, solution_batch)
@@ -820,20 +880,33 @@ class CoeffDODTrainer:
                     optimizer.step()
                     total_loss += loss.item()
 
-            self.model.eval()
-            with torch.no_grad():
-                val_loss = 0
-                for mu_batch, nu_batch, solution_batch in self.valid_loader:
-                    val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
-                val_loss /= len(self.valid_loader)
+                self.model.eval()
+                with torch.no_grad():
+                    val_loss = 0
+                    for mu_batch, nu_batch, solution_batch in self.valid_loader:
+                        val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
+                    val_loss /= len(self.valid_loader)
 
-            if val_loss < best_loss:
-                best_loss = val_loss
+                if val_loss < best_loss_restart:
+                    best_loss_restart = val_loss
+                    best_model = self.model.state_dict()
+                    epochs_no_improve = 0
+                else:
+                    epochs_no_improve += 1
+                    if epochs_no_improve >= self.patience:
+                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        best_loss_restart = float('inf')
+                        break
+
+                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
+
+
+            if best_loss_restart < best_loss:
                 best_model = self.model.state_dict()
+                best_loss = best_loss_restart
 
             tqdm.write(f'Current best loss of stat Coeff DOD: {best_loss:.6f}')
 
-        # Load the best model
         self.model.load_state_dict(best_model)
         return best_loss
 
@@ -912,15 +985,16 @@ class CoLoRA_DL(nn.Module):
 # Define CoLoRA trainer
 class CoLoRA_DL_Trainer():
     def __init__(self, N_A, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, example_name, epochs, restarts, learning_rate,
-                 batch_size, device='cuda' if torch.cuda.is_available() else 'cpu'):
+                 batch_size, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.restarts = restarts
         self.batch_size = batch_size
         self.DOD_0 = DOD_0_model.to(device)
         self.model_0 = coeffnn_0_model.to(device)
-        self.colora_model = colora_model.to(device)
+        self.model = colora_model.to(device)
         self.device = device
+        self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
@@ -940,7 +1014,7 @@ class CoLoRA_DL_Trainer():
             # Get the stationary DOD model output; expected shape: (B, n, N_A)
             DOD_0_output = self.DOD_0(mu_batch)
             # Get the CoLoRA prediction output
-            output = self.colora_model(torch.bmm(DOD_0_output.transpose(1, 2), coeff_0_output), nu_batch, t_batch)
+            output = self.model(torch.bmm(DOD_0_output.transpose(1, 2), coeff_0_output), nu_batch, t_batch)
 
             # Extract the solution slice at time step i; expected shape: (B, N_A)
             u_proj = solution_batch[:, i, :]
@@ -953,17 +1027,21 @@ class CoLoRA_DL_Trainer():
     
     def train(self):
         best_model = None
+        best_loss_restart = float('inf')
         best_loss = float('inf')
 
-        tqdm.write("Model CoLoRA DL is being trained...")
-
+        tqdm.write("Model CoLoRA is being trained...")
 
         for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
-            self.colora_model.apply(initialize_weights)
-            optimizer = optim.Adam(self.colora_model.parameters(), lr=self.learning_rate)
+            self.model.apply(initialize_weights)
+            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+
+            epochs_no_improve = 0
+
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
-                self.colora_model.train()
+                self.model.train()
                 total_loss = 0
+
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
                     optimizer.zero_grad()
                     loss = self.loss_function(mu_batch, nu_batch, solution_batch)
@@ -971,22 +1049,34 @@ class CoLoRA_DL_Trainer():
                     optimizer.step()
                     total_loss += loss.item()
 
+                self.model.eval()
+                with torch.no_grad():
+                    val_loss = 0
+                    for mu_batch, nu_batch, solution_batch in self.valid_loader:
+                        val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
+                    val_loss /= len(self.valid_loader)
 
-            self.colora_model.eval()
-            with torch.no_grad():
-                val_loss = 0
-                for mu_batch, nu_batch, solution_batch in self.valid_loader:
-                    val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
-                val_loss /= len(self.valid_loader)
+                if val_loss < best_loss_restart:
+                    best_loss_restart = val_loss
+                    best_model = self.model.state_dict()
+                    epochs_no_improve = 0
+                else:
+                    epochs_no_improve += 1
+                    if epochs_no_improve >= self.patience:
+                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        best_loss_restart = float('inf')
+                        break
 
-            if val_loss < best_loss:
-                best_loss = val_loss
-                best_model = self.colora_model.state_dict()
+                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
 
-            tqdm.write(f'Current best loss of CoLoRA DL: {best_loss:.6f}')
 
-        # Load the best model
-        self.colora_model.load_state_dict(best_model)
+            if best_loss_restart < best_loss:
+                best_model = self.model.state_dict()
+                best_loss = best_loss_restart
+
+            tqdm.write(f'Current best loss of Coeff DOD DL: {best_loss:.6f}')
+
+        self.model.load_state_dict(best_model)
         return best_loss
 
 '''

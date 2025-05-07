@@ -24,14 +24,14 @@ diameter = 0.1
 
 # Fetch Training and Validation set
 train_valid_data = dr.FetchReducedTrainAndValidSet(0.8, 'ex01')
-stat_train_valid_data = dr.StatFetchTrainAndValidSet(0.8, 'ex01')
+stat_train_valid_data = dr.StatFetchReducedTrainAndValidSet(0.8, 'ex01')
 
 # Initialize the DOD model
 DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, N, N_A)
 
 # Initialize the DOD trainer
 DOD_DL_trainer = dr.DOD_DL_Trainer(DOD_DL_model, train_valid_data, N_A, 'ex01',
-                                   epochs=50,restart=3, learning_rate=1e-3, 
+                                   epochs=200,restart=2, learning_rate=1e-3, 
                                    batch_size=128)
 
 # Train the DOD model
@@ -44,7 +44,7 @@ Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, N, phi_N_st
 # Initialize the Coefficient Finding trainer
 Coeff_trainer = dr.Coeff_DOD_DL_Trainer(N_A, DOD_DL_model, Coeff_model,
                                    train_valid_data, 'ex01', 
-                                   epochs=50, restarts=3, learning_rate=1e-3, 
+                                   epochs=200, restarts=2, learning_rate=1e-3, 
                                    batch_size=128)
 
 # Train the Coefficient model
@@ -59,7 +59,7 @@ AE_Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n
 # Initialize the AE Coefficient Finding trainer
 AE_DOD_DL_trainer = dr.AE_DOD_DL_Trainer(N_A, DOD_DL_model, AE_Coeff_model, En_model, De_model,
                                     train_valid_data, 'ex01',
-                                    epochs=50, restarts=3, learning_rate=1e-3, 
+                                    epochs=200, restarts=2, learning_rate=1e-3, 
                                     batch_size=128)
 
 # Train the AE Coefficient model
@@ -70,7 +70,7 @@ print(f"Best validation loss: {best_loss3}")
 stat_DOD_model = dr.DOD(preprocess_dim, n, N_A, stat_dod_structure)
 stat_DOD_Trainer = dr.DODTrainer(stat_DOD_model, N_A, 
                                  stat_train_valid_data, 'ex01', 
-                                 epochs=50, restart=3, learning_rate=1e-3, 
+                                 epochs=200, restart=2, learning_rate=1e-3, 
                                  batch_size=128)
 best_loss4 = stat_DOD_Trainer.train()
 
@@ -78,7 +78,7 @@ best_loss4 = stat_DOD_Trainer.train()
 stat_Coeff_model = dr.CoeffDOD(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
 stat_Coeff_Trainer = dr.CoeffDODTrainer(stat_DOD_model, stat_Coeff_model, N_A,
                                         stat_train_valid_data, 'ex01',
-                                        epochs=50, restarts=3, learning_rate=1e-3, 
+                                        epochs=200, restarts=2, learning_rate=1e-3, 
                                         batch_size=128)
 best_loss5 = stat_Coeff_Trainer.train()
 
@@ -88,7 +88,7 @@ CoLoRA_DL_model = dr.CoLoRA_DL(N_A, L, dynamic_dim, parameter_nu_dim)
 # Initialize the CoLoRA_DL trainer
 CoLoRa_DL_Trainer = dr.CoLoRA_DL_Trainer(N_A, stat_DOD_model, stat_Coeff_model, 
                                          CoLoRA_DL_model, train_valid_data, 'ex01',
-                                         epochs=50, restarts=3, learning_rate=1e-3, 
+                                         epochs=200, restarts=2, learning_rate=1e-3, 
                                          batch_size=128)
 
 # Train the CoLoRA_DL
