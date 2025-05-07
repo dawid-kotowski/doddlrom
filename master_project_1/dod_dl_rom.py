@@ -5,6 +5,7 @@ import torch.optim as optim
 import numpy as np
 import math
 import copy
+from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 
 # Some Constants
@@ -41,11 +42,11 @@ class FetchReducedTrainAndValidSet:
             return 'Type Undefined'
 
 # Define Training/Validation Splitter for the stationary model
-class StatFetchTrainAndValidSet:
+class StatFetchReducedTrainAndValidSet:
     def __init__(self, train_to_val_ratio, example_name):
         # 0.8 = train_to_val_ratio means 80 % of training data and 20 % of validation data
         self.train_to_val_ratio = train_to_val_ratio
-        path = f'examples/{example_name}/training_data/stationary_training_data_{example_name}.npy'
+        path = f'examples/{example_name}/training_data/reduced_stationary_training_data_{example_name}.npy'
         loaded_data = np.load(path, allow_pickle=True)
         np.random.shuffle(loaded_data)
         num_samples = len(loaded_data)
@@ -77,24 +78,6 @@ class DatasetLoader(Dataset):
         solution = torch.tensor(entry['solution'], dtype=torch.float32)
         return mu, nu, solution
 
-# Define DatasetLoader for stationary DOD
-class StatReducedDatasetLoader(Dataset):
-    def __init__(self, data, G, A, N_A):
-        self.data = data
-        self.G = G
-        self.A = A
-        self.N_A = N_A
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        entry = self.data[idx]
-        mu = torch.tensor(entry['mu'], dtype=torch.float32)
-        u = torch.tensor(entry['solution'], dtype=torch.float32)
-        u_new = torch.matmul(self.A.T, torch.matmul(self.G, u))
-        u_new = u_new[:self.N_A]
-        return mu, u_new
 
 ''' 
 ------------------------------------
@@ -150,6 +133,7 @@ class DOD_DL(nn.Module):
         return v_mu
 
 # Define DOD_DL_-DL training
+
 class DOD_DL_Trainer:
     def __init__(self, nn_model, train_valid_set, N_A, example_name, epochs=1, restart=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu'):
@@ -167,7 +151,7 @@ class DOD_DL_Trainer:
         self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, solution_batch):
-        batch_size = mu_batch.size(0)  # Get the batch size (can be problem, if set is non-divisible)
+        batch_size = mu_batch.size(0)
         temp_loss = 0.
 
         for i in range(nt + 1):
@@ -176,7 +160,6 @@ class DOD_DL_Trainer:
             ).unsqueeze(1)
             output = self.model(mu_batch, t_batch)
 
-            # Perform batch matrix multiplications
             v_u = torch.bmm(output, solution_batch[:, i, :].unsqueeze(2))
             u_proj = torch.bmm(output.transpose(1, 2), v_u)
 
@@ -184,27 +167,29 @@ class DOD_DL_Trainer:
             temp_loss += torch.sum(torch.norm(error, dim=1) ** 2)
 
         loss = temp_loss / (batch_size * (nt + 1))
-
         return loss
 
     def train(self):
         best_model = None
         best_loss = float('inf')
 
-        for _ in range(self.restarts):
+        tqdm.write("Model DOD DL is being trained...")
+
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            for epoch in range(self.epochs):
+
+            for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
                 total_loss = 0
-                for mu_batch, nu_batch, solution_batch in self.train_loader:
+
+                for mu_batch, nu_batch, solution_batch in tqdm(self.train_loader, desc="Batches", leave=False):
                     optimizer.zero_grad()
                     loss = self.loss_function(mu_batch, solution_batch)
                     loss.backward()
                     optimizer.step()
                     total_loss += loss.item()
 
-                print(f"Model: DOD_DL, Restart: {_ + 1}, Epoch: {epoch} Loss: {total_loss / len(self.train_loader)}")
 
             self.model.eval()
             with torch.no_grad():
@@ -217,11 +202,12 @@ class DOD_DL_Trainer:
                 best_loss = val_loss
                 best_model = self.model.state_dict()
 
-            print(f'Restart DOD_DL. Gen Count at {_ + 1} with current best loss {best_loss}')
+            tqdm.write(f'Current best loss of DOD_DL: {best_loss:.6f}')
 
-        # Load the best model
+
         self.model.load_state_dict(best_model)
         return best_loss
+
 
 ''' 
 ------------------------------------
@@ -233,9 +219,6 @@ Coeff_DL     : (Theta \times Theta' \times \Gamma) -> R^N
 
 AE_DL        : (Theta \times Theta' \times \Gamma) -> R^N
              ; Encoder(Linear(Linear(mu_t)) @ Linear(Linear(nu_t))) \mapsto u_N
-
-AE_CoLoRA_DL : (Theta \times Theta' \times \Gamma) -> R^N
-             ; Encoder(CoLoRA(mu, nu, t)) \mapsto u_N
 ------------------------------------
 '''
 
@@ -346,10 +329,12 @@ class Coeff_DOD_DL_Trainer:
         best_model = None
         best_loss = float('inf')
 
-        for _ in range(self.restarts):
+        tqdm.write("Model Coeff DOD DL is being trained...")
+
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            for epoch in range(self.epochs):
+            for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
                 total_loss = 0
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
@@ -358,8 +343,6 @@ class Coeff_DOD_DL_Trainer:
                     loss.backward()
                     optimizer.step()
                     total_loss += loss.item()
-
-                print(f"Model: Coeff_DL, Restart: {_ + 1}, Epoch: {epoch} Loss: {total_loss / len(self.train_loader)}")
 
             self.model.eval()
             with torch.no_grad():
@@ -372,7 +355,7 @@ class Coeff_DOD_DL_Trainer:
                 best_loss = val_loss
                 best_model = self.model.state_dict()
 
-            print(f'Restart Coefficient Finder. Gen Count at {_ + 1} with current best loss {best_loss}')
+            tqdm.write(f'Current best loss of DOD DL: {best_loss:.6f}')
 
         # Load the best model
         self.model.load_state_dict(best_model)
@@ -533,8 +516,10 @@ class AE_DOD_DL_Trainer:
         best_model = None
         best_loss = float('inf')
 
-        # Multiple restarts loop
-        for restart in range(self.restarts):
+        tqdm.write("Model AE DOD DL is being trained...")
+
+
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
             # Reinitialize the trainable models (except DOD_DL_model which remains fixed)
             self.coeff_model.apply(initialize_weights)
             self.en_model.apply(initialize_weights)
@@ -546,7 +531,7 @@ class AE_DOD_DL_Trainer:
                      list(self.de_model.parameters())
             optimizer = optim.Adam(params, lr=self.learning_rate)
             
-            for epoch in range(self.epochs):
+            for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 # Set all models to train mode
                 self.coeff_model.train()
                 self.en_model.train()
@@ -567,7 +552,6 @@ class AE_DOD_DL_Trainer:
                     total_loss += loss.item()
                     
                 avg_loss = total_loss / len(self.train_loader)
-                print(f"Model: AE_DOD_DL, Restart: {restart + 1}, Epoch: {epoch + 1}, Loss: {avg_loss:.4f}")
                 
             # Evaluate on validation set
             self.coeff_model.eval()
@@ -583,7 +567,6 @@ class AE_DOD_DL_Trainer:
                     solution_batch = solution_batch.to(self.device)
                     val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
                 avg_val_loss = val_loss / len(self.valid_loader)
-                print(f"Restart: {restart + 1}, Validation Loss: {avg_val_loss:.4f}")
             
             # Save the best model (only saving coeff, encoder, and decoder)
             if avg_val_loss < best_loss:
@@ -593,16 +576,15 @@ class AE_DOD_DL_Trainer:
                     "decoder": copy.deepcopy(self.de_model.state_dict()),
                     "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
                 }
-                print(f"Updated best AE_DOD_DL model at restart {restart + 1} with validation loss {best_loss:.4f}")
+
+            tqdm.write(f'Current best loss of AE DOD DL: {best_loss:.6f}')
+
         
         # Load the best model's state dictionaries into the models
         if best_model is not None:
             self.en_model.load_state_dict(best_model["encoder"])
             self.de_model.load_state_dict(best_model["decoder"])
             self.coeff_model.load_state_dict(best_model["coeff_model"])
-            print("Loaded best model state dicts.")
-        else:
-            print("No best model was found.")
             
         return best_loss
 
@@ -723,14 +705,12 @@ class DODTrainer:
         self.model = nn_model.to(device)
         self.device = device
         self.N_A = ambient_dim
-        self.A = torch.tensor(np.load(f'examples/{example_name}/training_data/stationary_ambient_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        self.G = torch.tensor(np.load(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(StatReducedDatasetLoader(train_data, self.G, self.A, self.N_A), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(StatReducedDatasetLoader(valid_data, self.G, self.A, self.N_A), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
 
 
     def loss_function(self, mu_batch, solution_batch):
@@ -754,25 +734,27 @@ class DODTrainer:
         best_model = None
         best_loss = float('inf')
 
-        for _ in range(self.restarts):
+        tqdm.write("Model stationary DOD is being trained...")
+
+
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            for epoch in range(self.epochs):
+            for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
                 total_loss = 0
-                for mu_batch, solution_batch in self.train_loader:
+                for mu_batch, nu_batch, solution_batch in self.train_loader:
                     optimizer.zero_grad()
                     loss = self.loss_function(mu_batch, solution_batch)
                     loss.backward()
                     optimizer.step()
                     total_loss += loss.item()
 
-                print(f"Model: stationary_DOD, Restart: {_ + 1}, Epoch: {epoch} Loss: {total_loss / len(self.train_loader)}")
 
             self.model.eval()
             with torch.no_grad():
                 val_loss = 0
-                for mu_batch, solution_batch in self.valid_loader:
+                for mu_batch, nu_batch, solution_batch in self.valid_loader:
                     val_loss += self.loss_function(mu_batch, solution_batch).item()
                 val_loss /= len(self.valid_loader)
 
@@ -780,7 +762,7 @@ class DODTrainer:
                 best_loss = val_loss
                 best_model = self.model.state_dict()
 
-            print(f'Restart stationary_DOD. Gen Count at {_ + 1} with current best loss {best_loss}')
+            tqdm.write(f'Current best loss of stat DOD: {best_loss:.6f}')
 
         # Load the best model
         self.model.load_state_dict(best_model)
@@ -797,37 +779,24 @@ class CoeffDODTrainer:
         self.device = device
         self.N_A = ambient_dim
 
-        A = torch.tensor(np.load(f'examples/{example_name}/training_data/stationary_ambient_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-        G = torch.tensor(np.load(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npy', allow_pickle=True), dtype=torch.float32).to(self.device)
-
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
         self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
         self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
 
-        # Pre-expand A and G for the batch size
-        self.A_expanded = A.unsqueeze(0).expand(self.batch_size, -1, -1)
-        self.G_expanded = G.unsqueeze(0).expand(self.batch_size, -1, -1)
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
-        batch_size = mu_batch.size(0)  # Get the batch size (can be problem, if set is non-divisible)
-
-        output = self.model(mu_batch, nu_batch)
+        batch_size = mu_batch.size(0)
+        coeff_output = self.model(mu_batch, nu_batch)
         dod_output = self.dod(mu_batch)
 
-        # Adjust pre-expanded matrices to the current batch size
-        A_expanded = self.A_expanded[:batch_size]
-        G_expanded = self.G_expanded[:batch_size]
-
-        # Reshape solution_batch to a 3D tensor with shape [batch_size, N_h, 1]
+        # Reshape solution_batch to a 3D tensor with shape [batch_size, N_A, 1]
         solution_batch = solution_batch.unsqueeze(2)
 
         # Perform batch matrix multiplications
-        v_transposed = torch.bmm(dod_output, A_expanded.transpose(1, 2))
-        u_proj = torch.bmm(v_transposed, torch.bmm(G_expanded, solution_batch)).squeeze(2)
-
-        error = output - u_proj
+        output = torch.bmm(dod_output, solution_batch).squeeze(2)
+        error = output - coeff_output
         loss = torch.sum(torch.norm(error, dim=1) ** 2) / batch_size
 
         return loss
@@ -836,10 +805,12 @@ class CoeffDODTrainer:
         best_model = None
         best_loss = float('inf')
 
-        for _ in range(self.restarts):
+        tqdm.write("Model stationary Coeff DOD is being trained...")
+
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            for epoch in range(self.epochs):
+            for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
                 total_loss = 0
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
@@ -848,8 +819,6 @@ class CoeffDODTrainer:
                     loss.backward()
                     optimizer.step()
                     total_loss += loss.item()
-
-                print(f"Model: stationary_CoeffDOD, Restart: {_ + 1}, Epoch: {epoch} Loss: {total_loss / len(self.train_loader)}")
 
             self.model.eval()
             with torch.no_grad():
@@ -862,7 +831,7 @@ class CoeffDODTrainer:
                 best_loss = val_loss
                 best_model = self.model.state_dict()
 
-            print(f'Restart stationary Coefficient Finder. Gen Count at {_ + 1} with current best loss {best_loss}')
+            tqdm.write(f'Current best loss of stat Coeff DOD: {best_loss:.6f}')
 
         # Load the best model
         self.model.load_state_dict(best_model)
@@ -986,10 +955,13 @@ class CoLoRA_DL_Trainer():
         best_model = None
         best_loss = float('inf')
 
-        for _ in range(self.restarts):
+        tqdm.write("Model CoLoRA DL is being trained...")
+
+
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts", leave=False):
             self.colora_model.apply(initialize_weights)
             optimizer = optim.Adam(self.colora_model.parameters(), lr=self.learning_rate)
-            for epoch in range(self.epochs):
+            for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.colora_model.train()
                 total_loss = 0
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
@@ -999,7 +971,6 @@ class CoLoRA_DL_Trainer():
                     optimizer.step()
                     total_loss += loss.item()
 
-                print(f"Model: CoLoRA_DL, Restart: {_ + 1}, Epoch: {epoch} Loss: {total_loss / len(self.train_loader)}")
 
             self.colora_model.eval()
             with torch.no_grad():
@@ -1012,7 +983,7 @@ class CoLoRA_DL_Trainer():
                 best_loss = val_loss
                 best_model = self.colora_model.state_dict()
 
-            print(f'Restart CoLoRA_DL. Gen Count at {_ + 1} with current best loss {best_loss}')
+            tqdm.write(f'Current best loss of CoLoRA DL: {best_loss:.6f}')
 
         # Load the best model
         self.colora_model.load_state_dict(best_model)

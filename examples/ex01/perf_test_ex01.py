@@ -1,6 +1,7 @@
 import torch
 from master_project_1 import dod_dl_rom as dr
 import numpy as np
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 # Fixed Constants
@@ -20,17 +21,17 @@ phi_n_structure = [16, 8]
 stat_dod_structure = [128, 64]
 nt = 10
 diameter = 0.1
-generalepochs = 5
-generalrestarts = 2
+generalepochs = 80
+generalrestarts = 5
 
 # Fetch Training and Validation set
 train_valid_data = dr.FetchReducedTrainAndValidSet(0.8, 'ex01')
-stat_train_valid_data = dr.StatFetchTrainAndValidSet(0.8, 'ex01')
+stat_train_valid_data = dr.StatFetchReducedTrainAndValidSet(0.8, 'ex01')
 
 # Initialize random Performance Check set
 loaded_data = np.load('examples/ex01/training_data/training_data_ex01.npy', allow_pickle=True)
 np.random.shuffle(loaded_data) 
-performance_data = loaded_data[:50]
+performance_data = loaded_data[:5]
 
 # Initialize Error Loader of Performance Check set
 l2_norm = dr.L2Norm(np.load('examples/ex01/training_data/gram_matrix_ex01.npy', allow_pickle=True))
@@ -50,13 +51,8 @@ abs_error_ae_dod_dl = []
 rel_error_ae_dod_dl = []
 abs_error_colora_dl = []
 rel_error_colora_dl = []
-ambient_abs_error_lin_dod_dl = []
-ambient_rel_error_lin_dod_dl = []
-ambient_abs_error_ae_dod_dl = []
-ambient_rel_error_ae_dod_dl = []
-ambient_abs_error_colora_dl = []
-ambient_rel_error_colora_dl = []
-for n in range(2, 8):
+ambient_errors = []
+for n in tqdm(range(2, 8), desc="Reduced Dimension"):
     # Initialize the DOD model
     DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, n, N_A)
 
@@ -80,6 +76,7 @@ for n in range(2, 8):
     # Train the Coefficient model
     best_loss2 = Coeff_trainer.train()
 
+    '''============AE MODEL================
     # Initialize the DOD model
     DOD_DL_AE_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, N, N_A)
 
@@ -104,6 +101,7 @@ for n in range(2, 8):
 
     # Train the AE Coefficient model
     best_loss4 = AE_DOD_DL_trainer.train()
+    '''
 
     # Initialize and train the stationary DOD model
     stat_DOD_model = dr.DOD(preprocess_dim, n, N_A, stat_dod_structure)
@@ -143,21 +141,30 @@ for n in range(2, 8):
     # Set all to evalutate
     DOD_DL_model.eval()
     Coeff_model.eval()
+
+    ''' ==============AE MODEL==================
     DOD_DL_AE_model.eval()
     De_model.eval()
     AE_Coeff_model.eval()
+    '''
+
     stat_DOD_model.eval()
     stat_Coeff_model.eval()
     CoLoRA_DL_model.eval()
 
     # Get Solutions
+    tqdm.write("Collecting Error...")
     coeff_dl_solutions = []
     ae_dl_solutions = []
     colora_dl_solutions = []
+    norm_solutions = []
+    proj_solutions = []
+    ambient_error = []
+    solutions = []
     G = np.load('examples/ex01/training_data/gram_matrix_ex01.npy', allow_pickle=True)
     A_np = np.load('examples/ex01/training_data/ambient_matrix_ex01.npy', allow_pickle=True)
     A = torch.tensor(A_np, dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
-    for entry in performance_data:
+    for entry in tqdm(performance_data, desc="Performance detection", leave=False):
         mu_i = torch.tensor(entry['mu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
         mu_i = mu_i.unsqueeze(0)
         nu_i = torch.tensor(entry['nu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
@@ -176,15 +183,17 @@ for n in range(2, 8):
             time = torch.tensor(j / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
             time = time.unsqueeze(0).unsqueeze(1)
             dod_dl_output = DOD_DL_model(mu_i, time).squeeze(0).T
-            dod_dl_ae_output = DOD_DL_model(mu_i, time).squeeze(0).T
             coeff_output = Coeff_model(mu_i, nu_i, time)
             u_i_coeff_dl = torch.matmul(torch.matmul(A, dod_dl_output), coeff_output)
             coeff_dl_solution.append(u_i_coeff_dl)
 
+            '''================AE MODEL====================
             coeff_n_output = AE_Coeff_model(mu_i, nu_i, time).unsqueeze(0)
+            dod_dl_ae_output = DOD_DL_model(mu_i, time).squeeze(0).T
             decoded_output = De_model(coeff_n_output).squeeze(0)
             u_i_ae_dl = torch.matmul(torch.matmul(A, dod_dl_ae_output), decoded_output)
             ae_dl_solution.append(u_i_ae_dl)
+            '''
 
             stat_coeff_n_output = stat_Coeff_model(mu_i, nu_i).unsqueeze(0).unsqueeze(2)
             stat_dod_output = stat_DOD_model(mu_i)
@@ -197,30 +206,44 @@ for n in range(2, 8):
         coeff_dl_sol = coeff_dl_sol.detach().numpy()
         coeff_dl_solutions.append(coeff_dl_sol)
 
+        '''=================AE MODEL=====================
         ae_dl_sol = torch.stack(ae_dl_solution, dim=0)
         ae_dl_sol = ae_dl_sol.detach().numpy()
         ae_dl_solutions.append(ae_dl_sol)
+        '''
 
         colora_dl_sol = torch.stack(colora_dl_solution, dim=0)
         colora_dl_sol = colora_dl_sol.detach().numpy()
         colora_dl_solutions.append(colora_dl_sol)
+
+        norm_solutions.append(norm_u_i)
+        proj_solutions.append(proj_u_i)
+        solutions.append(u_i)
     
     # Append Error for Full sized Batch
-    abs_error_lin_dod_dl.append(error_loader(u_i - coeff_dl_solutions))
-    rel_error_lin_dod_dl.append(error_loader(u_i - coeff_dl_solutions) / norm_u_i)
+    abs_diff_lin_dod_dl = [x - y for x, y in zip(solutions, coeff_dl_solutions)]
+    abs_error_lin_dod_dl.append(error_loader(abs_diff_lin_dod_dl))
+    rel_error_lin_dod_dl.append(error_loader([x / y for x, y in zip(abs_diff_lin_dod_dl, norm_solutions)]))
+    '''================AE MODEL==================
     abs_error_ae_dod_dl.append(error_loader(u_i - ae_dl_solutions))
     rel_error_ae_dod_dl.append(error_loader(u_i - ae_dl_solutions) / norm_u_i)
-    abs_error_colora_dl.append(error_loader(u_i - colora_dl_solutions))
-    rel_error_colora_dl.append(error_loader(u_i - colora_dl_solutions) / norm_u_i)
-
+    '''
+    abs_diff_colora_dl = [x - y for x, y in zip(solutions, colora_dl_solutions)]
+    abs_error_colora_dl.append(error_loader(abs_diff_colora_dl))
+    rel_error_colora_dl.append(error_loader([x / y for x, y in zip(abs_diff_colora_dl, norm_solutions)]))
+    
+    ambient_diff = [x - y for x, y in zip(solutions, proj_solutions)]
+    ambient_errors.append(error_loader([x / y for x, y in zip(ambient_diff, norm_solutions)]))
+    '''=============potentially useless==============
     # Append Error for Ambient Batch
-    ambient_abs_error_lin_dod_dl.append(error_loader(proj_u_i - coeff_dl_solutions))
-    ambient_rel_error_lin_dod_dl.append(error_loader(proj_u_i - coeff_dl_solutions) / norm_u_i)
-    ambient_abs_error_ae_dod_dl.append(error_loader(proj_u_i - ae_dl_solutions))
-    ambient_rel_error_ae_dod_dl.append(error_loader(proj_u_i - ae_dl_solutions) / norm_u_i)
-    ambient_abs_error_colora_dl.append(error_loader(proj_u_i - colora_dl_solutions))
-    ambient_rel_error_colora_dl.append(error_loader(proj_u_i - colora_dl_solutions) / norm_u_i)
-
+    proj_diff_lin_dod_dl = [x - y for x, y in zip(proj_solutions, coeff_dl_solutions)]
+    ambient_abs_error_lin_dod_dl.append(error_loader(proj_diff_lin_dod_dl))
+    ambient_rel_error_lin_dod_dl.append(error_loader([x / y for x, y in zip(proj_diff_lin_dod_dl, norm_solutions)]))
+   
+    prof_diff_colora_dl = [x - y for x, y in zip(proj_solutions, colora_dl_solutions)]
+    ambient_abs_error_colora_dl.append(error_loader(prof_diff_colora_dl))
+    ambient_rel_error_colora_dl.append(error_loader([x / y for x, y in zip(prof_diff_colora_dl, norm_solutions)]))
+    '''
 '''
 ----------------
 ----------------
@@ -230,15 +253,23 @@ Plot Errors
 '''
 x = np.linspace(2, 8, 6, dtype=int)
 
+if len(ae_dl_solution) == 0:
+    abs_error_ae_dod_dl = [np.nan] * len(x)
+    rel_error_ae_dod_dl = [np.nan] * len(x)
+    ambient_abs_error_ae_dod_dl = [np.nan] * len(x)
+    ambient_rel_error_ae_dod_dl = [np.nan] * len(x)
+
+
 # Define color and style map for consistency
 plot_styles = {
     'AE DOD DL':     {'color': 'blue',  'linestyle': '--'},
     'Linear DOD DL': {'color': 'green', 'linestyle': '-'},
     'CoLoRA DL':     {'color': 'red',   'linestyle': ':'},
+    'Ambient Error': {'color': 'grey',  'linestyle': '-.'}
 }
 
-# Start 2x2 subplot grid
-fig, axs = plt.subplots(2, 2, figsize=(12, 10))
+# Start 1x2 subplot grid (since we removed 2 plots)
+fig, axs = plt.subplots(1, 2, figsize=(12, 5))
 axs = axs.flatten()  # for easy indexing
 
 # --- Plot 1: Absolute L2 Errors ---
@@ -255,37 +286,17 @@ axs[0].legend()
 axs[1].plot(x, rel_error_ae_dod_dl, label='AE DOD DL', **plot_styles['AE DOD DL'])
 axs[1].plot(x, rel_error_lin_dod_dl, label='Linear DOD DL', **plot_styles['Linear DOD DL'])
 axs[1].plot(x, rel_error_colora_dl, label='CoLoRA DL', **plot_styles['CoLoRA DL'])
+axs[1].plot(x, ambient_errors, label='Ambient Error', **plot_styles['Ambient Error'])
 axs[1].set_title('Relative $L^2$-Errors')
 axs[1].set_xlabel('Reduced Dimension $n$')
 axs[1].set_ylabel('Relative Error')
 axs[1].grid(True)
 axs[1].legend()
 
-# --- Plot 3: Absolute Ambient-Accounted Errors ---
-axs[2].plot(x, ambient_abs_error_ae_dod_dl, label='AE DOD DL', **plot_styles['AE DOD DL'])
-axs[2].plot(x, ambient_abs_error_lin_dod_dl, label='Linear DOD DL', **plot_styles['Linear DOD DL'])
-axs[2].plot(x, ambient_abs_error_colora_dl, label='CoLoRA DL', **plot_styles['CoLoRA DL'])
-axs[2].set_title('Ambient Absolute $L^2$-Errors')
-axs[2].set_xlabel('Reduced Dimension $n$')
-axs[2].set_ylabel('Absolute Error')
-axs[2].grid(True)
-axs[2].legend()
-
-# --- Plot 4: Relative Ambient-Accounted Errors ---
-axs[3].plot(x, ambient_rel_error_ae_dod_dl, label='AE DOD DL', **plot_styles['AE DOD DL'])
-axs[3].plot(x, ambient_rel_error_lin_dod_dl, label='Linear DOD DL', **plot_styles['Linear DOD DL'])
-axs[3].plot(x, ambient_rel_error_colora_dl, label='CoLoRA DL', **plot_styles['CoLoRA DL'])
-axs[3].set_title('Ambient Relative $L^2$-Errors')
-axs[3].set_xlabel('Reduced Dimension $n$')
-axs[3].set_ylabel('Relative Error')
-axs[3].grid(True)
-axs[3].legend()
-
 plt.tight_layout()
+
+plt.savefig('/home/sereom/Documents/University/Studies/Mathe/Wissenschaftliche Arbeiten/Master/Masterarbeit Ohlberger/Programming/master-project-1/examples/ex01/performance.png', dpi=300, bbox_inches='tight')
+
 plt.show()
-    
-
-
-
 
 

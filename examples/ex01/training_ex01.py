@@ -143,3 +143,13 @@ stat_G = stat_fom.h1_0_semi_product.matrix.toarray()
 # Save G to file
 stat_gram = np.array(stat_G, dtype=np.float32)
 np.save('examples/ex01/training_data/stationary_gram_matrix_ex01.npy', stat_gram)
+
+# Save reduced training data to file
+reduced_stationary_training_data = []
+for mu_nu in training_set:
+    stat_solution = stat_fom.solve(mu_nu)
+    stat_solution_flat = stat_solution.to_numpy().flatten()
+    reduced_stationary_solution = stat_solution_flat @ stat_G @ stat_A
+    reduced_stationary_training_data.append((mu_nu['mu'], mu_nu['nu'], reduced_stationary_solution))
+reduced_stationary_training_data_array = np.array(reduced_stationary_training_data, dtype=dtype)
+np.save('examples/ex01/training_data/reduced_stationary_training_data_ex01.npy', reduced_stationary_training_data_array)
