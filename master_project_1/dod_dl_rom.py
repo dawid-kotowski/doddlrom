@@ -494,9 +494,9 @@ class Decoder(nn.Module):
         x_recon = self.decoder(x_unflat)
         return x_recon.view(B, -1)[:, :self.output_dim]
     
-# Define the Trainer
+# Define the Trainer for the AE DOD DL
 class AE_DOD_DL_Trainer:
-    def __init__(self, N_A, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, example_name, error_weight=0.5,
+    def __init__(self, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, example_name, error_weight=0.5,
                  epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
         self.error_weight = error_weight
@@ -617,6 +617,137 @@ class AE_DOD_DL_Trainer:
                 best_loss = best_loss_restart
 
             tqdm.write(f'Current best loss of AE DOD DL: {best_loss:.6f}')
+
+        if best_model is not None:
+            self.en_model.load_state_dict(best_model["encoder"])
+            self.de_model.load_state_dict(best_model["decoder"])
+            self.coeff_model.load_state_dict(best_model["coeff_model"])
+            
+        return best_loss
+
+'''
+-----------------------------------
+We furthermore add a POD DL ROM Trainer on the basis of the Autoencoder,
+as the POD Matrix is already provided. The approximation is then given via
+
+u(mu, nu, t) = A Decoder(Coeff(mu, nu, t))
+-----------------------------------
+'''
+# Define the Trainer for the standard POD DL
+class POD_DL_Trainer:
+    def __init__(self, Coeff_model, Encoder_model, Decoder_model, train_valid_set, example_name, error_weight,
+                 epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
+        self.learning_rate = learning_rate
+        self.epochs = epochs
+        self.error_weight = error_weight
+        self.restarts = restarts
+        self.batch_size = batch_size
+        self.en_model = Encoder_model.to(device)
+        self.de_model = Decoder_model.to(device)
+        self.coeff_model = Coeff_model.to(device)
+        self.device = device
+        self.patience = patience
+
+        train_data = train_valid_set('train')
+        valid_data = train_valid_set('valid')
+
+        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
+
+    def loss_function(self, mu_batch, nu_batch, solution_batch):
+        batch_size = mu_batch.size(0)
+        temp_error = 0.0
+        for i in range(nt + 1):
+            t_batch = torch.stack(
+                [torch.tensor(i * time_end / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+            ).unsqueeze(1)
+            # Get the coefficient model output; expected shape: (B, n)
+            coeff_output = self.coeff_model(mu_batch, nu_batch, t_batch)
+            # Get the non linear expansion output; expected shape: (B, N_A)
+            decoder_output = self.de_model(coeff_output)
+
+            # Extract the solution slice at time step i; expected shape: (B, N_A)
+            solution_slice = solution_batch[:, i, :]
+
+            # Encoder output; expected shape: (B, N)
+            encoder_output = self.en_model(solution_slice)
+
+            dynam_error = solution_slice - decoder_output  # (B, N_A)
+            proj_error = encoder_output - coeff_output # (B, n)
+            temp_error += (self.error_weight / 2 * torch.sum(torch.norm(dynam_error, dim=1) ** 2) 
+                           + (1-self.error_weight) / 2 * torch.sum(torch.norm(proj_error, dim=1) ** 2))
+
+        loss = temp_error / batch_size
+        return loss
+
+    def train(self):
+        best_model = None
+        best_loss = float('inf')
+        best_loss_restart = float('inf')
+
+        tqdm.write("Model POD DL is being trained...")
+
+
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts POD DL", leave=False):
+            self.coeff_model.apply(initialize_weights)
+            self.en_model.apply(initialize_weights)
+            self.de_model.apply(initialize_weights)
+            
+            params = list(self.coeff_model.parameters()) + \
+                     list(self.en_model.parameters()) + \
+                     list(self.de_model.parameters())
+            optimizer = optim.Adam(params, lr=self.learning_rate)
+
+            epochs_no_improve = 0
+            
+            for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
+                self.coeff_model.train()
+                self.en_model.train()
+                self.de_model.train()
+                total_loss = 0.0
+
+                for mu_batch, nu_batch, solution_batch in self.train_loader:
+                    optimizer.zero_grad()
+                    loss = self.loss_function(mu_batch, nu_batch, solution_batch)
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += loss.item()
+                
+                self.coeff_model.eval()
+                self.en_model.eval()
+                self.de_model.eval()
+                with torch.no_grad():
+                    val_loss = 0.0
+                    for mu_batch, nu_batch, solution_batch in self.valid_loader:
+                        val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
+                    val_loss /= len(self.valid_loader)
+            
+                if val_loss < best_loss_restart:
+                    best_loss_restart = val_loss
+                    best_model = {
+                        "encoder": copy.deepcopy(self.en_model.state_dict()),
+                        "decoder": copy.deepcopy(self.de_model.state_dict()),
+                        "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
+                    }
+                else:
+                    epochs_no_improve += 1
+                    if epochs_no_improve >= self.patience:
+                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        best_loss_restart = float('inf')
+                        break
+
+
+                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
+
+            if best_loss_restart < best_loss:
+                best_model = {
+                        "encoder": copy.deepcopy(self.en_model.state_dict()),
+                        "decoder": copy.deepcopy(self.de_model.state_dict()),
+                        "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
+                    }
+                best_loss = best_loss_restart
+
+            tqdm.write(f'Current best loss of POD DL: {best_loss:.6f}')
 
         if best_model is not None:
             self.en_model.load_state_dict(best_model["encoder"])
@@ -1074,7 +1205,7 @@ class CoLoRA_DL_Trainer():
                 best_model = self.model.state_dict()
                 best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of Coeff DOD DL: {best_loss:.6f}')
+            tqdm.write(f'Current best loss of CoLoRA DL: {best_loss:.6f}')
 
         self.model.load_state_dict(best_model)
         return best_loss

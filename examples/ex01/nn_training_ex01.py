@@ -4,11 +4,12 @@ import numpy as np
 
 
 # Usage example
-N_h = 365
+N_h = 5101
 N_A = 64
+nt = 10
+diameter = 0.02
 rank = 10
 L = 3
-dynamic_dim = 4
 N = 16
 n = 4
 m = 4
@@ -19,18 +20,20 @@ dod_structure = [128, 64]
 phi_N_structure = [32, 16]
 phi_n_structure = [16, 8]
 stat_dod_structure = [128, 64]
-nt = 10
-diameter = 0.1
-generalepochs = 500
+pod_in_channels = 1
+pod_hidden_channels = 1
+pod_num_layers = 1
+# Training Example
+generalepochs = 2000
 generalrestarts = 2
-generalpatience = 3
+generalpatience = 5
 
 # Fetch Training and Validation set
 train_valid_data = dr.FetchReducedTrainAndValidSet(0.8, 'ex01')
 stat_train_valid_data = dr.StatFetchReducedTrainAndValidSet(0.8, 'ex01')
 
 # Initialize the DOD model
-DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, N, N_A)
+DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, n, N_A)
 
 # Initialize the DOD trainer
 DOD_DL_trainer = dr.DOD_DL_Trainer(DOD_DL_model, train_valid_data, N_A, 'ex01',
@@ -42,7 +45,7 @@ best_loss = DOD_DL_trainer.train()
 print(f"Best validation loss: {best_loss}")
 
 # Initialize the Coefficient Finding model
-Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, N, phi_N_structure)
+Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_N_structure)
 
 # Initialize the Coefficient Finding trainer
 Coeff_trainer = dr.Coeff_DOD_DL_Trainer(N_A, DOD_DL_model, Coeff_model,
@@ -54,19 +57,19 @@ Coeff_trainer = dr.Coeff_DOD_DL_Trainer(N_A, DOD_DL_model, Coeff_model,
 best_loss2 = Coeff_trainer.train()
 print(f"Best validation loss: {best_loss2}")
 
-# Initialize the AE Coefficient Finding model
-En_model = dr.Encoder(N, 1, 1, n, 1, kernel=3, stride=2, padding=1)
-De_model = dr.Decoder(N, 1, 1, n, 1, kernel=3, stride=2, padding=1)
-AE_Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
+# Initialize the POD DL ROM model
+En_model = dr.Encoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel=3, stride=2, padding=1)
+De_model = dr.Decoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel=3, stride=2, padding=1)
+POD_DL_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
 
 # Initialize the AE Coefficient Finding trainer
-AE_DOD_DL_trainer = dr.AE_DOD_DL_Trainer(N_A, DOD_DL_model, AE_Coeff_model, En_model, De_model,
-                                    train_valid_data, 'ex01',
+POD_DL_trainer = dr.POD_DL_Trainer(POD_DL_model, En_model, De_model,
+                                    train_valid_data, 'ex01', 0.5,
                                     generalepochs, generalrestarts, learning_rate=1e-3, 
                                     batch_size=128, patience=generalpatience)
 
 # Train the AE Coefficient model
-best_loss3 = AE_DOD_DL_trainer.train()
+best_loss3 = POD_DL_trainer.train()
 print(f"Best validation loss: {best_loss3}")
 
 # Initialize and train the stationary DOD model
@@ -86,7 +89,7 @@ stat_Coeff_Trainer = dr.CoeffDODTrainer(stat_DOD_model, stat_Coeff_model, N_A,
 best_loss5 = stat_Coeff_Trainer.train()
 
 # Initialize the CoLoRA_DL model
-CoLoRA_DL_model = dr.CoLoRA_DL(N_A, L, dynamic_dim, parameter_nu_dim)
+CoLoRA_DL_model = dr.CoLoRA_DL(N_A, L, n, parameter_nu_dim)
 
 # Initialize the CoLoRA_DL trainer
 CoLoRa_DL_Trainer = dr.CoLoRA_DL_Trainer(N_A, stat_DOD_model, stat_Coeff_model, 
@@ -104,8 +107,8 @@ torch.save(Coeff_model.state_dict(), 'examples/ex01/state_dicts/DOD_Coefficient_
 torch.save({
     'encoder': En_model.state_dict(),
     'decoder': De_model.state_dict(),
-    'coeff_model': AE_Coeff_model.state_dict(),
-}, 'examples/ex01/state_dicts/AE_DOD_DL_Module.pth')
+    'coeff_model': POD_DL_model.state_dict(),
+}, 'examples/ex01/state_dicts/POD_DL_Module.pth')
 torch.save(stat_DOD_model.state_dict(), 'examples/ex01/state_dicts/stat_DOD_Module.pth')
 torch.save(stat_Coeff_model.state_dict(), 'examples/ex01/state_dicts/stat_CoeffDOD_Module.pth')
 torch.save(CoLoRA_DL_model.state_dict(), 'examples/ex01/state_dicts/CoLoRA_Module.pth')

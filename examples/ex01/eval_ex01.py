@@ -6,6 +6,8 @@ import torch
 # Usage example
 N_h = 5101
 N_A = 64
+nt = 10
+diameter = 0.02
 rank = 10
 L = 3
 N = 16
@@ -18,15 +20,17 @@ dod_structure = [128, 64]
 phi_N_structure = [32, 16]
 phi_n_structure = [16, 8]
 stat_dod_structure = [128, 64]
-nt = 10
-diameter = 0.02
+pod_in_channels = 1
+pod_hidden_channels = 1
+pod_num_layers = 1
+
 
 # Initialize the models
-DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, N, N_A)
-Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, N, phi_N_structure)
+DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, n, N_A)
+Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_N_structure)
 
-Decoder_model = dr.Decoder(N, 1, 1, n, 1, kernel=3, stride=2, padding=1)
-AE_Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
+Decoder_model = dr.Decoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel=3, stride=2, padding=1)
+POD_DL_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
 
 stat_DOD_model = dr.DOD(preprocess_dim, n, N_A, stat_dod_structure)
 stat_Coeff_model = dr.CoeffDOD(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
@@ -37,12 +41,12 @@ DOD_DL_model.load_state_dict(torch.load('examples/ex01/state_dicts/DOD_Module.pt
 DOD_DL_model.eval()
 Coeff_model.load_state_dict(torch.load('examples/ex01/state_dicts/DOD_Coefficient_Module.pth'))
 Coeff_model.eval()
-checkpoint = torch.load('examples/ex01/state_dicts/AE_DOD_DL_Module.pth')
+checkpoint = torch.load('examples/ex01/state_dicts/POD_DL_Module.pth')
 
 Decoder_model.load_state_dict(checkpoint['decoder'])
-AE_Coeff_model.load_state_dict(checkpoint['coeff_model'])
+POD_DL_model.load_state_dict(checkpoint['coeff_model'])
 Decoder_model.eval()
-AE_Coeff_model.eval()
+POD_DL_model.eval()
 
 stat_DOD_model.load_state_dict(torch.load('examples/ex01/state_dicts/stat_DOD_Module.pth'))
 stat_Coeff_model.load_state_dict(torch.load('examples/ex01/state_dicts/stat_CoeffDOD_Module.pth'))
@@ -95,9 +99,9 @@ for entry in training_data:
     u_i = fom.solution_space.from_numpy(entry['solution'])
     true_solution.append(u_i)
 
-    # Coeff_DL + AE_DOD_DL + CoLoRA_DL solution
+    # Coeff_DL + POD_DL + CoLoRA_DL solution
     coeff_dl_solution = []
-    ae_dl_solution = []
+    pod_dl_solution = []
     colora_dl_solution = []
     for j in range(nt + 1):
         time = torch.tensor(j / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
@@ -107,10 +111,10 @@ for entry in training_data:
         u_i_coeff_dl = torch.matmul(torch.matmul(A, dod_dl_output), coeff_output)
         coeff_dl_solution.append(u_i_coeff_dl)  # append each [N_h] vector
 
-        coeff_n_output = AE_Coeff_model(mu_i, nu_i, time).unsqueeze(0)
+        coeff_n_output = POD_DL_model(mu_i, nu_i, time).unsqueeze(0)
         decoded_output = Decoder_model(coeff_n_output).squeeze(0)
-        u_i_ae_dl = torch.matmul(torch.matmul(A, dod_dl_output), decoded_output)
-        ae_dl_solution.append(u_i_ae_dl)
+        u_i_pod_dl = torch.matmul(A, decoded_output)
+        pod_dl_solution.append(u_i_pod_dl)
 
         stat_coeff_n_output = stat_Coeff_model(mu_i, nu_i).unsqueeze(0).unsqueeze(2)
         stat_dod_output = stat_DOD_model(mu_i)
@@ -123,17 +127,18 @@ for entry in training_data:
     coeff_dl_sol = coeff_dl_sol.detach().numpy()
     coeff_dl_sol = fom.solution_space.from_numpy(coeff_dl_sol)
 
-    ae_dl_sol = torch.stack(ae_dl_solution, dim=0)
-    ae_dl_sol = ae_dl_sol.detach().numpy()
-    ae_dl_sol = fom.solution_space.from_numpy(ae_dl_sol)
+    pod_dl_sol = torch.stack(pod_dl_solution, dim=0)
+    pod_dl_sol = pod_dl_sol.detach().numpy()
+    pod_dl_sol = fom.solution_space.from_numpy(pod_dl_sol)
 
     u_i_colora = torch.stack(colora_dl_solution, dim=0)
     u_i_colora = u_i_colora.detach().numpy()
     u_i_colora = fom.solution_space.from_numpy(u_i_colora)
 
+
     # Visualize
-    fom.visualize((u_i, coeff_dl_sol, ae_dl_sol, u_i_colora),
+    fom.visualize((u_i, coeff_dl_sol, pod_dl_sol, u_i_colora),
                   legend=(f'True solution for mu:{mu_i}, nu:{nu_i}',
                           f'Linear Coefficient DOD-DL-ROM for mu:{mu_i}, nu:{nu_i}',
-                          f'AE improved DOD-DL-ROM for mu{mu_i}, nu:{nu_i}',
+                          f'POD-DL-ROM for mu{mu_i}, nu:{nu_i}',
                           f'DOD pretrained CoLoRA for mu:{mu_i}, nu:{nu_i}'))
