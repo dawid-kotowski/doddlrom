@@ -25,8 +25,8 @@ pod_in_channels = 1
 pod_hidden_channels = 1
 pod_num_layers = 2
 #Training Example
-generalepochs = 500
-generalrestarts = 2
+generalepochs = 1000
+generalrestarts = 15
 generalpatience = 3
 
 # Fetch Training and Validation set
@@ -249,7 +249,7 @@ if True:
 
 # Define color and style map for consistency
 plot_styles = {
-    'POD DOD DL':     {'color': 'blue',  'linestyle': '--'},
+    'POD DL':     {'color': 'blue',  'linestyle': '--'},
     'Linear DOD DL': {'color': 'green', 'linestyle': '-'},
     'CoLoRA DL':     {'color': 'red',   'linestyle': ':'},
     'Ambient Error': {'color': 'grey',  'linestyle': '-.'}
