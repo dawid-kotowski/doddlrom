@@ -10,28 +10,44 @@ with open("/home/sereom/Documents/University/Studies/Mathe/Wissenschaftliche Arb
 data = defaultdict(lambda: {})
 
 for result in time_results:
-    # Extract meta info
-    model_type = result.description  # 'POD DL ROM' or 'Linear DOD DL ROM' or 'CoLoRA DL ROM'
+    model_type = result.description  # e.g., 'POD DL ROM'
     latent_dim = int(result.label.split()[-1])  # assuming '... Latent Dimension n'
     num_threads = int(result.sub_label.split(': ')[1])
-    mean_time = result.mean  # in seconds
+    mean_time = result.mean
 
-    # Fill in the dictionary
     key = (model_type, latent_dim)
     data[key][num_threads] = mean_time
 
+# Map of model_type to a fixed color
+model_colors = {
+    'POD DL ROM': 'tab:red',
+    'Linear DOD DL ROM': 'tab:blue',
+    'CoLoRA DL ROM': 'tab:green',
+}
+
+# Identify smallest and largest latent dims per model_type
+latent_extremes = {}
+for model_type in {k[0] for k in data}:
+    dims = sorted([k[1] for k in data if k[0] == model_type])
+    if dims:
+        latent_extremes[model_type] = {'min': dims[0], 'max': dims[-1]}
+
 # Plot
 fig, ax = plt.subplots(figsize=(10, 6))
-
 thread_counts = sorted({t for d in data.values() for t in d})
-colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
-linestyles = ['-', '--']
 
-for idx, ((model_type, latent_dim), times_dict) in enumerate(sorted(data.items())):
+for (model_type, latent_dim), times_dict in sorted(data.items()):
+    extremes = latent_extremes[model_type]
+    if latent_dim not in [extremes['min'], extremes['max']]:
+        continue  # skip intermediate latent dimensions
+
+    linestyle = '-' if latent_dim == extremes['min'] else '--'
+    color = model_colors.get(model_type, 'tab:gray')
     times = [times_dict.get(t, None) for t in thread_counts]
     label = f"{model_type} (Latent dim {latent_dim})"
-    ax.plot(thread_counts, times, marker='o', linestyle=linestyles[idx % 2],
-            color=colors[idx % len(colors)], label=label)
+
+    ax.plot(thread_counts, times, marker='o', linestyle=linestyle,
+            color=color, label=label)
 
 ax.set_title("Benchmark Timing of DL-ROMs vs Thread Count")
 ax.set_xlabel("Number of Threads")
