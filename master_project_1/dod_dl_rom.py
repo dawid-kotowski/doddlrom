@@ -1240,3 +1240,65 @@ class MeanError():
             error += self.norm(entry)
         return error / len(data)
 
+'''
+-------------------
+Define simple forward pass assuming existence of networks
+-------------------
+'''
+
+def dod_dl_forward(A, DOD_DL_model, Coeff_model, mu_i, nu_i, nt_):
+    dod_dl_solution = []
+    for j in range(nt_ + 1):
+        time = torch.tensor(j * time_end / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+        time = time.unsqueeze(0).unsqueeze(1)
+        dod_dl_output = DOD_DL_model(mu_i, time).squeeze(0).T
+        coeff_output = Coeff_model(mu_i, nu_i, time)
+        u_ij_coeff_dl = torch.matmul(torch.matmul(A, dod_dl_output), coeff_output)
+        dod_dl_solution.append(u_ij_coeff_dl)
+
+    u_i_dod_dl = torch.stack(dod_dl_solution, dim=0)
+    u_i_dod_dl = u_i_dod_dl.detach().numpy()
+    return u_i_dod_dl
+
+def pod_dl_forward(A, POD_DL_model, De_model, mu_i, nu_i, nt_):
+    pod_dl_solution = []
+    for j in range(nt_ + 1):
+        time = torch.tensor(j * time_end / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+        time = time.unsqueeze(0).unsqueeze(1)
+        coeff_n_output = POD_DL_model(mu_i, nu_i, time).unsqueeze(0)
+        decoded_output = De_model(coeff_n_output).squeeze(0)
+        u_ij_pod_dl = torch.matmul(A, decoded_output)
+        pod_dl_solution.append(u_ij_pod_dl)
+    
+    u_i_pod_dl = torch.stack(pod_dl_solution, dim=0)
+    u_i_pod_dl = u_i_pod_dl.detach().numpy()
+    return u_i_pod_dl
+
+def ae_dod_dl_forward(A, AE_DOD_DL_model, De_model, mu_i, nu_i, nt_):
+    ae_dod_dl_solution = []
+    for j in range(nt_ + 1):
+        time = torch.tensor(j * time_end / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+        time = time.unsqueeze(0).unsqueeze(1)
+        coeff_n_output = AE_DOD_DL_model(mu_i, nu_i, time).unsqueeze(0)
+        decoded_output = De_model(coeff_n_output).squeeze(0)
+        u_ij_ae_dod_dl = torch.matmul(A, decoded_output)
+        ae_dod_dl_solution.append(u_ij_ae_dod_dl)
+    
+    u_i_ae_dod_dl = torch.stack(ae_dod_dl_solution, dim=0)
+    u_i_ae_dod_dl = u_i_ae_dod_dl.detach().numpy()
+    return u_i_ae_dod_dl
+
+def colora_dl_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, mu_i, nu_i, nt_):
+    colora_dl_solution = []
+    for j in range(nt_ + 1):
+        time = torch.tensor(j * time_end / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+        time = time.unsqueeze(0).unsqueeze(1)
+        stat_coeff_n_output = stat_Coeff_model(mu_i, nu_i).unsqueeze(0).unsqueeze(2)
+        stat_dod_output = stat_DOD_model(mu_i)
+        v_0 = torch.bmm(stat_dod_output.transpose(1, 2), stat_coeff_n_output)
+        u_ij_colora = torch.matmul(A, CoLoRA_DL_model(v_0, nu_i, time).squeeze(0))
+        colora_dl_solution.append(u_ij_colora)
+
+    u_i_colora_dl = torch.stack(colora_dl_solution, dim=0)
+    u_i_colora_dl = u_i_colora_dl.detach().numpy()
+    return u_i_colora_dl

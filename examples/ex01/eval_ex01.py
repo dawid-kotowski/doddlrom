@@ -24,7 +24,7 @@ pod_in_channels = 1
 pod_hidden_channels = 1
 pod_num_layers = 1
 
-
+#region Loading of all Models
 # Initialize the models
 DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, n, N_A)
 Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_N_structure)
@@ -55,6 +55,9 @@ stat_Coeff_model.eval()
 CoLoRA_DL_model.load_state_dict(torch.load('examples/ex01/state_dicts/CoLoRA_Module.pth'))
 CoLoRA_DL_model.eval()
 
+#endregion
+
+#region Set up of FOM for pymor utility
 # Get some Validation Data
 loaded_data = np.load('examples/ex01/training_data/training_data_ex01.npy', allow_pickle=True)
 np.random.shuffle(loaded_data) 
@@ -85,6 +88,8 @@ problem = InstationaryProblem(
 )
 fom, fom_data = discretize_instationary_cg(problem, diameter=diameter, nt=nt)
 
+#endregion
+
 # Set up solutions
 true_solution = fom.solution_space.empty()
 A = torch.tensor(np.load('examples/ex01/training_data/ambient_matrix_ex01.npy', allow_pickle=True), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
@@ -100,41 +105,13 @@ for entry in training_data:
     true_solution.append(u_i)
 
     # Coeff_DL + POD_DL + CoLoRA_DL solution
-    coeff_dl_solution = []
-    pod_dl_solution = []
-    colora_dl_solution = []
-    for j in range(nt + 1):
-        time = torch.tensor(j / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
-        time = time.unsqueeze(0).unsqueeze(1)
-        dod_dl_output = DOD_DL_model(mu_i, time).squeeze(0).T
-        coeff_output = Coeff_model(mu_i, nu_i, time)
-        u_i_coeff_dl = torch.matmul(torch.matmul(A, dod_dl_output), coeff_output)
-        coeff_dl_solution.append(u_i_coeff_dl)  # append each [N_h] vector
-
-        coeff_n_output = POD_DL_model(mu_i, nu_i, time).unsqueeze(0)
-        decoded_output = Decoder_model(coeff_n_output).squeeze(0)
-        u_i_pod_dl = torch.matmul(A, decoded_output)
-        pod_dl_solution.append(u_i_pod_dl)
-
-        stat_coeff_n_output = stat_Coeff_model(mu_i, nu_i).unsqueeze(0).unsqueeze(2)
-        stat_dod_output = stat_DOD_model(mu_i)
-        v_0 = torch.bmm(stat_dod_output.transpose(1, 2), stat_coeff_n_output)
-        u_i_colora = torch.matmul(A, CoLoRA_DL_model(v_0, nu_i, time).squeeze(0))
-        colora_dl_solution.append(u_i_colora)
-
-    # Stack along the time axis to get shape [nt+1, N_h]
-    coeff_dl_sol = torch.stack(coeff_dl_solution, dim=0)
-    coeff_dl_sol = coeff_dl_sol.detach().numpy()
-    coeff_dl_sol = fom.solution_space.from_numpy(coeff_dl_sol)
-
-    pod_dl_sol = torch.stack(pod_dl_solution, dim=0)
-    pod_dl_sol = pod_dl_sol.detach().numpy()
-    pod_dl_sol = fom.solution_space.from_numpy(pod_dl_sol)
-
-    u_i_colora = torch.stack(colora_dl_solution, dim=0)
-    u_i_colora = u_i_colora.detach().numpy()
-    u_i_colora = fom.solution_space.from_numpy(u_i_colora)
-
+    pod_dl_sol = fom.solution_space.from_numpy(
+        dr.pod_dl_forward(A, POD_DL_model, Decoder_model, mu_i, nu_i, nt))
+    u_i_colora = fom.solution_space.from_numpy(
+        dr.colora_dl_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, 
+                             mu_i, nu_i, nt))
+    coeff_dl_sol = fom.solution_space.from_numpy(
+        dr.dod_dl_forward(A, DOD_DL_model, Coeff_model, mu_i, nu_i, nt))
 
     # Visualize
     fom.visualize((u_i, coeff_dl_sol, pod_dl_sol, u_i_colora),

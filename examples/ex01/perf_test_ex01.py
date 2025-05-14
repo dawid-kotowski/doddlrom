@@ -3,6 +3,8 @@ from master_project_1 import dod_dl_rom as dr
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import torch.utils.benchmark as benchmark
+import pickle
 
 # Fixed Constants
 N_h = 5101
@@ -25,8 +27,8 @@ pod_in_channels = 1
 pod_hidden_channels = 1
 pod_num_layers = 2
 #Training Example
-generalepochs = 1000
-generalrestarts = 15
+generalepochs = 50
+generalrestarts = 2
 generalpatience = 3
 
 # Fetch Training and Validation set
@@ -62,7 +64,10 @@ rel_error_pod_dl = []
 abs_error_colora_dl = []
 rel_error_colora_dl = []
 ambient_errors = []
+time_results = []
 for n in tqdm(range(2, 8), desc="Reduced Dimension"):
+
+    #region Initialisation of all Models
     # Initialize the DOD model
     DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, n, N_A)
 
@@ -127,7 +132,7 @@ for n in tqdm(range(2, 8), desc="Reduced Dimension"):
 
     # Train the CoLoRA_DL
     best_loss7 = CoLoRa_DL_Trainer.train()
-
+    #endregion
 
     '''
     ---------------------
@@ -144,14 +149,52 @@ for n in tqdm(range(2, 8), desc="Reduced Dimension"):
     stat_Coeff_model.eval()
     CoLoRA_DL_model.eval()
 
-    # Get Solutions
+    # Set up timers for some solution
+    mu_0 = torch.tensor(performance_data[0]['mu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+    mu_0 = mu_0.unsqueeze(0)
+    nu_0 = torch.tensor(performance_data[0]['nu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+    nu_0 = nu_0.unsqueeze(0)
+    label = f'Forward Through DL-ROMs for Latent Dimension {n}'
+    for num_threads in [1, 2, 4, 8]:
+        sub_label = f'Threads: {num_threads}'
+        time_results.append(benchmark.Timer(
+            stmt='dr.dod_dl_forward(A, DOD_DL_model, Coeff_model, mu_0, nu_0, nt)',
+            setup='from master_project_1 import dod_dl_rom as dr',
+            globals={'A': A, 'DOD_DL_model': DOD_DL_model, 
+                     'Coeff_model': Coeff_model, 'mu_0': mu_0, 'nu_0' : nu_0, 'nt': nt},
+            num_threads=num_threads,
+            label=label,
+            sub_label=sub_label,
+            description='Linear DOD DL ROM',
+            ).blocked_autorange(min_run_time=0.5))
+        time_results.append(benchmark.Timer(
+            stmt='dr.pod_dl_forward(A, POD_DL_model, De_model, mu_0, nu_0, nt)',
+            setup='from master_project_1 import dod_dl_rom as dr',
+            globals={'A': A, 'POD_DL_model': POD_DL_model, 
+                     'De_model': De_model, 'mu_0': mu_0, 'nu_0' : nu_0, 'nt': nt},
+            num_threads=num_threads,
+            label=label,
+            sub_label=sub_label,
+            description='POD DL ROM',
+            ).blocked_autorange(min_run_time=0.5))
+        time_results.append(benchmark.Timer(
+            stmt='dr.colora_dl_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, mu_0, nu_0, nt)',
+            setup='from master_project_1 import dod_dl_rom as dr',
+            globals={'A': A, 'stat_DOD_model': stat_DOD_model, 'stat_Coeff_model': stat_Coeff_model, 
+                     'CoLoRA_DL_model': CoLoRA_DL_model, 'mu_0': mu_0, 'nu_0' : nu_0, 'nt': nt},
+            num_threads=num_threads,
+            label=label,
+            sub_label=sub_label,
+            description='CoLoRA DL ROM',
+            ).blocked_autorange(min_run_time=0.5))
+
+    #region Get Solutions of all Models for Data Batch
     tqdm.write("Collecting Error...")
     coeff_dl_solutions = []
     pod_dl_solutions = []
     colora_dl_solutions = []
     norm_solutions = []
     proj_solutions = []
-    ambient_error = []
     solutions = []
     for entry in tqdm(performance_data, desc="Performance detection", leave=False):
         mu_i = torch.tensor(entry['mu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
@@ -164,43 +207,15 @@ for n in tqdm(range(2, 8), desc="Reduced Dimension"):
         norm_u_i = l2_norm(u_i)
         proj_u_i = u_i @ G @ A_np @ A_np.T
 
-        # Coeff_DL + POD_DL + CoLoRA_DL solution
-        coeff_dl_solution = []
-        pod_dl_solution = []
-        colora_dl_solution = []
-        for j in range(nt + 1):
-            time = torch.tensor(j / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
-            time = time.unsqueeze(0).unsqueeze(1)
-            dod_dl_output = DOD_DL_model(mu_i, time).squeeze(0).T
-            coeff_output = Coeff_model(mu_i, nu_i, time)
-            u_i_coeff_dl = torch.matmul(torch.matmul(A, dod_dl_output), coeff_output)
-            coeff_dl_solution.append(u_i_coeff_dl)
-
-            coeff_n_output = POD_DL_model(mu_i, nu_i, time).unsqueeze(0)
-            decoded_output = De_model(coeff_n_output).squeeze(0)
-            u_i_pod_dl = torch.matmul(A, decoded_output)
-            pod_dl_solution.append(u_i_pod_dl)
-
-            stat_coeff_n_output = stat_Coeff_model(mu_i, nu_i).unsqueeze(0).unsqueeze(2)
-            stat_dod_output = stat_DOD_model(mu_i)
-            v_0 = torch.bmm(stat_dod_output.transpose(1, 2), stat_coeff_n_output)
-            u_i_colora = torch.matmul(A, CoLoRA_DL_model(v_0, nu_i, time).squeeze(0))
-            colora_dl_solution.append(u_i_colora)
-
-        # Stack along the time axis to get shape [nt+1, N_h]
-        coeff_dl_sol = torch.stack(coeff_dl_solution, dim=0)
-        coeff_dl_sol = coeff_dl_sol.detach().numpy()
-        coeff_dl_solutions.append(coeff_dl_sol)
-
-        pod_dl_sol = torch.stack(pod_dl_solution, dim=0)
-        pod_dl_sol = pod_dl_sol.detach().numpy()
-        pod_dl_solutions.append(pod_dl_sol)
-
-
-        colora_dl_sol = torch.stack(colora_dl_solution, dim=0)
-        colora_dl_sol = colora_dl_sol.detach().numpy()
-        colora_dl_solutions.append(colora_dl_sol)
-
+        # Append Coeff_DL + POD_DL + CoLoRA_DL solution
+        pod_dl_solutions.append(
+            dr.pod_dl_forward(A, POD_DL_model, De_model, mu_i, nu_i, nt))
+        colora_dl_solutions.append(
+            dr.colora_dl_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, mu_i, nu_i, nt))
+        coeff_dl_solutions.append(
+            dr.dod_dl_forward(A, DOD_DL_model, Coeff_model, mu_i, nu_i, nt))
+    
+        # Append further relevant quantities
         norm_solutions.append(norm_u_i)
         proj_solutions.append(proj_u_i)
         solutions.append(u_i)
@@ -231,6 +246,9 @@ for n in tqdm(range(2, 8), desc="Reduced Dimension"):
     ambient_abs_error_colora_dl.append(error_loader(prof_diff_colora_dl))
     ambient_rel_error_colora_dl.append(error_loader([x / y for x, y in zip(prof_diff_colora_dl, norm_solutions)]))
     '''
+
+#endregion
+
 '''
 ----------------
 ----------------
@@ -282,8 +300,18 @@ axs[1].legend()
 
 plt.tight_layout()
 
-plt.savefig('/home/sereom/Documents/University/Studies/Mathe/Wissenschaftliche Arbeiten/Master/Masterarbeit Ohlberger/Programming/master-project-1/examples/ex01/performance.png', dpi=300, bbox_inches='tight')
+plt.savefig('/home/sereom/Documents/University/Studies/Mathe/Wissenschaftliche Arbeiten/Master/Masterarbeit Ohlberger/Programming/master-project-1/examples/ex01/benchmarks/performance.png', dpi=300, bbox_inches='tight')
 
 plt.show()
 
+'''
+--------------------
+Cast Timing Results to File
+--------------------
+'''
+with open("/home/sereom/Documents/University/Studies/Mathe/Wissenschaftliche Arbeiten/Master/Masterarbeit Ohlberger/Programming/master-project-1/examples/ex01/benchmarks/benchmark_timed.pkl", "wb") as f:
+    pickle.dump(time_results, f)
+time_compare = benchmark.Compare(time_results)
+time_compare.colorize()
+time_compare.print()
 
