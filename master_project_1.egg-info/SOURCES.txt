@@ -1,8 +1,0 @@
-README.md
-setup.py
-master_project_1/__init__.py
-master_project_1/dod_dl_rom.py
-master_project_1.egg-info/PKG-INFO
-master_project_1.egg-info/SOURCES.txt
-master_project_1.egg-info/dependency_links.txt
-master_project_1.egg-info/top_level.txt
