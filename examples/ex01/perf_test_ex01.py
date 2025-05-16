@@ -20,14 +20,17 @@ parameter_nu_dim = 1
 preprocess_dim = 2
 dod_structure = [64, 64]
 phi_n_structure = [16, 8]
-coeff_ae_structure = [8, 4, 4]
+coeff_ae_structure = [32, 16, 8]
 stat_dod_structure = [128, 64]
 pod_in_channels = 1
 pod_hidden_channels = 1
-pod_num_layers = 3
+pod_num_layers = 2
+kernel = 3
+stride = 2
+padding = 1
 #Training Example
-generalepochs = 500
-generalrestarts = 10
+generalepochs = 5
+generalrestarts = 2
 generalpatience = 5
 
 # Fetch Training and Validation set
@@ -64,7 +67,7 @@ abs_error_colora_dl = []
 rel_error_colora_dl = []
 ambient_errors = []
 time_results = []
-for n in tqdm(range(2, 8), desc="Reduced Dimension"):
+for n in tqdm([2, 4, 6, 8], desc="Reduced Dimension"):
 
     #region Initialisation of all Models
     # Initialize the DOD model
@@ -91,8 +94,8 @@ for n in tqdm(range(2, 8), desc="Reduced Dimension"):
     best_loss2 = DOD_DL_coeff_trainer.train()
 
     # Initialize the POD DL ROM model
-    En_model = dr.Encoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel=3, stride=2, padding=1)
-    De_model = dr.Decoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel=3, stride=2, padding=1)
+    En_model = dr.Encoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel, stride, padding)
+    De_model = dr.Decoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel, stride, padding)
     POD_DL_coeff_model = dr.Coeff_AE(parameter_mu_dim, parameter_nu_dim, n, coeff_ae_structure)
 
     # Initialize the AE Coefficient Finding trainer
@@ -161,7 +164,7 @@ for n in tqdm(range(2, 8), desc="Reduced Dimension"):
             stmt='dr.dod_dl_forward(A, DOD_DL_model, DOD_DL_coeff_model, mu_0, nu_0, nt)',
             setup='from master_project_1 import dod_dl_rom as dr',
             globals={'A': A, 'DOD_DL_model': DOD_DL_model, 
-                     'DOD_DL_coeff_model': DOD_DL_model, 'mu_0': mu_0, 'nu_0' : nu_0, 'nt': nt},
+                     'DOD_DL_coeff_model': DOD_DL_coeff_model, 'mu_0': mu_0, 'nu_0' : nu_0, 'nt': nt},
             num_threads=num_threads,
             label=label,
             sub_label=sub_label,
@@ -257,13 +260,6 @@ Plot Errors
 ----------------
 '''
 x = np.linspace(2, 8, 6, dtype=int)
-
-if True:
-    abs_error_pod_dl = [np.nan] * len(x)
-    rel_error_pod_dl = [np.nan] * len(x)
-    ambient_abs_error_pod_dl = [np.nan] * len(x)
-    ambient_rel_error_pod_dl = [np.nan] * len(x)
-
 
 # Define color and style map for consistency
 plot_styles = {

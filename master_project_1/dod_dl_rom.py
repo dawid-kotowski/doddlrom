@@ -225,7 +225,6 @@ class DOD_DL_Trainer:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
                         tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
-                        best_loss_restart = float('inf')
                         break
 
                 tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
@@ -397,7 +396,6 @@ class Coeff_DOD_DL_Trainer:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
                         tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
-                        best_loss_restart = float('inf')
                         break
 
                 tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
@@ -665,7 +663,6 @@ class AE_DOD_DL_Trainer:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
                         tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
-                        best_loss_restart = float('inf')
                         break
 
 
@@ -797,7 +794,6 @@ class POD_DL_Trainer:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
                         tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
-                        best_loss_restart = float('inf')
                         break
 
 
@@ -1003,7 +999,6 @@ class DODTrainer:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
                         tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
-                        best_loss_restart = float('inf')
                         break
 
                 tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
@@ -1092,7 +1087,6 @@ class CoeffDODTrainer:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
                         tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
-                        best_loss_restart = float('inf')
                         break
 
                 tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
@@ -1261,7 +1255,6 @@ class CoLoRA_DL_Trainer():
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
                         tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
-                        best_loss_restart = float('inf')
                         break
 
                 tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
