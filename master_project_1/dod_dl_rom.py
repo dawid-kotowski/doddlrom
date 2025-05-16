@@ -197,6 +197,7 @@ class DOD_DL_Trainer:
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
             epochs_no_improve = 0
+            best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
@@ -368,6 +369,7 @@ class Coeff_DOD_DL_Trainer:
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
             epochs_no_improve = 0
+            best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
@@ -625,6 +627,8 @@ class AE_DOD_DL_Trainer:
             optimizer = optim.Adam(params, lr=self.learning_rate)
 
             epochs_no_improve = 0
+            best_loss_restart = float('inf')
+
             
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.coeff_model.train()
@@ -758,6 +762,7 @@ class POD_DL_Trainer:
             optimizer = optim.Adam(params, lr=self.learning_rate)
 
             epochs_no_improve = 0
+            best_loss_restart = float('inf')
             
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.coeff_model.train()
@@ -970,6 +975,7 @@ class DODTrainer:
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
             epochs_no_improve = 0
+            best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
@@ -1058,6 +1064,7 @@ class CoeffDODTrainer:
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
             epochs_no_improve = 0
+            best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
@@ -1226,6 +1233,7 @@ class CoLoRA_DL_Trainer():
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
             epochs_no_improve = 0
+            best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()

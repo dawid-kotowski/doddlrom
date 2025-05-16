@@ -21,13 +21,13 @@ coeff_ae_structure = [32, 16, 8]
 stat_dod_structure = [128, 64]
 pod_in_channels = 1
 pod_hidden_channels = 1
-pod_num_layers = 1
+pod_num_layers = 2
 kernel = 3
 stride = 2
 padding = 1
 # Training Example
-generalepochs = 50
-generalrestarts = 2
+generalepochs = 200
+generalrestarts = 5
 generalpatience = 3
 
 # Fetch Training and Validation set
