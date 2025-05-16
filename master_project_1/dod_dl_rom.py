@@ -9,7 +9,7 @@ from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 
 # Some Constants
-time_end = 1.
+time_end = 1
 nt = 10
 
 # Initialize weights
@@ -395,42 +395,74 @@ class Coeff_DOD_DL_Trainer:
         self.model.load_state_dict(best_model)
         return best_loss
 
+# Define optional parameter-to-latent-dynamic Model
+#returns [B, n]
+class Coeff_AE(nn.Module):
+    def __init__(self, geometric_dim, physical_dim, n, layer_sizes=None, leaky_relu_slope=0.1):
+        super(Coeff_AE, self).__init__()
+        if layer_sizes is None:
+            layer_sizes = [1]
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(geometric_dim + physical_dim + 1, layer_sizes[0]))
+        for i in range(len(layer_sizes) - 1):
+            self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+            if i < len(layer_sizes) - 1:
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+        self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n))
+    def forward(self, mu, nu, t):
+        mu_nu_t = torch.cat((mu, nu, t), dim=1)
+        for layer_forward in self.layers:
+            mu_nu_t = layer_forward(mu_nu_t)
+        return mu_nu_t
+    
 # Define Encoder 
-# takes [B, input_dim] return [B, loop(floor((input_dim + 2p - k) / s) + 1)] 
+# takes [B, input_dim] return [B, loop(floor((input_dim + 2p - k) / s) + 1)**2)] 
 class Encoder(nn.Module):
     def __init__(self, input_dim, in_channels, hidden_channels, latent_dim,
                 num_layers, kernel, stride, padding):
         super().__init__()
         self.input_dim = input_dim
+        self.latent_dim = latent_dim
         self.hidden_channels = hidden_channels
         self.num_layers = num_layers
         self.padding = padding
         self.kernel = kernel
         self.stride = stride
+        self.encoder_output_shape = self._compute_encoder_shape() 
         self.grid_size = self._compute_grid(input_dim)
         H, W = self.grid_size
 
-        # Convolutional encoder
-        layers = []
+        # Convolutional layers
+        conv_layers = []
         current_channels = in_channels
         for i in range(num_layers):
             next_channels = hidden_channels
-            layers.append(nn.Conv2d(current_channels, next_channels, kernel_size=kernel,
+            conv_layers.append(nn.Conv2d(current_channels, next_channels, kernel_size=kernel,
                                     stride=stride, padding=padding))
-            layers.append(nn.LeakyReLU(0.1))
+            conv_layers.append(nn.LeakyReLU(0.1))
             current_channels = next_channels
+        self.conv = nn.Sequential(*conv_layers)
 
-        self.encoder = nn.Sequential(*layers)
+        # Linear layers
+        linear_layers = []
+        C, H, W = self.encoder_output_shape
+        current_dim = int(C*H*W)
+        for i in range(self._compute_linear_num() - 1):
+            linear_layers.append(nn.Linear(int(current_dim), int(current_dim // 2)))
+            linear_layers.append(nn.LeakyReLU(0.1))
+            current_dim = current_dim // 2
+        linear_layers.append(nn.Linear(int(current_dim), int(self.latent_dim)))
 
-        # Compute output shape after all conv layers
-        C_prime, H_prime, W_prime = self._compute_encoder_shape()
-        
-        self.linear = nn.Linear(C_prime * H_prime * W_prime, latent_dim)
+        self.linear = nn.Sequential(*linear_layers)
 
     def _compute_grid(self, D):
         size = math.ceil(math.sqrt(D))
         return (size, size)
     
+    def _compute_linear_num(self):
+        C, H, W = self._compute_encoder_shape()
+        return int(np.floor(C*H*W / self.latent_dim)) - 1
+
     def _compute_encoder_shape(self):
         D_temp = math.ceil(math.sqrt(self.input_dim))
         for layer in range(self.num_layers):
@@ -446,52 +478,66 @@ class Encoder(nn.Module):
             raise ValueError("Input dimension exceeds grid capacity.")
         
         x2d = x1d.view(B, 1, *self.grid_size)
-        conv_out = self.encoder(x2d).view(B, -1)
-        z = self.linear(conv_out)  # Latent vector
+        conv_out = self.conv(x2d).view(B, -1)
+        z = self.linear(conv_out) 
         return z
 
 # Define Decoder 
-# takes [B, loop(floor((input_dim + 2p - k) / s) + 1)] return [B, input_dim]
+# takes [B, loop(floor((input_dim + 2p - k) / s) + 1)**2)] return [B, input_dim]
 class Decoder(nn.Module):
     def __init__(self, output_dim, out_channels, hidden_channels, latent_dim, 
                  num_layers, kernel, stride, padding):
         super().__init__()
         self.output_dim = output_dim
+        self.latent_dim = latent_dim
         self.out_channels = out_channels
         self.hidden_channels = hidden_channels
         self.num_layers = num_layers
         self.padding = padding
         self.kernel = kernel
         self.stride = stride
-        self.encoder_output_shape = self._compute_encoder_shape()  # (C, H, W)
-        C, H, W = self.encoder_output_shape
-        self.linear = nn.Linear(latent_dim, C * H * W)
+        self.encoder_output_shape = self._compute_encoder_shape()
+        C, H, W = self._compute_encoder_shape()
 
-        layers = []
+        # Linear layers
+        linear_layers = []
+        current_dim = self.latent_dim
+        for i in range(self._compute_linear_num() - 1):
+            linear_layers.append(nn.Linear(int(current_dim), int(current_dim * 2)))
+            linear_layers.append(nn.LeakyReLU(0.1))
+            current_dim = current_dim * 2
+        linear_layers.append(nn.Linear(int(current_dim), int(C*H*W)))
+        self.delinear = nn.Sequential(*linear_layers)
+
+        # Convolutional layers
+        conv_layers = []
         current_channels = C
         for i in range(num_layers):
             next_channels = hidden_channels if i < num_layers - 1 else out_channels
-            layers.append(nn.ConvTranspose2d(current_channels, next_channels, 
+            conv_layers.append(nn.ConvTranspose2d(current_channels, next_channels, 
                                              kernel_size=kernel, stride=stride, padding=padding, output_padding=1))
             if i < num_layers - 1:
-                layers.append(nn.LeakyReLU(0.1))
+                conv_layers.append(nn.LeakyReLU(0.1))
             else:
-                layers.append(nn.Sigmoid())
+                conv_layers.append(nn.Sigmoid())
             current_channels = next_channels
+        self.deconv = nn.Sequential(*conv_layers)
 
-        self.decoder = nn.Sequential(*layers)
-
+    def _compute_linear_num(self):
+        C, H, W = self._compute_encoder_shape()
+        return int(np.floor(C*H*W / self.latent_dim)) - 1
+    
     def _compute_encoder_shape(self):
         D_temp = math.ceil(math.sqrt(self.output_dim))
         for layer in range(self.num_layers):
             D_temp = math.floor((D_temp + 2 * self.padding - self.kernel) / self.stride) + 1
-        return (self.out_channels, D_temp, D_temp)
+        return (self.hidden_channels, D_temp, D_temp)
 
     def forward(self, z):
         B = z.shape[0]
-        x_unflat = self.linear(z)
+        x_unflat = self.delinear(z)
         x_unflat = x_unflat.view(B, *self.encoder_output_shape)
-        x_recon = self.decoder(x_unflat)
+        x_recon = self.deconv(x_unflat)
         return x_recon.view(B, -1)[:, :self.output_dim]
     
 # Define the Trainer for the AE DOD DL
@@ -1048,7 +1094,6 @@ class Alpha(nn.Module):
         self.fc = nn.Linear(physical_dim + 1, 1, bias=True)
 
     def forward(self, nu, t):
-        # Convert t to a tensor if it's not already one
         if not torch.is_tensor(t):
             t = torch.tensor(t, dtype=nu.dtype, device=nu.device)
         # Ensure t has a proper shape for concatenation

@@ -5,6 +5,8 @@ import numpy as np
 N_A = 64
 nt = 10
 diameter = 0.02
+time_end = 1
+sample_size = 400
 
 # Define the advection function dependent on 'mu'
 def advection_function(x, mu):
@@ -28,7 +30,7 @@ stationary_problem = StationaryProblem(
 
 # Define the instationary problem
 problem = InstationaryProblem(
-    T=1.,
+    T=time_end,
     initial_data=ConstantFunction(0., 2),
     stationary_part=stationary_problem,
     name='advection_problem'
@@ -47,7 +49,8 @@ fom, fom_data = discretize_instationary_cg(problem, diameter=diameter, nt=nt)
 parameter_space = fom.parameters.space({'nu': (0.5, 1), 'mu': (0.2, np.pi-0.2)})
 
 # Generate training and validation sets
-training_set = parameter_space.sample_uniformly(30)
+sample_size_per_param = int(np.ceil(np.sqrt(sample_size)))
+training_set = parameter_space.sample_uniformly(sample_size_per_param)
 
 # Create an empty list to hold the training data
 training_data = []
@@ -153,3 +156,4 @@ for mu_nu in training_set:
     reduced_stationary_training_data.append((mu_nu['mu'], mu_nu['nu'], reduced_stationary_solution))
 reduced_stationary_training_data_array = np.array(reduced_stationary_training_data, dtype=dtype)
 np.save('examples/ex01/training_data/reduced_stationary_training_data_ex01.npy', reduced_stationary_training_data_array)
+print(stat_solution_flat.shape)

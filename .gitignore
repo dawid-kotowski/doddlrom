@@ -1,0 +1,31 @@
+# Ignore Python bytecode and cache
+__pycache__/
+*.py[cod]
+*.so
+master_project_1/__pycache__/
+
+# Ignore local IDE settings
+.idea/
+.vscode/
+
+# Ignore environment files
+.env
+*.env
+*.venv/
+venv/
+env/
+
+# Ignore data files and benchmarks
+**/*.pkl
+**/*.npy
+
+# Ignore logs
+*.log
+*.out
+*.err
+
+# Ignore Pictures
+**/*.png
+
+# Ignore egg info
+*.egg-info/

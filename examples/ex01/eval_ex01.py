@@ -8,7 +8,6 @@ N_h = 5101
 N_A = 64
 nt = 10
 diameter = 0.02
-rank = 10
 L = 3
 N = 16
 n = 4
@@ -16,21 +15,24 @@ m = 4
 parameter_mu_dim = 1
 parameter_nu_dim = 1
 preprocess_dim = 2
-dod_structure = [128, 64]
-phi_N_structure = [32, 16]
+dod_structure = [64, 64]
 phi_n_structure = [16, 8]
+coeff_ae_structure = [32, 16, 8]
 stat_dod_structure = [128, 64]
 pod_in_channels = 1
 pod_hidden_channels = 1
 pod_num_layers = 1
+kernel = 3
+stride = 2
+padding = 1
 
 #region Loading of all Models
 # Initialize the models
 DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, n, N_A)
-Coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_N_structure)
+DOD_DL_coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
 
-Decoder_model = dr.Decoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel=3, stride=2, padding=1)
-POD_DL_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
+Decoder_model = dr.Decoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel, stride, padding)
+POD_DL_coeff_model = dr.Coeff_AE(parameter_mu_dim, parameter_nu_dim, n, coeff_ae_structure)
 
 stat_DOD_model = dr.DOD(preprocess_dim, n, N_A, stat_dod_structure)
 stat_Coeff_model = dr.CoeffDOD(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
@@ -39,14 +41,14 @@ CoLoRA_DL_model = dr.CoLoRA_DL(N_A, L, n, parameter_nu_dim)
 # Load state_dicts
 DOD_DL_model.load_state_dict(torch.load('examples/ex01/state_dicts/DOD_Module.pth'))
 DOD_DL_model.eval()
-Coeff_model.load_state_dict(torch.load('examples/ex01/state_dicts/DOD_Coefficient_Module.pth'))
-Coeff_model.eval()
+DOD_DL_coeff_model.load_state_dict(torch.load('examples/ex01/state_dicts/DOD_Coefficient_Module.pth'))
+DOD_DL_coeff_model.eval()
 checkpoint = torch.load('examples/ex01/state_dicts/POD_DL_Module.pth')
 
 Decoder_model.load_state_dict(checkpoint['decoder'])
-POD_DL_model.load_state_dict(checkpoint['coeff_model'])
+POD_DL_coeff_model.load_state_dict(checkpoint['coeff_model'])
 Decoder_model.eval()
-POD_DL_model.eval()
+POD_DL_coeff_model.eval()
 
 stat_DOD_model.load_state_dict(torch.load('examples/ex01/state_dicts/stat_DOD_Module.pth'))
 stat_Coeff_model.load_state_dict(torch.load('examples/ex01/state_dicts/stat_CoeffDOD_Module.pth'))
@@ -106,12 +108,12 @@ for entry in training_data:
 
     # Coeff_DL + POD_DL + CoLoRA_DL solution
     pod_dl_sol = fom.solution_space.from_numpy(
-        dr.pod_dl_forward(A, POD_DL_model, Decoder_model, mu_i, nu_i, nt))
+        dr.pod_dl_forward(A, POD_DL_coeff_model, Decoder_model, mu_i, nu_i, nt))
     u_i_colora = fom.solution_space.from_numpy(
         dr.colora_dl_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, 
                              mu_i, nu_i, nt))
     coeff_dl_sol = fom.solution_space.from_numpy(
-        dr.dod_dl_forward(A, DOD_DL_model, Coeff_model, mu_i, nu_i, nt))
+        dr.dod_dl_forward(A, DOD_DL_model, DOD_DL_coeff_model, mu_i, nu_i, nt))
 
     # Visualize
     fom.visualize((u_i, coeff_dl_sol, pod_dl_sol, u_i_colora),
