@@ -26,9 +26,9 @@ kernel = 3
 stride = 2
 padding = 1
 # Training Example
-generalepochs = 20
-generalrestarts = 5
-generalpatience = 5
+generalepochs = 50
+generalrestarts = 2
+generalpatience = 3
 
 # Fetch Training and Validation set
 train_valid_data = dr.FetchReducedTrainAndValidSet(0.8, 'ex01')
@@ -39,7 +39,7 @@ DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, n, N_A
 
 # Initialize the DOD trainer
 DOD_DL_trainer = dr.DOD_DL_Trainer(DOD_DL_model, train_valid_data, N_A, 'ex01',
-                                   generalepochs,generalrestarts, learning_rate=1e-3, 
+                                   generalepochs,generalrestarts, learning_rate=1e-4, 
                                    batch_size=128, patience=generalpatience)
 
 # Train the DOD model
@@ -67,7 +67,7 @@ POD_DL_coeff_model = dr.Coeff_AE(parameter_mu_dim, parameter_nu_dim, n, coeff_ae
 # Initialize the AE Coefficient Finding trainer
 POD_DL_coeff_trainer = dr.POD_DL_Trainer(POD_DL_coeff_model, En_model, De_model,
                                     train_valid_data, 'ex01', 0.95,
-                                    generalepochs+300, generalrestarts, learning_rate=1e-2, 
+                                    generalepochs, generalrestarts, learning_rate=1e-2, 
                                     batch_size=128, patience=generalpatience)
 
 # Train the AE Coefficient model

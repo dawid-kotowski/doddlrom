@@ -14,10 +14,25 @@ nt = 10
 
 # Initialize weights
 def initialize_weights(m):
-    if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-        nn.init.xavier_uniform_(m.weight)
+    if isinstance(m, nn.Conv2d):
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu', a=0.1)
         if m.bias is not None:
             nn.init.zeros_(m.bias)
+
+    elif isinstance(m, nn.ConvTranspose2d):
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu', a=0.1)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+
+    elif isinstance(m, nn.Linear):
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu', a=0.1)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+
+    elif isinstance(m, (nn.BatchNorm2d, nn.BatchNorm1d)):
+        nn.init.ones_(m.weight)
+        nn.init.zeros_(m.bias)
+
 
 # Define Training/Validation Splitter
 class FetchReducedTrainAndValidSet:
@@ -518,8 +533,6 @@ class Decoder(nn.Module):
                                              kernel_size=kernel, stride=stride, padding=padding, output_padding=1))
             if i < num_layers - 1:
                 conv_layers.append(nn.LeakyReLU(0.1))
-            else:
-                conv_layers.append(nn.Sigmoid())
             current_channels = next_channels
         self.deconv = nn.Sequential(*conv_layers)
 
