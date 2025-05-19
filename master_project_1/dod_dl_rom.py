@@ -39,7 +39,7 @@ class FetchReducedTrainAndValidSet:
     def __init__(self, train_to_val_ratio, example_name):
         # 0.8 = train_to_val_ratio means 80 % of training data and 20 % of validation data
         self.train_to_val_ratio = train_to_val_ratio
-        path = f'examples/{example_name}/training_data/reduced_training_data_{example_name}.npy'
+        path = f'/home/sereom/Documents/University/Studies/Mathe/Wissenschaftliche Arbeiten/Master/Masterarbeit Ohlberger/Programming/master-project-1/examples/{example_name}/training_data/reduced_training_data_{example_name}.npy'
         loaded_data = np.load(path, allow_pickle=True)
         np.random.shuffle(loaded_data)
         num_samples = len(loaded_data)
@@ -61,7 +61,7 @@ class StatFetchReducedTrainAndValidSet:
     def __init__(self, train_to_val_ratio, example_name):
         # 0.8 = train_to_val_ratio means 80 % of training data and 20 % of validation data
         self.train_to_val_ratio = train_to_val_ratio
-        path = f'examples/{example_name}/training_data/reduced_stationary_training_data_{example_name}.npy'
+        path = f'/home/sereom/Documents/University/Studies/Mathe/Wissenschaftliche Arbeiten/Master/Masterarbeit Ohlberger/Programming/master-project-1/examples/{example_name}/training_data/reduced_stationary_training_data_{example_name}.npy'
         loaded_data = np.load(path, allow_pickle=True)
         np.random.shuffle(loaded_data)
         num_samples = len(loaded_data)
@@ -857,9 +857,9 @@ class StatRootModule(nn.Module):
             x = layer_forward(x)
         return x
 class DOD(nn.Module):
-    def __init__(self, seed_dim, num_roots, root_output_dim, root_layer_sizes=None):
+    def __init__(self, geometric_dim, seed_dim, num_roots, root_output_dim, root_layer_sizes=None):
         super(DOD, self).__init__()
-        self.seed_module = StatSeedModule(1, seed_dim)
+        self.seed_module = StatSeedModule(geometric_dim, seed_dim)
         self.root_modules = nn.ModuleList([StatRootModule(seed_dim, root_output_dim, root_layer_sizes) for _ in range(num_roots)])
 
     def forward(self, mu):

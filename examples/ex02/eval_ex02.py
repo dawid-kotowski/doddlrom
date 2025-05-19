@@ -4,15 +4,15 @@ import numpy as np
 import torch
 
 # Usage example
-N_h = 5101
+N_h = 20201
 N_A = 64
 nt = 10
-diameter = 0.02
+diameter = 0.01
 L = 3
 N = 16
 n = 4
 m = 4
-parameter_mu_dim = 1
+parameter_mu_dim = 3
 parameter_nu_dim = 1
 preprocess_dim = 2
 dod_structure = [64, 64]
@@ -39,34 +39,34 @@ while (output - int(np.sqrt(n)) > lin_dim_ae):
 Decoder_model = dr.Decoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel, stride, padding)
 POD_DL_coeff_model = dr.Coeff_AE(parameter_mu_dim, parameter_nu_dim, n, coeff_ae_structure)
 
-stat_DOD_model = dr.DOD(preprocess_dim, n, N_A, stat_dod_structure)
+stat_DOD_model = dr.DOD(parameter_mu_dim, preprocess_dim, n, N_A, stat_dod_structure)
 stat_Coeff_model = dr.CoeffDOD(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
 CoLoRA_DL_model = dr.CoLoRA_DL(N_A, L, n, parameter_nu_dim)
 
 # Load state_dicts
-DOD_DL_model.load_state_dict(torch.load('examples/ex01/state_dicts/DOD_Module.pth'))
+DOD_DL_model.load_state_dict(torch.load('examples/ex02/state_dicts/DOD_Module.pth'))
 DOD_DL_model.eval()
-DOD_DL_coeff_model.load_state_dict(torch.load('examples/ex01/state_dicts/DOD_Coefficient_Module.pth'))
+DOD_DL_coeff_model.load_state_dict(torch.load('examples/ex02/state_dicts/DOD_Coefficient_Module.pth'))
 DOD_DL_coeff_model.eval()
-checkpoint = torch.load('examples/ex01/state_dicts/POD_DL_Module.pth')
+checkpoint = torch.load('examples/ex02/state_dicts/POD_DL_Module.pth')
 
 Decoder_model.load_state_dict(checkpoint['decoder'])
 POD_DL_coeff_model.load_state_dict(checkpoint['coeff_model'])
 Decoder_model.eval()
 POD_DL_coeff_model.eval()
 
-stat_DOD_model.load_state_dict(torch.load('examples/ex01/state_dicts/stat_DOD_Module.pth'))
-stat_Coeff_model.load_state_dict(torch.load('examples/ex01/state_dicts/stat_CoeffDOD_Module.pth'))
+stat_DOD_model.load_state_dict(torch.load('examples/ex02/state_dicts/stat_DOD_Module.pth'))
+stat_Coeff_model.load_state_dict(torch.load('examples/ex02/state_dicts/stat_CoeffDOD_Module.pth'))
 stat_DOD_model.eval()
 stat_Coeff_model.eval()
-CoLoRA_DL_model.load_state_dict(torch.load('examples/ex01/state_dicts/CoLoRA_Module.pth'))
+CoLoRA_DL_model.load_state_dict(torch.load('examples/ex02/state_dicts/CoLoRA_Module.pth'))
 CoLoRA_DL_model.eval()
 
 #endregion
 
 #region Set up of FOM for pymor utility
 # Get some Validation Data
-loaded_data = np.load('examples/ex01/training_data/training_data_ex01.npy', allow_pickle=True)
+loaded_data = np.load('examples/ex02/training_data/training_data_ex02.npy', allow_pickle=True)
 np.random.shuffle(loaded_data) 
 training_data = loaded_data[:4]
 
@@ -99,7 +99,7 @@ fom, fom_data = discretize_instationary_cg(problem, diameter=diameter, nt=nt)
 
 # Set up solutions
 true_solution = fom.solution_space.empty()
-A = torch.tensor(np.load('examples/ex01/training_data/ambient_matrix_ex01.npy', allow_pickle=True), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+A = torch.tensor(np.load('examples/ex02/training_data/ambient_matrix_ex02.npy', allow_pickle=True), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
 
 for entry in training_data:
     mu_i = torch.tensor(entry['mu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')

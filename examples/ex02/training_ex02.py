@@ -2,42 +2,45 @@ from pymor.basic import *
 import numpy as np
 
 # Constants
+N_h = 20201
 N_A = 64
 nt = 10
-diameter = 0.08
+diameter = 0.01
+time_end = 1
+sample_size = 400
 
 # Define the advection function dependent on 'mu'
 def advection_function(x, mu):
-    mu_value = mu['mu']
-    return np.array([[np.cos(mu_value)*30, np.sin(mu_value)*30] for _ in range(x.shape[0])])
-
-# Define some initial condition
-def bump_function(x):
-    if abs(x[0]) < 1 and abs(x[1]) < 1:
-        return np.array([[np.exp(-1 / (1 - x[0]**2)), np.exp(-1 / (1 - x[1]**2))] for _ in range(x.shape[0])])
-    else:
-        return np.array([[0, 0] for _ in range(x.shape[0])])
+    mu_value = mu['mu'][2]
+    return np.array([[np.cos(np.pi/(100*mu_value)), np.sin(np.pi/(100*mu_value))] for _ in range(x.shape[0])])
     
+# Define rhs 
+def rhs_function(x, mu):
+    mu_values_1 = mu['mu'][0]
+    mu_values_2 = mu['mu'][1]
+    x0 = x[:, 0]
+    x1 = x[:, 1]
+    values = 10 * np.exp(-((x0 - mu_values_1)**2 + (x1 - mu_values_2)**2) / 0.07**2)
+    return values
 
 # Define the stationary problem
-advection_params = Parameters({'mu': 1})
-advection_generic_function = GenericFunction(advection_function, dim_domain=2, shape_range=(2,), parameters=advection_params)
-initial_condition_function = GenericFunction(bump_function, dim_domain=2, shape_range=(2, ))
+mu_param = Parameters({'mu': 3, 'nu': 1})
+advection_generic_function = GenericFunction(advection_function, dim_domain=2, shape_range=(2,), parameters=mu_param)
+rhs_generic_function = GenericFunction(rhs_function, dim_domain=2, shape_range=(), parameters=mu_param)
 stationary_problem = StationaryProblem(
-    domain=RectDomain(),
-    rhs=ExpressionFunction('0', 2),
-    diffusion=LincombFunction(
-        [ExpressionFunction('1 - x[0]', 2), ExpressionFunction('x[0]', 2)],
-        [ProjectionParameterFunctional('nu', 1), 1]
-    ),
+    domain=RectDomain(left='neumann', right='neumann', top='neumann', bottom='neumann'),
+    rhs=rhs_generic_function,
+    diffusion=LincombFunction([ExpressionFunction('1', 2)],
+                              [ProjectionParameterFunctional('nu', 1)]),
     advection=advection_generic_function,
+    neumann_data=ConstantFunction(0, 2),
     name='advection_problem'
 )
 
 # Define the instationary problem
 problem = InstationaryProblem(
     T=1.,
-    initial_data=initial_condition_function,
+    initial_data=ConstantFunction(0, 2),
     stationary_part=stationary_problem,
     name='advection_problem'
 )
@@ -51,11 +54,17 @@ Instationary Training Data for the POD-DL-ROM inspired NN
 # Discretize the problem
 fom, fom_data = discretize_instationary_cg(problem, diameter=diameter, nt=nt)
 
+print(fom.parameters)
+
 # Define the parameter space with ranges for 'mu' and 'nu'
-parameter_space = fom.parameters.space({'nu': (0.5, 1), 'mu': (0.2, np.pi-0.2)})
+parameter_space = fom.parameters.space({
+    'mu': (0.3, 0.7),
+    'nu': (0.002, 0.005)
+})
 
 # Generate training and validation sets
-training_set = parameter_space.sample_uniformly(30)
+sample_size_per_param = int(np.ceil(np.power(sample_size, 1 / 4)))
+training_set = parameter_space.sample_uniformly(sample_size_per_param)
 
 # Create an empty list to hold the training data
 training_data = []
@@ -63,12 +72,16 @@ solution_set = fom.solution_space.empty()
 
 
 # Solve the full-order model for each parameter in the training set
+i = 0
 for mu_nu in training_set:
     solution = fom.solve(mu_nu)
+    if i == int(len(training_set)/2):
+        fom.visualize(solution)
     solution_set.append(solution)
     solution_flat = solution.to_numpy()
     training_data.append((mu_nu['mu'], mu_nu['nu'], solution_flat))
-fom.visualize(solution)
+    i += 1
+
 
 # Convert the training data list to a structured numpy array
 dtype = [('mu', 'O'), ('nu', 'O'), ('solution', 'O')]
@@ -92,6 +105,15 @@ G = fom.h1_0_semi_product.matrix.toarray()
 gram = np.array(G, dtype=np.float32)
 np.save('examples/ex02/training_data/gram_matrix_ex02.npy', gram)
 
+# Save reduced training data to file
+reduced_training_data = []
+for mu_nu in training_set:
+    solution = fom.solve(mu_nu)
+    solution_flat = solution.to_numpy()
+    reduced_solution = solution_flat @ G @ A
+    reduced_training_data.append((mu_nu['mu'], mu_nu['nu'], reduced_solution))
+reduced_training_data_array = np.array(reduced_training_data, dtype=dtype)
+np.save('examples/ex02/training_data/reduced_training_data_ex02.npy', reduced_training_data_array)
 
 '''
 ----------------------------
@@ -142,3 +164,14 @@ stat_G = stat_fom.h1_0_semi_product.matrix.toarray()
 # Save G to file
 stat_gram = np.array(stat_G, dtype=np.float32)
 np.save('examples/ex02/training_data/stationary_gram_matrix_ex02.npy', stat_gram)
+
+# Save reduced training data to file
+reduced_stationary_training_data = []
+for mu_nu in training_set:
+    stat_solution = stat_fom.solve(mu_nu)
+    stat_solution_flat = stat_solution.to_numpy().flatten()
+    reduced_stationary_solution = stat_solution_flat @ stat_G @ stat_A
+    reduced_stationary_training_data.append((mu_nu['mu'], mu_nu['nu'], reduced_stationary_solution))
+reduced_stationary_training_data_array = np.array(reduced_stationary_training_data, dtype=dtype)
+np.save('examples/ex02/training_data/reduced_stationary_training_data_ex02.npy', reduced_stationary_training_data_array)
+print(stat_solution_flat.shape)

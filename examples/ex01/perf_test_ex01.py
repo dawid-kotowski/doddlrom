@@ -24,14 +24,16 @@ coeff_ae_structure = [32, 16, 8]
 stat_dod_structure = [128, 64]
 pod_in_channels = 1
 pod_hidden_channels = 1
-pod_num_layers = 2
+lin_dim_ae = 0
 kernel = 3
 stride = 2
 padding = 1
 #Training Example
-generalepochs = 5
-generalrestarts = 2
-generalpatience = 5
+generalepochs = 20
+generalrestarts = 3
+generalpatience = 4
+#Performance Example
+n_set = [2, 4, 6, 8, 10, 12, 14]
 
 # Fetch Training and Validation set
 train_valid_data = dr.FetchReducedTrainAndValidSet(0.8, 'ex01')
@@ -67,7 +69,7 @@ abs_error_colora_dl = []
 rel_error_colora_dl = []
 ambient_errors = []
 time_results = []
-for n in tqdm([2, 4, 6, 8], desc="Reduced Dimension"):
+for n in tqdm(n_set, desc="Reduced Dimension"):
 
     #region Initialisation of all Models
     # Initialize the DOD model
@@ -94,13 +96,18 @@ for n in tqdm([2, 4, 6, 8], desc="Reduced Dimension"):
     best_loss2 = DOD_DL_coeff_trainer.train()
 
     # Initialize the POD DL ROM model
+    output = int(np.sqrt(N_A))
+    pod_num_layers = 0
+    while (output - int(np.sqrt(n)) > lin_dim_ae):
+        output = int(np.floor((output + 2*padding - kernel) / stride) + 1)
+        pod_num_layers += 1
     En_model = dr.Encoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel, stride, padding)
     De_model = dr.Decoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel, stride, padding)
     POD_DL_coeff_model = dr.Coeff_AE(parameter_mu_dim, parameter_nu_dim, n, coeff_ae_structure)
 
     # Initialize the AE Coefficient Finding trainer
     POD_DL_coeff_trainer = dr.POD_DL_Trainer(POD_DL_coeff_model, En_model, De_model,
-                                        train_valid_data, 'ex01', 0.5,
+                                        train_valid_data, 'ex01', 0.999,
                                         generalepochs, generalrestarts, learning_rate=1e-3, 
                                         batch_size=128, patience=generalpatience)
 
@@ -259,7 +266,7 @@ Plot Errors
 ----------------
 ----------------
 '''
-x = np.linspace(2, 8, 6, dtype=int)
+x = np.linspace(n_set[0], n_set[-1], len(n_set), dtype=int)
 
 # Define color and style map for consistency
 plot_styles = {
