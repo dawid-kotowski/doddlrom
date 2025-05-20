@@ -101,7 +101,7 @@ Each `examples/exXX/module_training/` directory includes standalone scripts with
 Install all dependencies via:
 
 ```bash
-pip install -r requirements.txt
+pip install .
 ```
 
 ## Getting Started
