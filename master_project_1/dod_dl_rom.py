@@ -659,6 +659,7 @@ class AE_DOD_DL_Trainer:
                         "decoder": copy.deepcopy(self.de_model.state_dict()),
                         "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
                     }
+                    epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
@@ -790,6 +791,7 @@ class POD_DL_Trainer:
                         "decoder": copy.deepcopy(self.de_model.state_dict()),
                         "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
                     }
+                    epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:

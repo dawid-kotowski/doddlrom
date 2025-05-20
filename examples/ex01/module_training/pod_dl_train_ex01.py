@@ -8,23 +8,29 @@ N_h = 5101
 N_A = 64
 nt = 10
 diameter = 0.02
-L = 3
-N = 16
 n = 4
-m = 4
 parameter_mu_dim = 1
 parameter_nu_dim = 1
+# linear DOD-DL-ROM
 preprocess_dim = 2
-dod_structure = [64, 64]
-phi_n_structure = [16, 8]
-coeff_ae_structure = [32, 16, 8]
-stat_dod_structure = [128, 64]
+lin_m = 4
+lin_dod_structure = [64, 64, 64]
+lin_dod_phi_n_structure = [16, 16, 8]
+lin_phi_n_structure = [16, 8]
+# POD-DL-ROM
+pod_coeff_ae_structure = [32, 16, 8]
 pod_in_channels = 1
 pod_hidden_channels = 1
-lin_dim_ae = 0
-kernel = 3
-stride = 2
-padding = 1
+pod_lin_dim_ae = 0
+pod_kernel = 3
+pod_stride = 2
+pod_padding = 1
+# CoLoRA-DL-ROM
+L = 3
+stat_m = 4
+stat_dod_structure = [128, 64]
+stat_phi_n_structure = [16, 8]
+
 # Training Example
 generalepochs = 500
 generalrestarts = 5
@@ -37,12 +43,12 @@ stat_train_valid_data = dr.StatFetchReducedTrainAndValidSet(0.8, 'ex01')
 # Initialize the POD DL ROM model
 output = int(np.sqrt(N_A))
 pod_num_layers = 0
-while (output - int(np.sqrt(n)) > lin_dim_ae):
-    output = int(np.floor((output + 2*padding - kernel) / stride) + 1)
+while (output - int(np.sqrt(n)) > pod_lin_dim_ae):
+    output = int(np.floor((output + 2*pod_padding - pod_kernel) / pod_stride) + 1)
     pod_num_layers += 1
-En_model = dr.Encoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel, stride, padding)
-De_model = dr.Decoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel, stride, padding)
-POD_DL_coeff_model = dr.Coeff_AE(parameter_mu_dim, parameter_nu_dim, n, coeff_ae_structure)
+En_model = dr.Encoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, pod_kernel, pod_stride, pod_padding)
+De_model = dr.Decoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, pod_kernel, pod_stride, pod_padding)
+POD_DL_coeff_model = dr.Coeff_AE(parameter_mu_dim, parameter_nu_dim, n, pod_coeff_ae_structure)
 
 # Initialize the AE Coefficient Finding trainer
 POD_DL_coeff_trainer = dr.POD_DL_Trainer(POD_DL_coeff_model, En_model, De_model,

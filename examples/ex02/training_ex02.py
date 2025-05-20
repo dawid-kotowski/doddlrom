@@ -28,7 +28,7 @@ mu_param = Parameters({'mu': 3, 'nu': 1})
 advection_generic_function = GenericFunction(advection_function, dim_domain=2, shape_range=(2,), parameters=mu_param)
 rhs_generic_function = GenericFunction(rhs_function, dim_domain=2, shape_range=(), parameters=mu_param)
 stationary_problem = StationaryProblem(
-    domain=RectDomain(left='neumann', right='neumann', top='neumann', bottom='neumann'),
+    domain=RectDomain(),
     rhs=rhs_generic_function,
     diffusion=LincombFunction([ExpressionFunction('1', 2)],
                               [ProjectionParameterFunctional('nu', 1)]),

@@ -8,23 +8,29 @@ N_h = 5101
 N_A = 64
 nt = 10
 diameter = 0.02
-L = 3
-N = 16
 n = 4
-m = 4
 parameter_mu_dim = 1
 parameter_nu_dim = 1
+# linear DOD-DL-ROM
 preprocess_dim = 2
-dod_structure = [64, 64]
-phi_n_structure = [16, 8]
-coeff_ae_structure = [32, 16, 8]
-stat_dod_structure = [128, 64]
+lin_m = 4
+lin_dod_structure = [64, 64, 64]
+lin_dod_phi_n_structure = [16, 16, 8]
+lin_phi_n_structure = [16, 8]
+# POD-DL-ROM
+pod_coeff_ae_structure = [32, 16, 8]
 pod_in_channels = 1
 pod_hidden_channels = 1
-lin_dim_ae = 0
-kernel = 3
-stride = 2
-padding = 1
+pod_lin_dim_ae = 0
+pod_kernel = 3
+pod_stride = 2
+pod_padding = 1
+# CoLoRA-DL-ROM
+L = 3
+stat_m = 4
+stat_dod_structure = [128, 64]
+stat_phi_n_structure = [16, 8]
+
 # Training Example
 generalepochs = 200
 generalrestarts = 5
@@ -35,7 +41,7 @@ train_valid_data = dr.FetchReducedTrainAndValidSet(0.8, 'ex01')
 stat_train_valid_data = dr.StatFetchReducedTrainAndValidSet(0.8, 'ex01')
 
 # Initialize the DOD model
-DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, n, N_A)
+DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, lin_dod_structure, n, N_A)
 
 # Initialize the DOD trainer
 DOD_DL_trainer = dr.DOD_DL_Trainer(DOD_DL_model, train_valid_data, N_A, 'ex01',
@@ -47,7 +53,7 @@ best_loss = DOD_DL_trainer.train()
 print(f"Best validation loss: {best_loss}")
 
 # Initialize the Coefficient Finding model
-DOD_DL_coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
+DOD_DL_coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, lin_m, n, lin_phi_n_structure)
 
 # Initialize the Coefficient Finding trainer
 DOD_DL_coeff_trainer = dr.Coeff_DOD_DL_Trainer(N_A, DOD_DL_model, DOD_DL_coeff_model,

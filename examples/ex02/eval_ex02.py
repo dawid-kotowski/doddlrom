@@ -8,39 +8,44 @@ N_h = 20201
 N_A = 64
 nt = 10
 diameter = 0.01
-L = 3
-N = 16
 n = 4
-m = 4
 parameter_mu_dim = 3
 parameter_nu_dim = 1
+# linear DOD-DL-ROM
 preprocess_dim = 2
-dod_structure = [64, 64]
-phi_n_structure = [16, 8]
-coeff_ae_structure = [32, 16, 8]
-stat_dod_structure = [128, 64]
+lin_m = 4
+lin_dod_structure = [64, 64, 64]
+lin_dod_phi_n_structure = [16, 16, 8]
+lin_phi_n_structure = [16, 8]
+# POD-DL-ROM
+pod_coeff_ae_structure = [32, 16, 8]
 pod_in_channels = 1
 pod_hidden_channels = 1
-lin_dim_ae = 0
-kernel = 3
-stride = 2
-padding = 1
+pod_lin_dim_ae = 0
+pod_kernel = 3
+pod_stride = 2
+pod_padding = 1
+# CoLoRA-DL-ROM
+L = 3
+stat_m = 4
+stat_dod_structure = [128, 64]
+stat_phi_n_structure = [16, 8]
 
 #region Loading of all Models
 # Initialize the models
-DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, n, N_A)
-DOD_DL_coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
+DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, lin_dod_structure, n, N_A)
+DOD_DL_coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, lin_m, n, lin_phi_n_structure)
 
 output = int(np.sqrt(N_A))
 pod_num_layers = 0
-while (output - int(np.sqrt(n)) > lin_dim_ae):
-    output = int(np.floor((output + 2*padding - kernel) / stride) + 1)
+while (output - int(np.sqrt(n)) > pod_lin_dim_ae):
+    output = int(np.floor((output + 2*pod_padding - pod_kernel) / pod_stride) + 1)
     pod_num_layers += 1
-Decoder_model = dr.Decoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel, stride, padding)
-POD_DL_coeff_model = dr.Coeff_AE(parameter_mu_dim, parameter_nu_dim, n, coeff_ae_structure)
+Decoder_model = dr.Decoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, pod_kernel, pod_stride, pod_padding)
+POD_DL_coeff_model = dr.Coeff_AE(parameter_mu_dim, parameter_nu_dim, n, pod_coeff_ae_structure)
 
 stat_DOD_model = dr.DOD(parameter_mu_dim, preprocess_dim, n, N_A, stat_dod_structure)
-stat_Coeff_model = dr.CoeffDOD(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
+stat_Coeff_model = dr.CoeffDOD(parameter_mu_dim, parameter_nu_dim, stat_m, n, stat_phi_n_structure)
 CoLoRA_DL_model = dr.CoLoRA_DL(N_A, L, n, parameter_nu_dim)
 
 # Load state_dicts
@@ -68,7 +73,7 @@ CoLoRA_DL_model.eval()
 # Get some Validation Data
 loaded_data = np.load('examples/ex02/training_data/training_data_ex02.npy', allow_pickle=True)
 np.random.shuffle(loaded_data) 
-training_data = loaded_data[:4]
+training_data = loaded_data[:1]
 
 # Define Full Order Model again
 def advection_function(x, mu):
@@ -112,17 +117,23 @@ for entry in training_data:
     true_solution.append(u_i)
 
     # Coeff_DL + POD_DL + CoLoRA_DL solution
-    pod_dl_sol = fom.solution_space.from_numpy(
-        dr.pod_dl_forward(A, POD_DL_coeff_model, Decoder_model, mu_i, nu_i, nt))
-    u_i_colora = fom.solution_space.from_numpy(
-        dr.colora_dl_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, 
-                             mu_i, nu_i, nt))
-    coeff_dl_sol = fom.solution_space.from_numpy(
-        dr.dod_dl_forward(A, DOD_DL_model, DOD_DL_coeff_model, mu_i, nu_i, nt))
+    pod_dl_sol = dr.pod_dl_forward(A, POD_DL_coeff_model, Decoder_model, mu_i, nu_i, nt)
+    pod_dl_residual = fom.solution_space.from_numpy(np.abs(entry['solution'] - pod_dl_sol))
+    pod_dl_sol = fom.solution_space.from_numpy(pod_dl_sol)
+    u_i_colora = dr.colora_dl_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, mu_i, nu_i, nt)
+    colora_dl_residual = fom.solution_space.from_numpy(np.abs(entry['solution'] - u_i_colora))
+    u_i_colora = fom.solution_space.from_numpy(u_i_colora)
+    coeff_dl_sol = dr.dod_dl_forward(A, DOD_DL_model, DOD_DL_coeff_model, mu_i, nu_i, nt)
+    dod_dl_residual = fom.solution_space.from_numpy(np.abs(entry['solution'] - coeff_dl_sol))
+    coeff_dl_sol = fom.solution_space.from_numpy(coeff_dl_sol)
 
     # Visualize
-    fom.visualize((u_i, coeff_dl_sol, pod_dl_sol, u_i_colora),
-                  legend=(f'True solution for mu:{mu_i}, nu:{nu_i}',
-                          f'Linear Coefficient DOD-DL-ROM for mu:{mu_i}, nu:{nu_i}',
-                          f'POD-DL-ROM for mu{mu_i}, nu:{nu_i}',
-                          f'DOD pretrained CoLoRA for mu:{mu_i}, nu:{nu_i}'))
+    fom.visualize((u_i, coeff_dl_sol, dod_dl_residual),
+                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
+                          'linear DOD-DL-ROM', 'L² - Error'))
+    fom.visualize((u_i, pod_dl_sol, pod_dl_residual),
+                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
+                          'POD-DL-ROM', 'L² - Error'))
+    fom.visualize((u_i, u_i_colora, colora_dl_residual),
+                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
+                          'CoLoRA-DL-ROM', 'L² - Error'))
