@@ -14,8 +14,7 @@ parameter_nu_dim = 1
 # linear DOD-DL-ROM
 preprocess_dim = 2
 lin_m = 4
-lin_dod_structure = [64, 64, 64]
-lin_dod_phi_n_structure = [16, 16, 8]
+lin_dod_structure = [128, 64]
 lin_phi_n_structure = [16, 8]
 # POD-DL-ROM
 pod_coeff_ae_structure = [32, 16, 8]
