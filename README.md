@@ -2,9 +2,9 @@
 
 ## Overview
 
-This repository contains a collection of deep learning-based reduced order models (ROMs) for parametric PDEs, implemented with PyTorch and integrated into the PyMOR ecosystem. The models are designed to approximate solution manifolds by learning low-dimensional representations and latent dynamics based on both geometric and physical parameters.
+This repository offers a suite of deep learning-based reduced order models (ROMs) for parametric partial differential equations (PDEs). These models are developed in PyTorch and integrated with [PyMOR](https://pymor.org/), enabling efficient, data-driven model reduction that accounts for both geometric and physical parameter dependencies.
 
-The framework supports training, evaluation, and benchmarking of various neural ROM architectures using precomputed data and leverages GPU acceleration for efficient training. It features modular implementations for selective model training and systematic storage of model checkpoints, training data, and benchmark results.
+The framework is built for modularity and GPU-accelerated execution. It supports selective training of components, consistent handling of datasets and checkpoints, and comprehensive evaluation through benchmark logging.
 
 ## Repository Structure
 
@@ -12,66 +12,101 @@ The framework supports training, evaluation, and benchmarking of various neural 
 master_project_1/
 ├── examples/
 │   ├── ex01/
-│   │   ├── benchmarks/          # Performance metrics and results
-│   │   ├── training_data/       # Preprocessed training datasets
-│   │   ├── state_dicts/         # Saved model weights (state_dict)
-│   │   └── module_training/     # Training scripts for different ROMs
+│   │   ├── benchmarks/          # Quantitative evaluations and plots
+│   │   ├── training_data/       # Parameter snapshots and latent states
+│   │   ├── state_dicts/         # Trained model weights
+│   │   └── module_training/     # Training scripts and validation routines
 │   └── ex02/
-│       └── ...                  # Same structure as ex01
+│       └── ...                  # Identical structure for a second benchmark
 └── master_project_1/
-    └── model_definitions.py     # Main PyTorch modules and training classes
+    └── dod_dl_rom.py     # Core PyTorch modules and architecture definitions
 ```
 
-## Mathematical Description
+## Mathematical Framework
 
-We aim to approximate a time-dependent solution \$u(t; \mu, \nu)\$ of a high-dimensional dynamical system in a reduced basis:
+The objective is to approximate the high-fidelity, time-dependent solution $u_h(t; \mu, \nu) \in \mathbb{R}^{N_h}$ of a parametric dynamical system using a learned surrogate:
 
-### Dynamic Orthogonal Decomposition (DOD\_DL)
+* $\mu \in \Theta$: geometric parameter
+* $\nu \in \Theta'$: physical parameter
+* $t \in [0, T]$: time
+* $\mathbb{A} \in \mathbb{R}^{N_h \times N_A}$: POD map
+* $N_A$: quasi full-order model dimension (prior reduction by POD)
+* $N \ll N_A$: reduced dimension
+* $n \ll N_A$: true latent dimension
 
-Given
+### Deep Orthogonal Decomposition (DOD-DL)
 
-* \$\mu \in \Theta\$: geometric parameter
-* \$\nu \in \Theta'\$: physical parameter
-* \$t \in \[0,T]\$: time
-* \$N\_A\$: ambient dimension
-* \$N\$: reduced dimension
+The DOD-DL model seeks a time- and geometry-dependent orthonormal basis $V(\mu, t) \in \mathbb{R}^{N_A \times N}$ such that
 
-we construct $V: \Theta \times [0, T] \to \mathbb{R}^{N_A \times N}$ such that $u(t; \mu, \nu) \approx V(\mu, t) \cdot a(t; \mu, \nu),$ where \$V(\mu, t)\$ is learned by the **DOD\_DL** model.
+$$
+    u(t; \mu, \nu) \approx V(\mu, t) \cdot \Phi(t; \mu, \nu),
+$$
 
-### Coefficient Model (Coeff\_DOD\_DL)
+where the low-dimensional representation $\Phi(t; \mu, \nu) \in \mathbb{R}^N$ encodes the parametric time evolution on the latent space.
 
-We aim to learn a mapping $\Phi: \Theta \times \Theta' \times [0,T] \to \mathbb{R}^N, \quad (\mu, \nu, t) \mapsto a(t; \mu, \nu)$ via: $\Phi(\mu, \nu, t) := \sum_{i=1}^{m_0} \sum_{j=1}^{n_0} [\Phi_1(\mu, t)]_{ij} \cdot [\Phi_2(\nu, t)]_{ij},$ with \$\Phi\_1, \Phi\_2\$ as neural networks.
+### Linear Coefficient Model for the DOD-DL
 
-### Autoencoder-Based Model (AE\_DL)
+This model directly approximates the latent space dynamic:
 
-The latent dynamics \$a(t; \mu, \nu)\$ are encoded by $\text{Encoder} : \Theta \times \Theta' \times [0,T] \to \mathbb{R}^N,$ with a nonlinear decoder reconstructing the high-dimensional solution. (Definition in subsequent modules)
+$$
+    \Phi: \Theta \times \Theta' \times [0, T] \to \mathbb{R}^N, \quad (\mu, \nu, t) \mapsto a(t; \mu, \nu).
+$$
 
-## Available Models
+It is structured via a bilinear neural interaction:
 
-* **DOD\_DL**: Learns time-dependent reduced basis \$V(\mu, t)\$.
-* **Coeff\_DOD\_DL**: Learns latent coefficients \$a(t; \mu, \nu)\$ with bilinear interaction.
-* **AE\_DL**: Autoencoder mapping for nonlinear projection (forthcoming).
-* **Stationary Models**: Adaptations for time-independent problems (forthcoming).
+$$
+    \Phi(\mu, \nu, t) = \sum_{i=1}^{m_0} \sum_{j=1}^{n_0} [\Phi_1(\mu, t)]_{ij} \cdot [\Phi_2(\nu, t)]_{ij},
+$$
 
-## Training Workflow
+where $\Phi_1$ and $\Phi_2$ represent learned embeddings of geometric and physical parameters.
 
-Each `examples/exXX/module_training/` folder contains scripts to train and evaluate each ROM model:
+### Autoencoder-Based Coefficient Model for the DOD-DL
 
-1. Training data is stored in `examples/exXX/training_data/`
-2. Training and validation split is controlled by `FetchReducedTrainAndValidSet`
-3. Trained models are stored in `examples/exXX/state_dicts/`
-4. Performance metrics are saved to `examples/exXX/benchmarks/`
+In AE-DL, the full state is reconstructed from a latent code via:
+
+* **Encoder**: maps $u_{N}(\mu, \nu, t)$ to latent representation $u_{n}(t; \mu, \nu)$
+* **Latent Coefficient Model**: maps $(\mu, \nu, t)$ to the correct latent representation $u_n(t; \mu, \nu)$
+* **Decoder**: reconstructs the high-dimensional state from latent representation
+
+This approach allows for general nonlinear compression and decoding of PDE solution trajectories.
+
+### Proper Orthogonal Decomposition (POD-DL)
+
+This model is directly to be found in the Paper [POD-DL-ROM: enhancing deep learning-based reduced order models for nonlinear parametrized PDEs by proper orthogonal decomposition](https://arxiv.org/abs/2101.11845) by S.Fresca and A.Manzoni. It is essentially the same workflow as the the Model above, but omiting the DOD projection onto the dimension $N$, i.e.
+
+* **Encoder**: maps $u_{N_A}(\mu, \nu, t)$ to latent representation $u_{n}(t; \mu, \nu)$
+* **Latent Coefficient Model**: maps $(\mu, \nu, t)$ to the correct latent representation $u_n(t; \mu, \nu)$
+* **Decoder**: reconstructs the high-dimensional state from latent representation
+
+### Stationary solution enhanced CoLoRA (CoLoRA-DL)
+
+To discussed...
+
+## Training Pipeline
+
+Each `examples/exXX/module_training/` directory includes standalone scripts with a uniform pipeline:
+
+1. Load preprocessed data from `training_data/`
+2. Use `FetchReducedTrainAndValidSet` for data partitioning
+3. Train model and store weights in `state_dicts/`
+4. Save quantitative results to `benchmarks/`
 
 ## Dependencies
 
-* Python >= 3.8
-* PyTorch >= 2.0
+* Python ≥ 3.8
+* PyTorch ≥ 2.0
 * NumPy, tqdm
-* [PyMOR](https://pymor.org/) >= 2023.1
+* PyMOR ≥ 2023.1
 
-## How to Run
+Install all dependencies via:
 
-Navigate into a specific example directory and run training, for example:
+```bash
+pip install -r requirements.txt
+```
+
+## Getting Started
+
+To train a ROM model, navigate to an example directory and execute a training script:
 
 ```bash
 cd examples/ex01/module_training
@@ -80,8 +115,8 @@ python train_dod_dl.py
 
 ## Author & Acknowledgements
 
-This repository is part of the author's Master's thesis under the supervision of Prof. Dr. Mario Ohlberger at the Institute for Applied Mathematics, University of Münster.
+This repository supports the Master's thesis of the author, conducted under the supervision of Prof. Dr. Mario Ohlberger at the Institute for Applied Mathematics, University of Münster.
 
 ---
 
-Please refer to each module's script for further implementation details and options.
+Further architectural and numerical implementation details can be found in the docstrings and module comments accompanying each training and model definition script. 
