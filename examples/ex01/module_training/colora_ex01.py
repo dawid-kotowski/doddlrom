@@ -2,7 +2,6 @@ import torch
 from master_project_1 import reduced_order_models as dr
 import numpy as np
 
-
 # Usage example
 N_h = 5101
 N_A = 64
@@ -13,20 +12,19 @@ Nt = 10
 diameter = 0.02
 parameter_mu_dim = 1
 parameter_nu_dim = 1
-# linear DOD-DL-ROM
+# DOD+DFNN
 preprocess_dim = 2
-lin_m = 4
-lin_dod_structure = [32, 16]
-lin_phi_n_structure = [16, 8]
+dod_structure = [32, 16]
+df_layers = [16, 8]
 # POD-DL-ROM
-pod_coeff_ae_structure = [32, 16, 8]
+pod_df_layers = [32, 16, 8]
 pod_in_channels = 1
 pod_hidden_channels = 1
 pod_lin_dim_ae = 0
 pod_kernel = 3
 pod_stride = 2
 pod_padding = 1
-# CoLoRA-DL-ROM
+# CoLoRA-ROM
 L = 3
 stat_m = 4
 stat_dod_structure = [128, 64]
@@ -42,26 +40,27 @@ train_valid_data = dr.FetchTrainAndValidSet(0.8, 'ex01', 'N_A_reduced')
 stat_train_valid_data = dr.FetchTrainAndValidSet(0.8, 'ex01', 'reduced_stationary')
 
 # Initialize and train the stationary DOD model
-stat_DOD_model = dr.DOD(parameter_mu_dim, preprocess_dim, N_prime, N_A, stat_dod_structure)
-stat_DOD_Trainer = dr.DODTrainer(stat_DOD_model, N_A, 
+stat_DOD_model = dr.statDOD(parameter_mu_dim, preprocess_dim, N_prime, N_A, stat_dod_structure)
+stat_DOD_Trainer = dr.statDODTrainer(stat_DOD_model, N_A, 
                                  stat_train_valid_data, 
                                  generalepochs, generalrestarts, learning_rate=1e-3, 
                                  batch_size=128, patience=generalpatience)
 best_loss4 = stat_DOD_Trainer.train()
 
 # Initialize and train the stationary Coefficient Finding model
-stat_Coeff_model = dr.CoeffDOD(parameter_mu_dim, parameter_nu_dim, stat_m, N_prime, stat_phi_n_structure)
-stat_Coeff_Trainer = dr.CoeffDODTrainer(stat_DOD_model, stat_Coeff_model, N_A,
+stat_Coeff_model = dr.statHadamardNN(parameter_mu_dim, parameter_nu_dim, stat_m, 
+                                     N_prime, stat_phi_n_structure)
+stat_Coeff_Trainer = dr.statHadamardNNTrainer(stat_DOD_model, stat_Coeff_model, N_A,
                                         stat_train_valid_data,
                                         generalepochs, generalrestarts, learning_rate=1e-3, 
                                         batch_size=128, patience=generalpatience)
 best_loss5 = stat_Coeff_Trainer.train()
 
 # Initialize the CoLoRA_DL model
-CoLoRA_DL_model = dr.CoLoRA_DL(N_A, L, N_prime, parameter_nu_dim)
+CoLoRA_DL_model = dr.CoLoRA(N_A, L, N_prime, parameter_nu_dim)
 
 # Initialize the CoLoRA_DL trainer
-CoLoRa_DL_Trainer = dr.CoLoRA_DL_Trainer(stat_DOD_model, stat_Coeff_model, 
+CoLoRa_DL_Trainer = dr.CoLoRATrainer(stat_DOD_model, stat_Coeff_model, 
                                          CoLoRA_DL_model, train_valid_data,
                                          generalepochs, generalrestarts, learning_rate=1e-3, 
                                          batch_size=128, patience=generalpatience)

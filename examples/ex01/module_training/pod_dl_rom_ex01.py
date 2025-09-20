@@ -2,7 +2,6 @@ import torch
 from master_project_1 import reduced_order_models as dr
 import numpy as np
 
-
 # Usage example
 N_h = 5101
 N_A = 64
@@ -13,20 +12,19 @@ Nt = 10
 diameter = 0.02
 parameter_mu_dim = 1
 parameter_nu_dim = 1
-# linear DOD-DL-ROM
+# DOD+DFNN
 preprocess_dim = 2
-lin_m = 4
-lin_dod_structure = [32, 16]
-lin_phi_n_structure = [16, 8]
+dod_structure = [32, 16]
+df_layers = [16, 8]
 # POD-DL-ROM
-pod_coeff_ae_structure = [32, 16, 8]
+pod_df_layers = [32, 16, 8]
 pod_in_channels = 1
 pod_hidden_channels = 1
 pod_lin_dim_ae = 0
 pod_kernel = 3
 pod_stride = 2
 pod_padding = 1
-# CoLoRA-DL-ROM
+# CoLoRA-ROM
 L = 3
 stat_m = 4
 stat_dod_structure = [128, 64]
@@ -48,21 +46,21 @@ while (output - int(np.sqrt(n)) > pod_lin_dim_ae):
     pod_num_layers += 1
 En_model = dr.Encoder(N, pod_in_channels, pod_hidden_channels, n, pod_num_layers, pod_kernel, pod_stride, pod_padding)
 De_model = dr.Decoder(N, pod_in_channels, pod_hidden_channels, n, pod_num_layers, pod_kernel, pod_stride, pod_padding)
-POD_DL_coeff_model = dr.Coeff_AE(parameter_mu_dim, parameter_nu_dim, n, pod_coeff_ae_structure)
+DFNN_P_n_model = dr.DFNN(parameter_mu_dim, parameter_nu_dim, n, pod_df_layers)
 
 # Initialize the AE Coefficient Finding trainer
-POD_DL_coeff_trainer = dr.POD_DL_Trainer(POD_DL_coeff_model, En_model, De_model,
+DFNN_P_n_trainer = dr.POD_DL_ROMTrainer(DFNN_P_n_model, En_model, De_model,
                                     train_valid_data, 0.999,
                                     generalepochs, generalrestarts, learning_rate=1e-2, 
                                     batch_size=128, patience=generalpatience)
 
 # Train the AE Coefficient model
-best_loss3 = POD_DL_coeff_trainer.train()
+best_loss3 = DFNN_P_n_trainer.train()
 print(f"Best validation loss: {best_loss3}")
 
 # Save the Modules
 torch.save({
     'encoder': En_model.state_dict(),
     'decoder': De_model.state_dict(),
-    'coeff_model': POD_DL_coeff_model.state_dict(),
-}, 'examples/ex01/state_dicts/POD_DL_Module.pth')
+    'coeff_model': DFNN_P_n_model.state_dict(),
+}, 'examples/ex01/state_dicts/POD_DL_ROM_Module.pth')
