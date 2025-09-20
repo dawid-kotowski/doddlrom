@@ -18,6 +18,7 @@ env/
 # Ignore data files and benchmarks
 **/*.pkl
 **/*.npy
+**/*.npz
 
 # Ignore logs
 *.log

@@ -33,50 +33,39 @@ def initialize_weights(m):
         nn.init.ones_(m.weight)
         nn.init.zeros_(m.bias)
 
-
-# Define Training/Validation Splitter
-class FetchReducedTrainAndValidSet:
-    def __init__(self, train_to_val_ratio, example_name):
-        # 0.8 = train_to_val_ratio means 80 % of training data and 20 % of validation data
+class FetchTrainAndValidSet:
+    """
+    Loader for compact .npz datasets saved as:
+    - mu:       [Ns] float32
+    - nu:       [Ns] float32
+    - solution: [Ns, Nt, N_A], [Ns, Nt, N]  (instationary) or [Ns, N_A] (stationary)
+    """
+    def __init__(self, train_to_val_ratio: float, example_name: str, reduction_type: str):
         self.train_to_val_ratio = train_to_val_ratio
-        path = f'/home/sereom/Documents/University/Studies/Mathe/Wissenschaftliche Arbeiten/Master/Masterarbeit Ohlberger/Programming/master-project-1/examples/{example_name}/training_data/reduced_training_data_{example_name}.npy'
-        loaded_data = np.load(path, allow_pickle=True)
-        np.random.shuffle(loaded_data)
-        num_samples = len(loaded_data)
-        num_train_samples = int(train_to_val_ratio * num_samples)
-        self.training_data = loaded_data[:num_train_samples]
-        self.validation_data = loaded_data[num_train_samples:]
+        path_npz = f'examples/{example_name}/training_data/{reduction_type}_training_data_{example_name}.npz'
 
+        data = np.load(path_npz)
+        self.mu = data['mu']              # [Ns]
+        self.nu = data['nu']              # [Ns]
+        self.solution = data['solution']  # [Ns, Nt, N_A], [Ns, Nt, N] or [Ns, N_A]
 
-    def __call__(self, set_type):
+        Ns = self.mu.shape[0]
+        idx = np.arange(Ns, dtype=np.int32)
+        np.random.shuffle(idx)
+        n_train = int(train_to_val_ratio * Ns)
+        self.train_idx = idx[:n_train]
+        self.valid_idx = idx[n_train:]
+
+    def _tuples(self, idx_array):
+        return [(float(self.mu[i]), float(self.nu[i]), self.solution[i]) for i in idx_array]
+
+    def __call__(self, set_type: str):
         if set_type == 'train':
-            return self.training_data
+            return self._tuples(self.train_idx)
         elif set_type == 'valid':
-            return self.validation_data
+            return self._tuples(self.valid_idx)
         else:
-            return 'Type Undefined'
-
-# Define Training/Validation Splitter for the stationary model
-class StatFetchReducedTrainAndValidSet:
-    def __init__(self, train_to_val_ratio, example_name):
-        # 0.8 = train_to_val_ratio means 80 % of training data and 20 % of validation data
-        self.train_to_val_ratio = train_to_val_ratio
-        path = f'/home/sereom/Documents/University/Studies/Mathe/Wissenschaftliche Arbeiten/Master/Masterarbeit Ohlberger/Programming/master-project-1/examples/{example_name}/training_data/reduced_stationary_training_data_{example_name}.npy'
-        loaded_data = np.load(path, allow_pickle=True)
-        np.random.shuffle(loaded_data)
-        num_samples = len(loaded_data)
-        num_train_samples = int(train_to_val_ratio * num_samples)
-        self.training_data = loaded_data[:num_train_samples]
-        self.validation_data = loaded_data[num_train_samples:]
-
-
-    def __call__(self, set_type):
-        if set_type == 'train':
-            return self.training_data
-        elif set_type == 'valid':
-            return self.validation_data
-        else:
-            return 'Type Undefined'
+            raise ValueError("Type must be 'train' or 'valid'")
 
 # Define DatasetLoader
 class DatasetLoader(Dataset):
@@ -87,11 +76,12 @@ class DatasetLoader(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        entry = self.data[idx]
-        mu = torch.tensor(entry['mu'], dtype=torch.float32)
-        nu = torch.tensor(entry['nu'], dtype=torch.float32)
-        solution = torch.tensor(entry['solution'], dtype=torch.float32)
+        mu, nu, solution = self.data[idx]   # unpack tuple
+        mu = torch.tensor(mu, dtype=torch.float32).unsqueeze(0)  # keep 2D shape
+        nu = torch.tensor(nu, dtype=torch.float32).unsqueeze(0)
+        solution = torch.tensor(solution, dtype=torch.float32)
         return mu, nu, solution
+
 
 
 ''' 
@@ -99,7 +89,7 @@ class DatasetLoader(Dataset):
 In the following a DOD_DL is introduced, which dynamically approximates a reduced basis
 w.r.t the geometric parameter mu
 
-V: (Theta \times Gamma) -> (R^(N_h \times N))
+V: (Theta \times Gamma) -> (R^(N_h \times N'))
 ------------------------------------
 '''
 
@@ -133,12 +123,13 @@ class RootModule(nn.Module):
         return mu_t
 
 # Define Complete DOD_DL_ DL Model 
-# returns a tensor of size [N_A, N]
+# returns a tensor of size [N_A, N']
 class DOD_DL(nn.Module):
-    def __init__(self, seed_dim, geometric_dim, root_layer_sizes, N, N_A):
+    def __init__(self, seed_dim, geometric_dim, root_layer_sizes, N_prime, N_A):
         super(DOD_DL, self).__init__()
         self.seed_module = SeedModule(geometric_dim, seed_dim)
-        self.root_modules = nn.ModuleList([RootModule(seed_dim, N_A, root_layer_sizes) for _ in range(N)])
+        self.root_modules = nn.ModuleList(
+            [RootModule(seed_dim, N_A, root_layer_sizes) for _ in range(N_prime)])
 
     def forward(self, mu, t):
         seed_output = self.seed_module(mu)
@@ -150,21 +141,23 @@ class DOD_DL(nn.Module):
 # Define DOD_DL_-DL training
 
 class DOD_DL_Trainer:
-    def __init__(self, nn_model, train_valid_set, N_A, example_name, epochs=1, restart=1, learning_rate=1e-3,
+    def __init__(self, dod_model, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience = 3):
         self.learning_rate = learning_rate
         self.restarts = restart
         self.epochs = epochs
         self.batch_size = batch_size
-        self.model = nn_model.to(device)
+        self.model = dod_model.to(device)
         self.device = device
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
+        self.train_loader = DataLoader(DatasetLoader(train_data), 
+                                       batch_size=self.batch_size, shuffle=True)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
+                                       batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, solution_batch):
         batch_size = mu_batch.size(0)
@@ -172,7 +165,8 @@ class DOD_DL_Trainer:
 
         for i in range(nt + 1):
             t_batch = torch.stack(
-                [torch.tensor(i * time_end/(nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+                [torch.tensor(i * time_end/(nt + 1), 
+                              dtype=torch.float32, device=self.device) for _ in range(batch_size)]
             ).unsqueeze(1)
             output = self.model(mu_batch, t_batch)
 
@@ -190,9 +184,9 @@ class DOD_DL_Trainer:
         best_loss_restart = float('inf')
         best_loss = float('inf')
 
-        tqdm.write("Model DOD DL is being trained...")
+        tqdm.write("Model inner_DOD is being trained...")
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts DOD DL", leave=False):
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts inner_DOD", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
@@ -234,7 +228,7 @@ class DOD_DL_Trainer:
                 best_model = self.model.state_dict()
                 best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of DOD DL: {best_loss:.6f}')
+            tqdm.write(f'Current best loss of inner_DOD: {best_loss:.6f}')
 
         self.model.load_state_dict(best_model)
         return best_loss
@@ -244,11 +238,11 @@ class DOD_DL_Trainer:
 Adding to the DOD_DL is a network trying to approximate the latent dynamics of the underlying 
 n-dim solution manifold. We present the following different approaches for this
 
-Coeff_DL     : (Theta \times Theta' \times \Gamma) -> R^N
-             ; Linear(Linear(mu_t)) @ Linear(Linear(nu_t)) \mapsto u_N
+Coeff_DL     : (Theta \times Theta' \times \Gamma) -> R^N'
+             ; Linear(Linear(mu_t)) @ Linear(Linear(nu_t)) \mapsto u_N'
 
-AE_DL        : (Theta \times Theta' \times \Gamma) -> R^N
-             ; Encoder(Linear(Linear(mu_t)) @ Linear(Linear(nu_t))) \mapsto u_N
+AE_DL        : (Theta \times Theta' \times \Gamma) -> R^N'
+             ; Encoder(Linear(Linear(mu_t)) @ Linear(Linear(nu_t))) \mapsto u_N'
 ------------------------------------
 '''
 
@@ -297,7 +291,7 @@ class Phi2Module(nn.Module):
         return nu_t
 
 # Define Complete parameter-to-DOD_DL-coefficients Model 
-# returns [B, n]
+# returns [B, N']
 class Coeff_DOD_DL(nn.Module):
     def __init__(self, geometric_dim, physical_dim, m_0, n_0, layer_sizes=None):
         super(Coeff_DOD_DL, self).__init__()
@@ -315,7 +309,7 @@ class Coeff_DOD_DL(nn.Module):
 
 # Define the Trainer
 class Coeff_DOD_DL_Trainer:
-    def __init__(self, N_A, DOD_DL_model, coeffnn_model, train_valid_set, example_name, epochs, restarts, learning_rate,
+    def __init__(self, N_A, DOD_DL_model, coeffnn_model, train_valid_set, epochs, restarts, learning_rate,
                  batch_size, device='cuda' if torch.cuda.is_available() else 'cpu', patience = 3):
         self.learning_rate = learning_rate
         self.epochs = epochs
@@ -431,7 +425,7 @@ class Coeff_AE(nn.Module):
         return mu_nu_t
     
 # Define Encoder 
-# takes [B, input_dim] return [B, loop(floor((input_dim + 2p - k) / s) + 1)**2)] 
+# takes [B, input_dim] return [B, N' = loop(floor((input_dim + 2p - k) / s) + 1)**2)] 
 class Encoder(nn.Module):
     def __init__(self, input_dim, in_channels, hidden_channels, latent_dim,
                 num_layers, kernel, stride, padding):
@@ -498,7 +492,7 @@ class Encoder(nn.Module):
         return z
 
 # Define Decoder 
-# takes [B, loop(floor((input_dim + 2p - k) / s) + 1)**2)] return [B, input_dim]
+# takes [B, N' = loop(floor((input_dim + 2p - k) / s) + 1)**2)] return [B, input_dim]
 class Decoder(nn.Module):
     def __init__(self, output_dim, out_channels, hidden_channels, latent_dim, 
                  num_layers, kernel, stride, padding):
@@ -555,7 +549,7 @@ class Decoder(nn.Module):
     
 # Define the Trainer for the AE DOD DL
 class AE_DOD_DL_Trainer:
-    def __init__(self, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, example_name, error_weight=0.5,
+    def __init__(self, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, error_weight=0.5,
                  epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
         self.error_weight = error_weight
@@ -696,7 +690,7 @@ u(mu, nu, t) = A Decoder(Coeff(mu, nu, t))
 '''
 # Define the Trainer for the standard POD DL
 class POD_DL_Trainer:
-    def __init__(self, Coeff_model, Encoder_model, Decoder_model, train_valid_set, example_name, error_weight,
+    def __init__(self, Coeff_model, Encoder_model, Decoder_model, train_valid_set, error_weight,
                  epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
         self.epochs = epochs
@@ -926,7 +920,7 @@ class CoeffDOD(nn.Module):
 
 # Define the trainer for these
 class DODTrainer:
-    def __init__(self, nn_model, ambient_dim, train_valid_set, example_name, epochs=1, restart=1, learning_rate=1e-3,
+    def __init__(self, nn_model, ambient_dim, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
         self.restarts = restart
@@ -1015,7 +1009,7 @@ class DODTrainer:
         self.model.load_state_dict(best_model)
         return best_loss
 class CoeffDODTrainer:
-    def __init__(self, dod_model, coeffnn_model, ambient_dim, train_valid_set, example_name, epochs=1, restarts=1, learning_rate=1e-3,
+    def __init__(self, dod_model, coeffnn_model, ambient_dim, train_valid_set, epochs=1, restarts=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
         self.epochs = epochs
@@ -1176,7 +1170,7 @@ class CoLoRA_DL(nn.Module):
 
 # Define CoLoRA trainer
 class CoLoRA_DL_Trainer():
-    def __init__(self, N_A, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, example_name, epochs, restarts, learning_rate,
+    def __init__(self, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, epochs, restarts, learning_rate,
                  batch_size, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
         self.epochs = epochs

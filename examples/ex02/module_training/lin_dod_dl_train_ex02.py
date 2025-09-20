@@ -1,5 +1,5 @@
 import torch
-from master_project_1 import dod_dl_rom as dr
+from master_project_1 import reduced_order_models as dr
 import numpy as np
 
 
