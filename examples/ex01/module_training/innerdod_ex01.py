@@ -16,6 +16,14 @@ parameter_nu_dim = 1
 preprocess_dim = 2
 dod_structure = [32, 16]
 df_layers = [16, 8]
+# DOD-DL-ROM
+dod_dl_df_layers = [32, 16, 8]
+dod_in_channels = 1
+dod_hidden_channels = 1
+dod_lin_dim_ae = 0
+dod_kernel = 3
+dod_stride = 2
+dod_padding = 1
 # POD-DL-ROM
 pod_df_layers = [32, 16, 8]
 pod_in_channels = 1

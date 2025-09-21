@@ -198,7 +198,7 @@ for entry in training_data:
     # Visualize
     fom.visualize((u_i, coeff_dl_sol_vec, dod_dl_residual),
                   legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()}, ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                          'linear DOD-DL-ROM', 'L² - Error'))
+                          'DOD+DFNN', 'L² - Error'))
     fom.visualize((u_i, pod_dl_sol_vec, pod_dl_residual),
                   legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
                           'POD-DL-ROM', 'L² - Error'))
