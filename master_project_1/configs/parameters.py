@@ -1,5 +1,5 @@
 """
-Parameters / hyperparameter registry for examples/ex01.
+Parameters / hyperparameter registry for examples/.
 
 This container is tailored to current constructors & trainers in
 `reduced_order_models.py` (innerDOD, DFNN, HadamardNN, Encoder/Decoder,
@@ -9,7 +9,6 @@ Key goals
 - Centralize all fixed problem sizes (N_h, N_A, N, N_prime, n, Nt, ...)
 - Offer switchable presets that only change network layers (problem sizes unchanged)
 - Provide *factory-style* kwargs that match constructors exactly
-- Allow JSON overrides (no extra deps)
 
 Import
 ------
@@ -85,8 +84,8 @@ _PRESETS: Dict[str, Dict[str, Any]] = {
         "stat_phi_n_structure": [16, 8],
 
         # Training defaults
-        "generalepochs": 200,
-        "generalrestarts": 3,
+        "generalepochs": 500,
+        "generalrestarts": 2,
         "generalpatience": 3,
     },
     "wide": {
@@ -100,7 +99,7 @@ _PRESETS: Dict[str, Dict[str, Any]] = {
         "pod_num_layers": 3,
     },
     "tiny": {
-        "dod_structure": [16],
+        "dod_structure": [8],
         "df_layers": [8],
         "dod_dl_df_layers": [16, 8],
         "pod_df_layers": [16, 8],

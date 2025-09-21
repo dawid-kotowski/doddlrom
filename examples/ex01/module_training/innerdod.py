@@ -1,20 +1,21 @@
 import torch
-from master_project_1 import reduced_order_models as dr
-from master_project_1.configs.ex01_parameters import Ex01Parameters
+from master_project_1 import reduced_order_models as rom
+from master_project_1.configs.parameters import Ex01Parameters
 
 # --- Configure run / hyperparams --------------------------------------------
-P = Ex01Parameters(profile="baseline")                 # or "wide" / "tiny" / "debug"
+P = Ex01Parameters(profile="tiny")                 # or "wide" / "tiny" / "debug"
 P.assert_consistent()
-trainer = P.trainer_defaults()  # {'epochs': ..., 'restarts': ..., 'patience': ...}
+
+trainer = P.trainer_defaults()  
 
 # --- Data --------------------------------------------------------------------
-train_valid_data = dr.FetchTrainAndValidSet(0.8, 'ex01', 'N_A_reduced')
+train_valid_data = rom.FetchTrainAndValidSet(0.8, 'ex01', 'N_A_reduced')
 
 # --- DOD model ---------------------------------------------------------------
-DOD_model = dr.innerDOD(**P.make_innerDOD_kwargs())
+DOD_model = rom.innerDOD(**P.make_innerDOD_kwargs())
 
 # --- Trainer -----------------------------------------------------------------
-DOD_trainer = dr.innerDODTrainer(
+DOD_trainer = rom.innerDODTrainer(
     P.Nt,
     P.T,
     DOD_model,

@@ -416,9 +416,9 @@ class DFNNTrainer:
         best_loss_restart = float('inf')
         best_loss = float('inf')
 
-        tqdm.write("Model Coeff DOD DL is being trained...")
+        tqdm.write("Model DFNN is being trained...")
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts Coeff DOD DL", leave=False):
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts DFNN", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
@@ -460,7 +460,7 @@ class DFNNTrainer:
                 best_model = self.model.state_dict()
                 best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of Coeff DOD DL: {best_loss:.6f}')
+            tqdm.write(f'Current best loss of DFNN: {best_loss:.6f}')
 
         self.model.load_state_dict(best_model)
         return best_loss
@@ -679,7 +679,6 @@ class DOD_DL_ROMTrainer:
                 self.coeff_model.train()
                 self.en_model.train()
                 self.de_model.train()
-                self.innerDOD.train()
                 total_loss = 0.0
 
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
@@ -692,7 +691,6 @@ class DOD_DL_ROMTrainer:
                 self.coeff_model.eval()
                 self.en_model.eval()
                 self.de_model.eval()
-                self.innerDOD.eval()
                 with torch.no_grad():
                     val_loss = 0.0
                     for mu_batch, nu_batch, solution_batch in self.valid_loader:
@@ -789,10 +787,10 @@ class POD_DL_ROMTrainer:
         best_loss = float('inf')
         best_loss_restart = float('inf')
 
-        tqdm.write("Model POD DL is being trained...")
+        tqdm.write("Model POD DL ROM is being trained...")
 
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts POD DL", leave=False):
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts POD DL ROM", leave=False):
             self.coeff_model.apply(initialize_weights)
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
@@ -852,7 +850,7 @@ class POD_DL_ROMTrainer:
                     }
                 best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of POD DL: {best_loss:.6f}')
+            tqdm.write(f'Current best loss of POD DL ROM: {best_loss:.6f}')
 
         if best_model is not None:
             self.en_model.load_state_dict(best_model["encoder"])

@@ -1,6 +1,6 @@
 from pymor.basic import *
 import numpy as np
-from master_project_1.configs.ex01_parameters import Ex01Parameters  
+from master_project_1.configs.parameters import Ex01Parameters  
 
 P = Ex01Parameters()
 example_name = 'ex01'

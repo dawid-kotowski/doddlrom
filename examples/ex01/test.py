@@ -1,12 +1,12 @@
 """
-Testing for ex01.
+Testing for {example_name}.
 
 This is a runable program for the example01, that tests for different complexities
 the respective ROMs.
 
 Run Program
 -----------------
-python test.py 
+python examples/{example_name}/test.py 
 --profiles "profiles" 
 --epochs "epochs" 
 --restarts "restarts" 
@@ -21,7 +21,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from master_project_1 import reduced_order_models as rom
-from master_project_1.configs.ex01_parameters import Ex01Parameters
+from master_project_1.configs.parameters import Ex01Parameters
 
 def count_params(module, include_frozen=True):
     ps = list(module.parameters())
@@ -30,7 +30,6 @@ def count_params(module, include_frozen=True):
     total = sum(p.numel() for p in ps)
     nonzero = sum((p != 0).sum().item() for p in ps)
     return total, nonzero
-
 
 def freeze(module):
     for p in module.parameters():

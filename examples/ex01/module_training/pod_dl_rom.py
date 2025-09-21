@@ -1,9 +1,9 @@
 import torch
 from master_project_1 import reduced_order_models as dr
-from master_project_1.configs.ex01_parameters import Ex01Parameters
+from master_project_1.configs.parameters import Ex01Parameters
 
 # --- Configure / hyperparams -------------------------------------------------
-P = Ex01Parameters(profile="baseline")                # or "wide" / "tiny" / "debug"
+P = Ex01Parameters(profile="tiny")                # or "wide" / "tiny" / "debug"
 P.assert_consistent()
 trainer = P.trainer_defaults()  
 

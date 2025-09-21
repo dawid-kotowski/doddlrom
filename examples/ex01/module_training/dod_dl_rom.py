@@ -1,29 +1,29 @@
 import torch
 import numpy as np
-from master_project_1 import reduced_order_models as dr
-from master_project_1.configs.ex01_parameters import Ex01Parameters
+from master_project_1 import reduced_order_models as rom
+from master_project_1.configs.parameters import Ex01Parameters
 
 # --- Configure this run ------------------------------------------------------
-P = Ex01Parameters(profile="baseline")            # or "wide" / "tiny" / "debug"
+P = Ex01Parameters(profile="tiny")            # or "wide" / "tiny" / "debug"
 P.assert_consistent()
 
 trainer_defaults = P.trainer_defaults()  
 
 # --- Data --------------------------------------------------------------------
-train_valid_data = dr.FetchTrainAndValidSet(0.8, 'ex01', 'N_reduced')
+train_valid_data = rom.FetchTrainAndValidSet(0.8, 'ex01', 'N_reduced')
 
 # --- DOD basis network -------------------------------------------------------
-innerDOD_model = dr.innerDOD(**P.make_innerDOD_kwargs())
+innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs())
 innerDOD_model.load_state_dict(torch.load('examples/ex01/state_dicts/DOD_Module.pth'))
 innerDOD_model.eval()
 
 # --- DOD-DL -----------------------------------------------------------------
-En_model       = dr.Encoder(**P.make_dod_dl_Encoder_kwargs())
-De_model       = dr.Decoder(**P.make_dod_dl_Decoder_kwargs())
-DFNN_D_n_model = dr.DFNN(**P.make_dod_dl_DFNN_kwargs())
+En_model       = rom.Encoder(**P.make_dod_dl_Encoder_kwargs())
+De_model       = rom.Decoder(**P.make_dod_dl_Decoder_kwargs())
+DFNN_D_n_model = rom.DFNN(**P.make_dod_dl_DFNN_kwargs())
 
 # --- Trainer -----------------------------------------------------------------
-DFNN_D_n_trainer = dr.DOD_DL_ROMTrainer(
+DFNN_D_n_trainer = rom.DOD_DL_ROMTrainer(
     P.Nt,
     P.T,
     innerDOD_model,

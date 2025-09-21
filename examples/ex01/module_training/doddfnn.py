@@ -1,25 +1,25 @@
 import torch
-from master_project_1 import reduced_order_models as dr
-from master_project_1.configs.ex01_parameters import Ex01Parameters
+from master_project_1 import reduced_order_models as rom
+from master_project_1.configs.parameters import Ex01Parameters
 
 # --- Configure / hyperparams -------------------------------------------------
-P = Ex01Parameters(profile="baseline")                 # or "wide" / "tiny" / "debug"
+P = Ex01Parameters(profile="tiny")                 # or "wide" / "tiny" / "debug"
 P.assert_consistent()
 trainer = P.trainer_defaults()  
 
 # --- Data --------------------------------------------------------------------
-train_valid_data = dr.FetchTrainAndValidSet(0.8, 'ex01', 'N_A_reduced')
+train_valid_data = rom.FetchTrainAndValidSet(0.8, 'ex01', 'N_A_reduced')
 
 # --- DOD model (pretrained basis) -------------------------------------------
-innerDOD_model = dr.innerDOD(**P.make_innerDOD_kwargs())
+innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs())
 innerDOD_model.load_state_dict(torch.load('examples/ex01/state_dicts/DOD_Module.pth'))
 innerDOD_model.eval()
 
 # --- DFNN  ------------------------------------------------------------------
-DOD_coeff_model = dr.DFNN(**P.make_dod_dfnn_DFNN_kwargs())
+DOD_coeff_model = rom.DFNN(**P.make_dod_dfnn_DFNN_kwargs())
 
 # --- Trainer -----------------------------------------------------------------
-DOD_coeff_trainer = dr.DFNNTrainer(
+DOD_coeff_trainer = rom.DFNNTrainer(
     P.Nt,
     P.T,
     P.N_A,                           
