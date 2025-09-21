@@ -1,1 +1,5 @@
+<<<<<<< HEAD
 from .reduced_order_models import DOD_DL, DOD_DL_Trainer, Coeff_DOD_DL_Trainer, Coeff_DOD_DL, Encoder, Decoder, AE_DOD_DL_Trainer, FetchTrainAndValidSet, L2Norm, MeanError
+=======
+from .reduced_order_models import *
+>>>>>>> rework-v1-clean

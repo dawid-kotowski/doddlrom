@@ -19,7 +19,7 @@ master_project_1/
 │   └── ex02/
 │       └── ...                  # Identical structure for a second benchmark
 └── master_project_1/
-    └── dod_dl_rom.py     # Core PyTorch modules and architecture definitions
+    └── reduced_order_models.py     # Core PyTorch modules and architecture definitions
 ```
 
 ## Mathematical Framework
@@ -87,7 +87,7 @@ To discussed...
 Each `examples/exXX/module_training/` directory includes standalone scripts with a uniform pipeline:
 
 1. Load preprocessed data from `training_data/`
-2. Use `FetchReducedTrainAndValidSet` for data partitioning
+2. Use `FetchTrainAndValidSet` for data partitioning
 3. Train model and store weights in `state_dicts/`
 4. Save quantitative results to `benchmarks/`
 

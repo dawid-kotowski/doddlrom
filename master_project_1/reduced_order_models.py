@@ -8,10 +8,6 @@ import copy
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 
-# Some Constants
-time_end = 1
-nt = 10
-
 # Initialize weights
 def initialize_weights(m):
     if isinstance(m, nn.Conv2d):
@@ -86,10 +82,14 @@ class DatasetLoader(Dataset):
 
 ''' 
 ------------------------------------
-In the following a DOD_DL is introduced, which dynamically approximates a reduced basis
+In the following a innerDOD is introduced, which dynamically approximates a reduced basis
 w.r.t the geometric parameter mu
 
+<<<<<<< HEAD
 V: (Theta \times Gamma) -> (R^(N_h \times N'))
+=======
+V: (Theta \times [0, T]) -> (R^(N_h \times N'))
+>>>>>>> rework-v1-clean
 ------------------------------------
 '''
 
@@ -103,7 +103,7 @@ class SeedModule(nn.Module):
         mu = func.leaky_relu(self.fc(mu), 0.1)
         return mu
 
-# Define Root Modules for DOD_DL
+# Define Root Modules for innerDOD
 class RootModule(nn.Module):
     def __init__(self, seed_dim, root_dim, root_layer_sizes, leaky_relu_slope=0.1):
         super(RootModule, self).__init__()
@@ -124,25 +124,51 @@ class RootModule(nn.Module):
 
 # Define Complete DOD_DL_ DL Model 
 # returns a tensor of size [N_A, N']
+<<<<<<< HEAD
 class DOD_DL(nn.Module):
     def __init__(self, seed_dim, geometric_dim, root_layer_sizes, N_prime, N_A):
         super(DOD_DL, self).__init__()
+=======
+class innerDOD(nn.Module):
+    def __init__(self, seed_dim, geometric_dim, root_layer_sizes, N_prime, N_A):
+        super(innerDOD, self).__init__()
+>>>>>>> rework-v1-clean
         self.seed_module = SeedModule(geometric_dim, seed_dim)
         self.root_modules = nn.ModuleList(
             [RootModule(seed_dim, N_A, root_layer_sizes) for _ in range(N_prime)])
 
     def forward(self, mu, t):
-        seed_output = self.seed_module(mu)
-        mu_t = torch.cat((seed_output, t), dim=1)
-        root_outputs = [root(mu_t) for root in self.root_modules]
-        v_mu = torch.stack(root_outputs, dim=0).transpose(0,1)
-        return v_mu
+            """
+            Inputs:
+            mu: [B, geometric_dim] or [geometric_dim]
+            t : [B, t_dim] or [t_dim]
+            Returns:
+            V: [B, N_A, N'] if batched, else [N_A, N']
+            """
+            if mu.dim() == 1:
+                mu = mu.unsqueeze(0)                                   # [1, geometric_dim]
+            if t.dim() == 1:
+                t = t.unsqueeze(0)                                     # [1, t_dim]
+            B = mu.size(0)
+            seed_out = self.seed_module(mu)                            # [B, seed_dim]
+            mu_t = torch.cat([seed_out, t], dim=-1)
+
+            root_outputs = [root(mu_t) for root in self.root_modules]  # N' items of [B, N_A]
+            V = torch.stack(root_outputs, dim=-1)                      # [B, N_A, N']
+            return V if B > 1 else V.squeeze(0)
 
 # Define DOD_DL_-DL training
+<<<<<<< HEAD
 
 class DOD_DL_Trainer:
     def __init__(self, dod_model, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
+=======
+class innerDODTrainer:
+    def __init__(self, nt, T, dod_model, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
+>>>>>>> rework-v1-clean
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience = 3):
+        self.nt = nt
+        self.T = T
         self.learning_rate = learning_rate
         self.restarts = restart
         self.epochs = epochs
@@ -158,26 +184,63 @@ class DOD_DL_Trainer:
                                        batch_size=self.batch_size, shuffle=True)
         self.valid_loader = DataLoader(DatasetLoader(valid_data), 
                                        batch_size=self.batch_size, shuffle=False)
+<<<<<<< HEAD
+=======
+        
+    def orth_penalty(self, V):
+        """
+        V: [B, N_A, N']  (columns should be orthonormal in Euclidean sense)
+        Returns: scalar penalty
+        """
+        Bt, NA, Np = V.shape
+        S = torch.bmm(V.transpose(1, 2), V)                    # [B, N', N']
+        I = torch.eye(Np, device=V.device, dtype=V.dtype).expand_as(S)
+        return ((S - I).pow(2).sum(dim=(-2, -1)) / Np).mean()  
+>>>>>>> rework-v1-clean
 
-    def loss_function(self, mu_batch, solution_batch):
-        batch_size = mu_batch.size(0)
-        temp_loss = 0.
+    def loss_function(self, mu_batch, solution_batch, lambda_orth=1e-2):
+        """
+        mu_batch:        [B, geometric_dim]
+        solution_batch:  [B, nt+1, N_A]   (solutions already in the ambient space R^{N_A})
+        Returns scalar loss (Euclidean, G-independent).
+        """
+        B = mu_batch.size(0)
+        assert solution_batch.dim() == 3, "solution_batch must be [B, nt+1, N_A]"
 
+<<<<<<< HEAD
         for i in range(nt + 1):
             t_batch = torch.stack(
                 [torch.tensor(i * time_end/(nt + 1), 
                               dtype=torch.float32, device=self.device) for _ in range(batch_size)]
             ).unsqueeze(1)
             output = self.model(mu_batch, t_batch)
+=======
+        temp_proj = 0.0
+        temp_orth = 0.0
+>>>>>>> rework-v1-clean
 
-            v_u = torch.bmm(output, solution_batch[:, i, :].unsqueeze(2))
-            u_proj = torch.bmm(output.transpose(1, 2), v_u)
+        for i in range(self.nt + 1):
+            t_batch = torch.full((B, 1), i * self.T / (self.nt + 1),
+                            dtype=torch.float32, device=self.device) # [B, 1]
 
-            error = solution_batch[:, i, :].unsqueeze(2) - u_proj
-            temp_loss += torch.sum(torch.norm(error, dim=1) ** 2)
+            V = self.model(mu_batch, t_batch)                        # [B, N_A, N']
+            u = solution_batch[:, i, :].unsqueeze(-1)                # [B, N_A, 1]
+            alpha = torch.bmm(V.transpose(1, 2), u)                  # [B, N', 1]
+            u_proj = torch.bmm(V, alpha)                             # [B, N_A, 1]
 
-        loss = temp_loss / (batch_size * (nt + 1))
+            err = u - u_proj
+            temp_proj = temp_proj + torch.sum(torch.norm(err, dim=1) ** 2)
+
+            # orthonormality penalty
+            if lambda_orth > 0.0:
+                pen = self.orth_penalty(V)
+                temp_orth = temp_orth + pen
+            
+        data_loss = temp_proj / (B * (self.nt + 1))
+        orth_loss = (temp_orth / (self.nt + 1))
+        loss = data_loss + lambda_orth * orth_loss
         return loss
+
 
     def train(self):
         best_model = None
@@ -235,13 +298,20 @@ class DOD_DL_Trainer:
 
 ''' 
 ------------------------------------
-Adding to the DOD_DL is a network trying to approximate the latent dynamics of the underlying 
+Adding to the innerDOD is a network trying to approximate the latent dynamics of the underlying 
 n-dim solution manifold. We present the following different approaches for this
 
+<<<<<<< HEAD
 Coeff_DL     : (Theta \times Theta' \times \Gamma) -> R^N'
              ; Linear(Linear(mu_t)) @ Linear(Linear(nu_t)) \mapsto u_N'
 
 AE_DL        : (Theta \times Theta' \times \Gamma) -> R^N'
+=======
+DOD+DFNN     : (Theta \times Theta' \times [0, T]) -> R^N'
+             ; Linear(Linear(mu_t)) @ Linear(Linear(nu_t)) \mapsto u_N'
+
+DOD-DL-ROM   : (Theta \times Theta' \times [0, T]) -> R^N'
+>>>>>>> rework-v1-clean
              ; Encoder(Linear(Linear(mu_t)) @ Linear(Linear(nu_t))) \mapsto u_N'
 ------------------------------------
 '''
@@ -290,11 +360,17 @@ class Phi2Module(nn.Module):
         nu_t = nu_t.view(-1, self.m, self.n)
         return nu_t
 
+<<<<<<< HEAD
 # Define Complete parameter-to-DOD_DL-coefficients Model 
 # returns [B, N']
 class Coeff_DOD_DL(nn.Module):
+=======
+# Define Complete parameter-to-innerDOD-coefficients Model 
+# returns [B, N']
+class HadamardNN(nn.Module):
+>>>>>>> rework-v1-clean
     def __init__(self, geometric_dim, physical_dim, m_0, n_0, layer_sizes=None):
-        super(Coeff_DOD_DL, self).__init__()
+        super(HadamardNN, self).__init__()
         self.phi_1_module = Phi1Module(geometric_dim, m_0, n_0, layer_sizes)
         self.phi_2_module = Phi2Module(physical_dim, m_0, n_0, layer_sizes)
 
@@ -307,15 +383,43 @@ class Coeff_DOD_DL(nn.Module):
         phi_sum = torch.sum(phi, dim=1).squeeze()
         return phi_sum
 
+<<<<<<< HEAD
 # Define the Trainer
 class Coeff_DOD_DL_Trainer:
     def __init__(self, N_A, DOD_DL_model, coeffnn_model, train_valid_set, epochs, restarts, learning_rate,
+=======
+# Define optional parameter-to-latent-dynamic Model
+#returns [B, N'] or [B, n]
+class DFNN(nn.Module):
+    def __init__(self, geometric_dim, physical_dim, n, layer_sizes=None, leaky_relu_slope=0.1):
+        super(DFNN, self).__init__()
+        if layer_sizes is None:
+            layer_sizes = [1]
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(geometric_dim + physical_dim + 1, layer_sizes[0]))
+        for i in range(len(layer_sizes) - 1):
+            self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+            if i < len(layer_sizes) - 1:
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+        self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n))
+    def forward(self, mu, nu, t):
+        mu_nu_t = torch.cat((mu, nu, t), dim=1)
+        for layer_forward in self.layers:
+            mu_nu_t = layer_forward(mu_nu_t)
+        return mu_nu_t
+
+# Define the Trainer for both HadamardNN and DFNN
+class DFNNTrainer:
+    def __init__(self, nt, T, N_A, DOD_DL_model, coeffnn_model, train_valid_set, epochs, restarts, learning_rate,
+>>>>>>> rework-v1-clean
                  batch_size, device='cuda' if torch.cuda.is_available() else 'cpu', patience = 3):
+        self.nt = nt
+        self.T = T
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.restarts = restarts
         self.batch_size = batch_size
-        self.DOD_DL = DOD_DL_model.to(device)
+        self.innerDOD = DOD_DL_model.to(device)
         self.model = coeffnn_model.to(device)
         self.device = device
         self.patience = patience
@@ -327,37 +431,41 @@ class Coeff_DOD_DL_Trainer:
         self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
-        batch_size = mu_batch.size(0)
+        """
+        Dimensionality:
+        V = innerDOD(mu,t):           [B, N_A, N']        # Euclidean-orthonormal columns
+        coeff_model(mu,nu,t):         [B, N']             # predicted coefficients
+        solution_batch[:, i, :]:      [B, N_A]            # ambient POD solution at time i
+        alpha_true = V^T u:           [B, N']             # target coefficients
+        """
+        B = mu_batch.size(0)
         temp_error = 0.0
-        for i in range(nt + 1):
-            t_batch = torch.stack(
-                [torch.tensor(i * time_end / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
-            ).unsqueeze(1)
-            # Get the coefficient model output; expected shape: (B, n)
-            output = self.model(mu_batch, nu_batch, t_batch)
-            # Get the DOD_DL_ model output; expected shape: (B, n, N_A)
-            DOD_DL_output = self.DOD_DL(mu_batch, t_batch)
 
-            # Extract the solution slice at time step i; expected shape: (B, N_A)
-            u_ambient_proj = solution_batch[:, i, :].unsqueeze(2)
+        for i in range(self.nt + 1):
+            t_batch = torch.full((B, 1), i * self.T / (self.nt + 1),
+                                dtype=torch.float32, device=self.device)                   # [B,1]
 
-            # u_proj: (B, n, 1) then squeezed to (B, n)
-            u_proj = (torch.bmm(DOD_DL_output, u_ambient_proj)).squeeze(2)
+            coeff_pred = self.model(mu_batch, nu_batch, t_batch)                             # [B, N']
+            V = self.innerDOD(mu_batch, t_batch)                                             # [B, N_A, N']
 
-            error = output - u_proj  # (B, n)
-            temp_error += torch.sum(torch.norm(error, dim=1) ** 2)
+            u = solution_batch[:, i, :].unsqueeze(-1)                                        # [B, N_A, 1]
+            alpha_true = torch.bmm(V.transpose(1, 2), u).squeeze(-1)                         # [B, N']  = (V^T u)
 
-        loss = temp_error / batch_size
+            error = coeff_pred - alpha_true                                                  # [B, N']
+            temp_error = temp_error + torch.sum(torch.norm(error, dim=1) ** 2)               
+
+        loss = temp_error / (B * (self.nt + 1))
         return loss
+
 
     def train(self):
         best_model = None
         best_loss_restart = float('inf')
         best_loss = float('inf')
 
-        tqdm.write("Model Coeff DOD DL is being trained...")
+        tqdm.write("Model DFNN is being trained...")
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts Coeff DOD DL", leave=False):
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts DFNN", leave=False):
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
@@ -399,33 +507,17 @@ class Coeff_DOD_DL_Trainer:
                 best_model = self.model.state_dict()
                 best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of Coeff DOD DL: {best_loss:.6f}')
+            tqdm.write(f'Current best loss of DFNN: {best_loss:.6f}')
 
         self.model.load_state_dict(best_model)
         return best_loss
-
-# Define optional parameter-to-latent-dynamic Model
-#returns [B, n]
-class Coeff_AE(nn.Module):
-    def __init__(self, geometric_dim, physical_dim, n, layer_sizes=None, leaky_relu_slope=0.1):
-        super(Coeff_AE, self).__init__()
-        if layer_sizes is None:
-            layer_sizes = [1]
-        self.layers = nn.ModuleList()
-        self.layers.append(nn.Linear(geometric_dim + physical_dim + 1, layer_sizes[0]))
-        for i in range(len(layer_sizes) - 1):
-            self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
-            if i < len(layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
-        self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n))
-    def forward(self, mu, nu, t):
-        mu_nu_t = torch.cat((mu, nu, t), dim=1)
-        for layer_forward in self.layers:
-            mu_nu_t = layer_forward(mu_nu_t)
-        return mu_nu_t
     
 # Define Encoder 
+<<<<<<< HEAD
 # takes [B, input_dim] return [B, N' = loop(floor((input_dim + 2p - k) / s) + 1)**2)] 
+=======
+# takes [B, n] return [B, N' = loop(floor((n + 2p - k) / s) + 1)**2)] 
+>>>>>>> rework-v1-clean
 class Encoder(nn.Module):
     def __init__(self, input_dim, in_channels, hidden_channels, latent_dim,
                 num_layers, kernel, stride, padding):
@@ -492,7 +584,11 @@ class Encoder(nn.Module):
         return z
 
 # Define Decoder 
+<<<<<<< HEAD
 # takes [B, N' = loop(floor((input_dim + 2p - k) / s) + 1)**2)] return [B, input_dim]
+=======
+# takes [B, N' = loop(floor((n + 2p - k) / s) + 1)**2)] return [B, n]
+>>>>>>> rework-v1-clean
 class Decoder(nn.Module):
     def __init__(self, output_dim, out_channels, hidden_channels, latent_dim, 
                  num_layers, kernel, stride, padding):
@@ -547,16 +643,24 @@ class Decoder(nn.Module):
         x_recon = self.deconv(x_unflat)
         return x_recon.view(B, -1)[:, :self.output_dim]
     
+<<<<<<< HEAD
 # Define the Trainer for the AE DOD DL
 class AE_DOD_DL_Trainer:
     def __init__(self, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, error_weight=0.5,
+=======
+# Define the Trainer for the DOD-DL-ROM Coefficients
+class DOD_DL_ROMTrainer:
+    def __init__(self, nt, T, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, error_weight=0.5,
+>>>>>>> rework-v1-clean
                  epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
+        self.nt = nt
+        self.T = T
         self.learning_rate = learning_rate
         self.error_weight = error_weight
         self.epochs = epochs
         self.restarts = restarts
         self.batch_size = batch_size
-        self.DOD_DL = DOD_DL_model.to(device)
+        self.innerDOD = DOD_DL_model.to(device)
         self.en_model = Encoder_model.to(device)
         self.de_model = Decoder_model.to(device)
         self.coeff_model = Coeff_DOD_DL_model.to(device)
@@ -570,49 +674,60 @@ class AE_DOD_DL_Trainer:
         self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
-        batch_size = mu_batch.size(0)
+        """
+        Dimensionality (this variant):
+        V = innerDOD(mu,t):                 [B, N_A, N']   # Euclidean-orthonormal columns
+        coeff_pred = Coeff_DOD_DL(...):     [B, n]         # DFNN output
+        decoder(coeff_pred):                [B, N']        # expands n -> N'  (beta_pred)
+        V @ beta_pred:                      [B, N_A]       # ambient recon from predicted coeffs (u_pred)
+        encoder(alpha_vec in DOD-space):    [B, n]         # compress N' -> n
+        solution_batch[:, i, :]:            [B, N_A]       # ambient POD solution at time i
+        alpha_true = V^T u:                 [B, N']        # true N' coeffs from data
+        """
+        B = mu_batch.size(0)
         temp_error = 0.0
-        for i in range(nt + 1):
-            t_batch = torch.stack(
-                [torch.tensor(i * time_end / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
-            ).unsqueeze(1)
-            # Get the coefficient model output; expected shape: (B, n)
-            coeff_output = self.coeff_model(mu_batch, nu_batch, t_batch)
-            # Get the non linear expansion output; expected shape: (B, N)
-            decoder_output = self.de_model(coeff_output)
-            # Get the DOD_DL_ model output; expected shape: (B, N, N_A)
-            DOD_DL_output = self.DOD_DL(mu_batch, t_batch)
 
-            # Extract the solution slice at time step i; expected shape: (B, N_A)
-            solution_slice = solution_batch[:, i, :]
-            u_ambient_proj = solution_slice.unsqueeze(2) # shape: (B, N_A, 1)
+        for i in range(self.nt + 1):
+            t_batch = torch.full((B, 1), i * self.T / (self.nt + 1),
+                                dtype=torch.float32, device=self.device)                # [B,1]
 
-            # Get the Dynmaics output; expected shape: (B, N)
-            dynamics_proj = torch.bmm(DOD_DL_output, u_ambient_proj).squeeze(2)
-            # Encoder output; expected shape: (B, N)
-            encoder_output = self.en_model(dynamics_proj)
+            coeff_pred = self.coeff_model(mu_batch, nu_batch, t_batch)                  # [B, n]
+            beta_pred  = self.de_model(coeff_pred)                                      # [B, N']
 
-            dynam_error = dynamics_proj - decoder_output  # (B, n)
-            proj_error = encoder_output - coeff_output # (B, n)
-            temp_error += (self.error_weight / 2 * torch.sum(torch.norm(dynam_error, dim=1) ** 2) 
-                           + (1-self.error_weight) / 2 * torch.sum(torch.norm(proj_error, dim=1) ** 2))
+            V = self.innerDOD(mu_batch, t_batch)                                        # [B, N_A, N']
+            u_pred = torch.bmm(V, beta_pred.unsqueeze(-1)).squeeze(-1)                  # [B, N_A]
 
-        loss = temp_error / batch_size
+            u = solution_batch[:, i, :]                                                 # [B, N_A]
+
+            alpha_true = torch.bmm(V.transpose(1, 2), u.unsqueeze(-1)).squeeze(-1)      # [B, N']
+
+            enc_of_target = self.en_model(alpha_true)                                   # [B, n]
+
+            dynam_error = u - u_pred                                                    # [B, N_A]
+            proj_error  = enc_of_target - coeff_pred                                    # [B, n]
+
+            temp_error = temp_error + (
+                self.error_weight * 0.5 * torch.sum(torch.norm(dynam_error, dim=1) ** 2) +
+                (1.0 - self.error_weight) * 0.5 * torch.sum(torch.norm(proj_error,  dim=1) ** 2)
+            )
+
+        loss = temp_error / (B * (self.nt + 1))
         return loss
+
+
 
     def train(self):
         best_model = None
         best_loss = float('inf')
         best_loss_restart = float('inf')
 
-        tqdm.write("Model AE DOD DL is being trained...")
+        tqdm.write("Model DOD DL ROM is being trained...")
 
-
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts AE DOD DL", leave=False):
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts DOD DL ROM", leave=False):
             self.coeff_model.apply(initialize_weights)
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
-            
+
             params = list(self.coeff_model.parameters()) + \
                      list(self.en_model.parameters()) + \
                      list(self.de_model.parameters())
@@ -621,12 +736,10 @@ class AE_DOD_DL_Trainer:
             epochs_no_improve = 0
             best_loss_restart = float('inf')
 
-            
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.coeff_model.train()
                 self.en_model.train()
                 self.de_model.train()
-                self.DOD_DL.train()  
                 total_loss = 0.0
 
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
@@ -635,17 +748,16 @@ class AE_DOD_DL_Trainer:
                     loss.backward()
                     optimizer.step()
                     total_loss += loss.item()
-                
+
                 self.coeff_model.eval()
                 self.en_model.eval()
                 self.de_model.eval()
-                self.DOD_DL.eval()
                 with torch.no_grad():
                     val_loss = 0.0
                     for mu_batch, nu_batch, solution_batch in self.valid_loader:
                         val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
                     val_loss /= len(self.valid_loader)
-            
+
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_model = {
@@ -660,24 +772,23 @@ class AE_DOD_DL_Trainer:
                         tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
                         break
 
-
                 tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
 
             if best_loss_restart < best_loss:
                 best_model = {
-                        "encoder": copy.deepcopy(self.en_model.state_dict()),
-                        "decoder": copy.deepcopy(self.de_model.state_dict()),
-                        "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
-                    }
+                    "encoder": copy.deepcopy(self.en_model.state_dict()),
+                    "decoder": copy.deepcopy(self.de_model.state_dict()),
+                    "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
+                }
                 best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of AE DOD DL: {best_loss:.6f}')
+            tqdm.write(f'Current best loss of DOD DL ROM: {best_loss:.6f}')
 
         if best_model is not None:
             self.en_model.load_state_dict(best_model["encoder"])
             self.de_model.load_state_dict(best_model["decoder"])
             self.coeff_model.load_state_dict(best_model["coeff_model"])
-            
+
         return best_loss
 
 '''
@@ -689,9 +800,16 @@ u(mu, nu, t) = A Decoder(Coeff(mu, nu, t))
 -----------------------------------
 '''
 # Define the Trainer for the standard POD DL
+<<<<<<< HEAD
 class POD_DL_Trainer:
     def __init__(self, Coeff_model, Encoder_model, Decoder_model, train_valid_set, error_weight,
+=======
+class POD_DL_ROMTrainer:
+    def __init__(self, nt, T, Coeff_model, Encoder_model, Decoder_model, train_valid_set, error_weight,
+>>>>>>> rework-v1-clean
                  epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
+        self.nt = nt
+        self.T = T
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.error_weight = error_weight
@@ -712,27 +830,22 @@ class POD_DL_Trainer:
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
         temp_error = 0.0
-        for i in range(nt + 1):
+        for i in range(self.nt + 1):
             t_batch = torch.stack(
-                [torch.tensor(i * time_end / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+                [torch.tensor(i * self.T / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
             ).unsqueeze(1)
-            # Get the coefficient model output; expected shape: (B, n)
-            coeff_output = self.coeff_model(mu_batch, nu_batch, t_batch)
-            # Get the non linear expansion output; expected shape: (B, N_A)
-            decoder_output = self.de_model(coeff_output)
+            coeff_output = self.coeff_model(mu_batch, nu_batch, t_batch)           # [B, n]
+            decoder_output = self.de_model(coeff_output)                           # [B, N_A]
 
-            # Extract the solution slice at time step i; expected shape: (B, N_A)
-            solution_slice = solution_batch[:, i, :]
+            solution_slice = solution_batch[:, i, :]                               # [B, N_A]
+            encoder_output = self.en_model(solution_slice)                         # [B, N]
 
-            # Encoder output; expected shape: (B, N)
-            encoder_output = self.en_model(solution_slice)
-
-            dynam_error = solution_slice - decoder_output  # (B, N_A)
-            proj_error = encoder_output - coeff_output # (B, n)
+            dynam_error = solution_slice - decoder_output                          # [B, N_A]
+            proj_error = encoder_output - coeff_output                             # [B, n]
             temp_error += (self.error_weight / 2 * torch.sum(torch.norm(dynam_error, dim=1) ** 2) 
                            + (1-self.error_weight) / 2 * torch.sum(torch.norm(proj_error, dim=1) ** 2))
 
-        loss = temp_error / batch_size
+        loss = temp_error / (batch_size * (self.nt + 1))
         return loss
 
     def train(self):
@@ -740,10 +853,10 @@ class POD_DL_Trainer:
         best_loss = float('inf')
         best_loss_restart = float('inf')
 
-        tqdm.write("Model POD DL is being trained...")
+        tqdm.write("Model POD DL ROM is being trained...")
 
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts POD DL", leave=False):
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts POD DL ROM", leave=False):
             self.coeff_model.apply(initialize_weights)
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
@@ -803,7 +916,7 @@ class POD_DL_Trainer:
                     }
                 best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of POD DL: {best_loss:.6f}')
+            tqdm.write(f'Current best loss of POD DL ROM: {best_loss:.6f}')
 
         if best_model is not None:
             self.en_model.load_state_dict(best_model["encoder"])
@@ -852,9 +965,9 @@ class StatRootModule(nn.Module):
         for layer_forward in self.layers:
             x = layer_forward(x)
         return x
-class DOD(nn.Module):
+class statDOD(nn.Module):
     def __init__(self, geometric_dim, seed_dim, num_roots, root_output_dim, root_layer_sizes=None):
-        super(DOD, self).__init__()
+        super(statDOD, self).__init__()
         self.seed_module = StatSeedModule(geometric_dim, seed_dim)
         self.root_modules = nn.ModuleList([StatRootModule(seed_dim, root_output_dim, root_layer_sizes) for _ in range(num_roots)])
 
@@ -905,9 +1018,9 @@ class StatPhi2Module(nn.Module):
             x = layer_forward(x)
         x = x.view(-1, self.m, self.n)
         return x
-class CoeffDOD(nn.Module):
+class statHadamardNN(nn.Module):
     def __init__(self, param_mu_space_dim, param_nu_space_dim, m_0, n_0, layer_sizes=None):
-        super(CoeffDOD, self).__init__()
+        super(statHadamardNN, self).__init__()
         self.phi_1_module = StatPhi1Module(param_mu_space_dim, m_0, n_0, layer_sizes)
         self.phi_2_module = StatPhi2Module(param_nu_space_dim, m_0, n_0, layer_sizes)
 
@@ -919,7 +1032,11 @@ class CoeffDOD(nn.Module):
         return phi_sum
 
 # Define the trainer for these
+<<<<<<< HEAD
 class DODTrainer:
+=======
+class statDODTrainer:
+>>>>>>> rework-v1-clean
     def __init__(self, nn_model, ambient_dim, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
@@ -1008,7 +1125,11 @@ class DODTrainer:
 
         self.model.load_state_dict(best_model)
         return best_loss
+<<<<<<< HEAD
 class CoeffDODTrainer:
+=======
+class statHadamardNNTrainer:
+>>>>>>> rework-v1-clean
     def __init__(self, dod_model, coeffnn_model, ambient_dim, train_valid_set, epochs=1, restarts=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
@@ -1114,9 +1235,9 @@ class Alpha(nn.Module):
 # Define CoLoRA total module 
 # takes [B, N_A] \times [B, Theta'] \times [B, 1]
 # yields [B, N_A]
-class CoLoRA_DL(nn.Module):
+class CoLoRA(nn.Module):
     def __init__(self, out_dim, L, dyn_dim, physical_dim, with_bias=True):
-        super(CoLoRA_DL, self).__init__()
+        super(CoLoRA, self).__init__()
         self.out_dim = out_dim
         self.L = L
         self.dyn_dim = dyn_dim
@@ -1169,9 +1290,16 @@ class CoLoRA_DL(nn.Module):
         return X
 
 # Define CoLoRA trainer
+<<<<<<< HEAD
 class CoLoRA_DL_Trainer():
     def __init__(self, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, epochs, restarts, learning_rate,
+=======
+class CoLoRATrainer():
+    def __init__(self, nt, T, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, epochs, restarts, learning_rate,
+>>>>>>> rework-v1-clean
                  batch_size, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
+        self.nt = nt
+        self.T = T
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.restarts = restarts
@@ -1191,24 +1319,22 @@ class CoLoRA_DL_Trainer():
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
         temp_error = 0.0
-        for i in range(nt + 1):
+        for i in range(self.nt + 1):
             t_batch = torch.stack(
-                [torch.tensor(i * time_end / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+                [torch.tensor(i * self.T / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
             ).unsqueeze(1)
-            # Get the stationary coefficient model output; expected shape: (B, n, 1)
             coeff_0_output = self.model_0(mu_batch, nu_batch).unsqueeze(2)
-            # Get the stationary DOD model output; expected shape: (B, n, N_A)
-            DOD_0_output = self.DOD_0(mu_batch)
-            # Get the CoLoRA prediction output
-            output = self.model(torch.bmm(DOD_0_output.transpose(1, 2), coeff_0_output), nu_batch, t_batch)
+            DOD_0_output = self.DOD_0(mu_batch)                         
 
-            # Extract the solution slice at time step i; expected shape: (B, N_A)
-            u_proj = solution_batch[:, i, :]
+            output = self.model(torch.bmm(
+                DOD_0_output.transpose(1, 2), coeff_0_output), nu_batch, t_batch)     # [B, N', N_A]
 
-            error = output - u_proj  # (B, N_A)
+            u_proj = solution_batch[:, i, :]                                            
+
+            error = output - u_proj                                                   # [B, N_A]
             temp_error += torch.sum(torch.norm(error, dim=1) ** 2)
 
-        loss = temp_error / batch_size
+        loss = temp_error / (batch_size * (self.nt + 1))
         return loss
     
     def train(self):
@@ -1301,52 +1427,55 @@ Define simple forward pass assuming existence of networks
 -------------------
 '''
 
-def dod_dl_forward(A, DOD_DL_model, Coeff_model, mu_i, nu_i, nt_):
+def dod_dfnn_forward(A, innerDOD_model, Coeff_model, mu_i, nu_i, nt_, T):
     dod_dl_solution = []
     for j in range(nt_ + 1):
-        time = torch.tensor(j * time_end / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+        time = torch.tensor(j * T / (nt_ + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
         time = time.unsqueeze(0).unsqueeze(1)
-        dod_dl_output = DOD_DL_model(mu_i, time).squeeze(0).T
-        coeff_output = Coeff_model(mu_i, nu_i, time)
-        u_ij_coeff_dl = torch.matmul(torch.matmul(A, dod_dl_output), coeff_output)
-        dod_dl_solution.append(u_ij_coeff_dl)
+        tilde_V = innerDOD_model(mu_i, time)
+        coeff = Coeff_model(mu_i, nu_i, time).squeeze(0)
+        V = torch.matmul(A, tilde_V)
+        u_ij_dod_dfnn = torch.matmul(V, coeff)
+        dod_dl_solution.append(u_ij_dod_dfnn)
 
     u_i_dod_dl = torch.stack(dod_dl_solution, dim=0)
     u_i_dod_dl = u_i_dod_dl.detach().numpy()
     return u_i_dod_dl
 
-def pod_dl_forward(A, POD_DL_model, De_model, mu_i, nu_i, nt_):
+def pod_dl_rom_forward(A_P, POD_DL_model, De_model, mu_i, nu_i, nt_, T):
     pod_dl_solution = []
     for j in range(nt_ + 1):
-        time = torch.tensor(j * time_end / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+        time = torch.tensor(j * T / (nt_ + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
         time = time.unsqueeze(0).unsqueeze(1)
         coeff_n_output = POD_DL_model(mu_i, nu_i, time).unsqueeze(0)
         decoded_output = De_model(coeff_n_output).squeeze(0)
-        u_ij_pod_dl = torch.matmul(A, decoded_output)
+        u_ij_pod_dl = torch.matmul(A_P, decoded_output)
         pod_dl_solution.append(u_ij_pod_dl)
     
     u_i_pod_dl = torch.stack(pod_dl_solution, dim=0)
     u_i_pod_dl = u_i_pod_dl.detach().numpy()
     return u_i_pod_dl
 
-def ae_dod_dl_forward(A, AE_DOD_DL_model, De_model, mu_i, nu_i, nt_):
-    ae_dod_dl_solution = []
+def dod_dl_rom_forward(A, innerDOD_model, DOD_DL_model, De_model, mu_i, nu_i, nt_, T):
+    dod_dl_rom_solution = []
     for j in range(nt_ + 1):
-        time = torch.tensor(j * time_end / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+        time = torch.tensor(j * T / (nt_ + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
         time = time.unsqueeze(0).unsqueeze(1)
-        coeff_n_output = AE_DOD_DL_model(mu_i, nu_i, time).unsqueeze(0)
-        decoded_output = De_model(coeff_n_output).squeeze(0)
-        u_ij_ae_dod_dl = torch.matmul(A, decoded_output)
-        ae_dod_dl_solution.append(u_ij_ae_dod_dl)
+        tilde_V = innerDOD_model(mu_i, time)
+        V = torch.matmul(A, tilde_V)
+        coeff_n = DOD_DL_model(mu_i, nu_i, time)
+        decoded_N_prime = De_model(coeff_n).squeeze(0)
+        u_ij_dod_dl = torch.matmul(V, decoded_N_prime)
+        dod_dl_rom_solution.append(u_ij_dod_dl)
     
-    u_i_ae_dod_dl = torch.stack(ae_dod_dl_solution, dim=0)
-    u_i_ae_dod_dl = u_i_ae_dod_dl.detach().numpy()
-    return u_i_ae_dod_dl
+    u_i_dod_dl_rom = torch.stack(dod_dl_rom_solution, dim=0)
+    u_i_dod_dl_rom = u_i_dod_dl_rom.detach().numpy()
+    return u_i_dod_dl_rom
 
-def colora_dl_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, mu_i, nu_i, nt_):
+def colora_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, mu_i, nu_i, nt_, T):
     colora_dl_solution = []
     for j in range(nt_ + 1):
-        time = torch.tensor(j * time_end / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+        time = torch.tensor(j * T / (nt_ + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
         time = time.unsqueeze(0).unsqueeze(1)
         stat_coeff_n_output = stat_Coeff_model(mu_i, nu_i).unsqueeze(0).unsqueeze(2)
         stat_dod_output = stat_DOD_model(mu_i)
