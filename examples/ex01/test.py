@@ -1,320 +1,250 @@
-import torch
-from master_project_1 import reduced_order_models as dr
+"""
+Testing for ex01.
+
+This is a runable program for the example01, that tests for different complexities
+the respective ROMs.
+
+Run Program
+-----------------
+python test.py 
+--profiles "profiles" 
+--epochs "epochs" 
+--restarts "restarts" 
+--eval_samples "number of samples to test error with"
+--outdir "path/to/benchmark/dir"
+-----------------
+
+"""
+import argparse, json, time, csv, random, math
+from pathlib import Path
 import numpy as np
+import torch
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-import torch.utils.benchmark as benchmark
-import pickle
+from master_project_1 import reduced_order_models as rom
+from master_project_1.configs.ex01_parameters import Ex01Parameters
 
-# Fixed Constants
-N_h = 5101
-N_A = 64
-nt = 10
-diameter = 0.02
-L = 3
-N = 16
-# unspecified n
-m = 4
-parameter_mu_dim = 1
-parameter_nu_dim = 1
-preprocess_dim = 2
-dod_structure = [64, 64]
-phi_n_structure = [16, 8]
-coeff_ae_structure = [32, 16, 8]
-stat_dod_structure = [128, 64]
-pod_in_channels = 1
-pod_hidden_channels = 1
-lin_dim_ae = 0
-kernel = 3
-stride = 2
-padding = 1
-#Training Example
-generalepochs = 20
-generalrestarts = 3
-generalpatience = 4
-#Performance Example
-n_set = [2, 4, 6, 8, 10, 12, 14]
+def count_params(module, include_frozen=True):
+    ps = list(module.parameters())
+    if not include_frozen:
+        ps = [p for p in ps if p.requires_grad]
+    total = sum(p.numel() for p in ps)
+    nonzero = sum((p != 0).sum().item() for p in ps)
+    return total, nonzero
 
-# Fetch Training and Validation set
-train_valid_data = dr.FetchReducedTrainAndValidSet(0.8, 'ex01')
-stat_train_valid_data = dr.StatFetchReducedTrainAndValidSet(0.8, 'ex01')
 
-# Fetch Ambient and Gram Matrix
-G = np.load('examples/ex01/training_data/gram_matrix_ex01.npy', allow_pickle=True)
-A_np = np.load('examples/ex01/training_data/ambient_matrix_ex01.npy', allow_pickle=True)
-A = torch.tensor(A_np, dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+def freeze(module):
+    for p in module.parameters():
+        p.requires_grad = False
+    module.eval()
 
-# Initialize random Performance Check set
-loaded_data = np.load('examples/ex01/training_data/training_data_ex01.npy', allow_pickle=True)
-np.random.shuffle(loaded_data) 
-performance_data = loaded_data[:5]
+def g_norm_batch(G, U):  # U: [Nt, Nh] or [Nh]
+    if U.ndim == 1:
+        return float(np.sqrt(U @ (G @ U) + 1e-12))
+    vals = []
+    for t in range(U.shape[0]):
+        u = U[t]
+        vals.append(float(np.sqrt(u @ (G @ u) + 1e-12)))
+    return np.array(vals, dtype=np.float64)
 
-# Initialize Error Loader of Performance Check set
-l2_norm = dr.L2Norm(np.load('examples/ex01/training_data/gram_matrix_ex01.npy', allow_pickle=True))
-error_loader = dr.MeanError(l2_norm)
+def evaluate_rom_forward(rom_name, forward_fn, args, ref_sol, G):
+    # forward_fn should return array with shape [Nt, Nh] (like eval.py forwards)
+    U_hat = forward_fn(*args)
+    Tm = min(ref_sol.shape[0], U_hat.shape[0])
+    U_ref = ref_sol[:Tm]
+    U_hat = U_hat[:Tm]
+    diffs = U_ref - U_hat
+    num = np.array([g_norm_batch(G, diffs[t]) for t in range(Tm)])
+    den = np.array([g_norm_batch(G, U_ref[t])  for t in range(Tm)])
+    abs_err = float(num.mean())
+    rel_err = float((num / (den + 1e-12)).mean())
+    return abs_err, rel_err
 
-'''
--------------------------
--------------------------
-Start of Performance Loop
--------------------------
--------------------------
-'''
+def time_one_forward(fn, *args, repeats=5):
+    times = []
+    for _ in range(repeats):
+        torch.cuda.synchronize() if torch.cuda.is_available() else None
+        t0 = time.perf_counter()
+        _ = fn(*args)
+        torch.cuda.synchronize() if torch.cuda.is_available() else None
+        t1 = time.perf_counter()
+        times.append((t1 - t0) * 1000.0)
+    return float(np.median(times))
 
-abs_error_lin_dod_dl = []
-rel_error_lin_dod_dl = []
-abs_error_pod_dl = []
-rel_error_pod_dl = []
-abs_error_colora_dl = []
-rel_error_colora_dl = []
-ambient_errors = []
-time_results = []
-for n in tqdm(n_set, desc="Reduced Dimension"):
+def build_trainers_and_models(P, device, train_valid_set):
+    # inner DOD used by DOD+DFNN and DOD-DL-ROM
+    innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs()).to(device)
+    inner_trainer = rom.innerDODTrainer(
+        nt=P.Nt, T=P.T, dod_model=innerDOD_model,
+        train_valid_set=train_valid_set,
+        epochs=P.generalepochs,              
+        restart=P.generalrestarts,
+        learning_rate=1e-3,
+        batch_size=128,
+        device=device,
+        patience=P.generalpatience,
+    )
 
-    #region Initialisation of all Models
-    # Initialize the DOD model
-    DOD_DL_model = dr.DOD_DL(preprocess_dim, parameter_mu_dim, dod_structure, n, N_A)
+    # DOD+DFNN (DFNN -> N')
+    dfnn_nprime = rom.DFNN(**P.make_dod_dfnn_DFNN_kwargs()).to(device)
+    dfnn_trainer = rom.DFNNTrainer(
+        nt=P.Nt, T=P.T, N_A=P.N_A, DOD_DL_model=innerDOD_model, coeffnn_model=dfnn_nprime,
+        train_valid_set=train_valid_set, epochs=P.generalepochs, restarts=P.generalrestarts,
+        learning_rate=1e-3, batch_size=128, device=device, patience=P.generalpatience
+    )
 
-    # Initialize the DOD trainer
-    DOD_DL_trainer = dr.DOD_DL_Trainer(DOD_DL_model, train_valid_data, N_A, 'ex01',
-                                    generalepochs,generalrestarts, learning_rate=1e-3, 
-                                    batch_size=128, patience=generalpatience)
+    # DOD-DL-ROM (DFNN -> n, AE: N'<->n)
+    coeff_n = rom.DFNN(**P.make_dod_dl_DFNN_kwargs()).to(device)
+    enc = rom.Encoder(**P.make_dod_dl_Encoder_kwargs()).to(device)
+    dec = rom.Decoder(**P.make_dod_dl_Decoder_kwargs()).to(device)
+    doddl_trainer = rom.DOD_DL_ROMTrainer(
+        nt=P.Nt, T=P.T, DOD_DL_model=innerDOD_model, Coeff_DOD_DL_model=coeff_n,
+        Encoder_model=enc, Decoder_model=dec, train_valid_set=train_valid_set,
+        error_weight=0.5, epochs=P.generalepochs, restarts=P.generalrestarts,
+        learning_rate=1e-3, batch_size=128, device=device, patience=P.generalpatience
+    )
 
-    # Train the DOD model
-    best_loss = DOD_DL_trainer.train()
+    # POD-DL-ROM (DFNN -> n, AE: N_A<->n)
+    pod_coeff = rom.DFNN(**P.make_pod_DFNN_kwargs()).to(device)
+    pod_enc = rom.Encoder(**P.make_pod_Encoder_kwargs()).to(device)
+    pod_dec = rom.Decoder(**P.make_pod_Decoder_kwargs()).to(device)
+    pod_trainer = rom.POD_DL_ROMTrainer(
+        nt=P.Nt, T=P.T, Coeff_model=pod_coeff, Encoder_model=pod_enc, Decoder_model=pod_dec,
+        train_valid_set=train_valid_set, error_weight=0.5, epochs=P.generalepochs,
+        restarts=P.generalrestarts, learning_rate=1e-3, batch_size=128, device=device,
+        patience=P.generalpatience
+    )
 
-    # Initialize the Coefficient Finding model
-    DOD_DL_coeff_model = dr.Coeff_DOD_DL(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
+    models = {
+        "DOD+DFNN": {"inner": innerDOD_model, "coeff": dfnn_nprime},
+        "DOD-DL-ROM": {"inner": innerDOD_model, "coeff": coeff_n, "enc": enc, "dec": dec},
+        "POD-DL-ROM": {"coeff": pod_coeff, "enc": pod_enc, "dec": pod_dec},
+    }
+    trainers = {
+        "innerDOD": inner_trainer,
+        "DOD+DFNN": dfnn_trainer,
+        "DOD-DL-ROM": doddl_trainer,
+        "POD-DL-ROM": pod_trainer,
+    }
+    return models, trainers
 
-    # Initialize the Coefficient Finding trainer
-    DOD_DL_coeff_trainer = dr.Coeff_DOD_DL_Trainer(N_A, DOD_DL_model, DOD_DL_coeff_model,
-                                    train_valid_data, 'ex01', 
-                                    generalepochs, generalrestarts, learning_rate=1e-3, 
-                                    batch_size=128, patience=generalpatience)
+def forward_wrappers(P, device, models):
+    A = np.load('examples/ex01/training_data/N_A_ambient_ex01.npz')['ambient'].astype(np.float32)
+    A_P = np.load('examples/ex01/training_data/N_ambient_ex01.npz')['ambient'].astype(np.float32)
+    A_t = torch.tensor(A, dtype=torch.float32, device=device)
+    A_P_t = torch.tensor(A_P, dtype=torch.float32, device=device)
 
-    # Train the Coefficient model
-    best_loss2 = DOD_DL_coeff_trainer.train()
+    def dod_dfnn(mu_i, nu_i):
+        return rom.dod_dfnn_forward(A_t, models["DOD+DFNN"]["inner"], models["DOD+DFNN"]["coeff"],
+                                    mu_i, nu_i, P.Nt, P.T)
 
-    # Initialize the POD DL ROM model
-    output = int(np.sqrt(N_A))
-    pod_num_layers = 0
-    while (output - int(np.sqrt(n)) > lin_dim_ae):
-        output = int(np.floor((output + 2*padding - kernel) / stride) + 1)
-        pod_num_layers += 1
-    En_model = dr.Encoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel, stride, padding)
-    De_model = dr.Decoder(N_A, pod_in_channels, pod_hidden_channels, n, pod_num_layers, kernel, stride, padding)
-    POD_DL_coeff_model = dr.Coeff_AE(parameter_mu_dim, parameter_nu_dim, n, coeff_ae_structure)
+    def dod_dl(mu_i, nu_i):
+        return rom.dod_dl_rom_forward(A_t, models["DOD-DL-ROM"]["inner"],
+                                      models["DOD-DL-ROM"]["coeff"], models["DOD-DL-ROM"]["dec"],
+                                      mu_i, nu_i, P.Nt, P.T)
 
-    # Initialize the AE Coefficient Finding trainer
-    POD_DL_coeff_trainer = dr.POD_DL_Trainer(POD_DL_coeff_model, En_model, De_model,
-                                        train_valid_data, 'ex01', 0.999,
-                                        generalepochs, generalrestarts, learning_rate=1e-3, 
-                                        batch_size=128, patience=generalpatience)
+    def pod_dl(mu_i, nu_i):
+        return rom.pod_dl_rom_forward(A_P_t, models["POD-DL-ROM"]["coeff"],
+                                      models["POD-DL-ROM"]["dec"], mu_i, nu_i, P.Nt, P.T)
 
-    # Train the AE Coefficient model
-    best_loss3 = POD_DL_coeff_trainer.train()
+    return {"DOD+DFNN": dod_dfnn, "DOD-DL-ROM": dod_dl, "POD-DL-ROM": pod_dl}
 
-    # Initialize and train the stationary DOD model
-    stat_DOD_model = dr.DOD(preprocess_dim, n, N_A, stat_dod_structure)
-    stat_DOD_Trainer = dr.DODTrainer(stat_DOD_model, N_A, 
-                                    stat_train_valid_data, 'ex01', 
-                                    generalepochs, generalrestarts, learning_rate=1e-3, 
-                                    batch_size=128, patience=generalpatience)
-    best_loss4 = stat_DOD_Trainer.train()
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--profiles', nargs='+', default=['baseline','wide','tiny','debug'])
+    parser.add_argument('--epochs', type=int, default=None)
+    parser.add_argument('--restarts', type=int, default=None)
+    parser.add_argument('--eval_samples', type=int, default=5)
+    parser.add_argument('--outdir', type=str, default='examples/ex01/benchmarks')
+    args = parser.parse_args()
 
-    # Initialize and train the stationary Coefficient Finding model
-    stat_Coeff_model = dr.CoeffDOD(parameter_mu_dim, parameter_nu_dim, m, n, phi_n_structure)
-    stat_Coeff_Trainer = dr.CoeffDODTrainer(stat_DOD_model, stat_Coeff_model, N_A,
-                                            stat_train_valid_data, 'ex01',
-                                            generalepochs, generalrestarts, learning_rate=1e-3, 
-                                            batch_size=128, patience=generalpatience)
-    best_loss5 = stat_Coeff_Trainer.train()
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
 
-    # Initialize the CoLoRA_DL model
-    CoLoRA_DL_model = dr.CoLoRA_DL(N_A, L, n, parameter_nu_dim)
+    # Data
+    tv_NA = rom.FetchTrainAndValidSet(0.8, 'ex01', 'N_A_reduced')
+    full = np.load('examples/ex01/training_data/full_order_training_data_ex01.npz')
+    mu_full, nu_full, sol_full = full['mu'], full['nu'], full['solution']
 
-    # Initialize the CoLoRA_DL trainer
-    CoLoRa_DL_Trainer = dr.CoLoRA_DL_Trainer(N_A, stat_DOD_model, stat_Coeff_model, 
-                                            CoLoRA_DL_model, train_valid_data, 'ex01',
-                                            generalepochs, generalrestarts, learning_rate=1e-3, 
-                                            batch_size=128, patience=generalpatience)
+    G = np.load('examples/ex01/training_data/gram_matrix_ex01.npz')['gram'].astype(np.float32)
 
-    # Train the CoLoRA_DL
-    best_loss6 = CoLoRa_DL_Trainer.train()
+    # metrics file
+    csv_path = outdir / 'rom_sweep.csv'
+    first_write = not csv_path.exists()
+    with open(csv_path, 'a', newline='') as fcsv:
+        writer = csv.DictWriter(fcsv, fieldnames=[
+            'profile','rom','epochs','restarts','val_loss','params_total','params_nonzero',
+            'forward_ms','abs_L2G','rel_L2G'
+        ])
+        if first_write: writer.writeheader()
 
-    #endregion
+        for profile in args.profiles:
+            P = Ex01Parameters(profile=profile)
+            P.assert_consistent()
+            if args.epochs is not None: P.generalepochs = args.epochs
+            if args.restarts is not None: P.generalrestarts = args.restarts
 
-    '''
-    ---------------------
-    Start of Evaluation on random set
-    ---------------------
-    '''
+            models, trainers = build_trainers_and_models(P, device, tv_NA)
+            fw = forward_wrappers(P, device, models)
 
-    # Set all to evalutate
-    DOD_DL_model.eval()
-    DOD_DL_coeff_model.eval()
-    De_model.eval()
-    POD_DL_coeff_model.eval()
-    stat_DOD_model.eval()
-    stat_Coeff_model.eval()
-    CoLoRA_DL_model.eval()
+            # Train per ROM
+            val_losses = {}
+            for rom_name, trainer in trainers.items():
+                val_losses[rom_name] = trainer.train()
+                if rom_name == "innerDOD":
+                    freeze(models["DOD+DFNN"]["inner"])
+                    freeze(models["DOD-DL-ROM"]["inner"])
 
-    # Set up timers for some solution
-    mu_0 = torch.tensor(performance_data[0]['mu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
-    mu_0 = mu_0.unsqueeze(0)
-    nu_0 = torch.tensor(performance_data[0]['nu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
-    nu_0 = nu_0.unsqueeze(0)
-    label = f'Forward Through DL-ROMs for Latent Dimension {n}'
-    for num_threads in [1, 2, 4, 8]:
-        sub_label = f'Threads: {num_threads}'
-        time_results.append(benchmark.Timer(
-            stmt='dr.dod_dl_forward(A, DOD_DL_model, DOD_DL_coeff_model, mu_0, nu_0, nt)',
-            setup='from master_project_1 import dod_dl_rom as dr',
-            globals={'A': A, 'DOD_DL_model': DOD_DL_model, 
-                     'DOD_DL_coeff_model': DOD_DL_coeff_model, 'mu_0': mu_0, 'nu_0' : nu_0, 'nt': nt},
-            num_threads=num_threads,
-            label=label,
-            sub_label=sub_label,
-            description='Linear DOD DL ROM',
-            ).blocked_autorange(min_run_time=0.5))
-        time_results.append(benchmark.Timer(
-            stmt='dr.pod_dl_forward(A, POD_DL_coeff_model, De_model, mu_0, nu_0, nt)',
-            setup='from master_project_1 import dod_dl_rom as dr',
-            globals={'A': A, 'POD_DL_coeff_model': POD_DL_coeff_model, 
-                     'De_model': De_model, 'mu_0': mu_0, 'nu_0' : nu_0, 'nt': nt},
-            num_threads=num_threads,
-            label=label,
-            sub_label=sub_label,
-            description='POD DL ROM',
-            ).blocked_autorange(min_run_time=0.5))
-        time_results.append(benchmark.Timer(
-            stmt='dr.colora_dl_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, mu_0, nu_0, nt)',
-            setup='from master_project_1 import dod_dl_rom as dr',
-            globals={'A': A, 'stat_DOD_model': stat_DOD_model, 'stat_Coeff_model': stat_Coeff_model, 
-                     'CoLoRA_DL_model': CoLoRA_DL_model, 'mu_0': mu_0, 'nu_0' : nu_0, 'nt': nt},
-            num_threads=num_threads,
-            label=label,
-            sub_label=sub_label,
-            description='CoLoRA DL ROM',
-            ).blocked_autorange(min_run_time=0.5))
 
-    #region Get Solutions of all Models for Data Batch
-    tqdm.write("Collecting Error...")
-    coeff_dl_solutions = []
-    pod_dl_solutions = []
-    colora_dl_solutions = []
-    norm_solutions = []
-    proj_solutions = []
-    solutions = []
-    for entry in tqdm(performance_data, desc="Performance detection", leave=False):
-        mu_i = torch.tensor(entry['mu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
-        mu_i = mu_i.unsqueeze(0)
-        nu_i = torch.tensor(entry['nu'], dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
-        nu_i = nu_i.unsqueeze(0)
+            # Pick random eval items
+            Ns_1 = mu_full.shape[0]
+            idxs = np.random.choice(np.arange(Ns_1), size=min(args.eval_samples, Ns_1), replace=False)
 
-        # True solution
-        u_i = entry['solution']
-        norm_u_i = l2_norm(u_i)
-        proj_u_i = u_i @ G @ A_np @ A_np.T
+            for rom_name in ["DOD+DFNN","DOD-DL-ROM","POD-DL-ROM"]:
+                # Count params
+                if rom_name == "DOD+DFNN":
+                    modules = [models[rom_name]["inner"], models[rom_name]["coeff"]]
+                elif rom_name == "DOD-DL-ROM":
+                    modules = [models[rom_name]["inner"], models[rom_name]["coeff"], models[rom_name]["enc"], models[rom_name]["dec"]]
+                else:
+                    modules = [models[rom_name]["coeff"], models[rom_name]["enc"], models[rom_name]["dec"]]
+                total = nonzero = 0
+                for m in modules:
+                    t, nz = count_params(m, include_frozen=True)
+                    total += t; nonzero += nz
 
-        # Append Coeff_DL + POD_DL + CoLoRA_DL solution
-        pod_dl_solutions.append(
-            dr.pod_dl_forward(A, POD_DL_coeff_model, De_model, mu_i, nu_i, nt))
-        colora_dl_solutions.append(
-            dr.colora_dl_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, mu_i, nu_i, nt))
-        coeff_dl_solutions.append(
-            dr.dod_dl_forward(A, DOD_DL_model, DOD_DL_coeff_model, mu_i, nu_i, nt))
-    
-        # Append further relevant quantities
-        norm_solutions.append(norm_u_i)
-        proj_solutions.append(proj_u_i)
-        solutions.append(u_i)
-    
-    # Append Error for Full sized Batch
-    abs_diff_lin_dod_dl = [x - y for x, y in zip(solutions, coeff_dl_solutions)]
-    abs_error_lin_dod_dl.append(error_loader(abs_diff_lin_dod_dl))
-    rel_error_lin_dod_dl.append(error_loader([x / y for x, y in zip(abs_diff_lin_dod_dl, norm_solutions)]))
+                # Errors and forward time: use first selected sample for timing
+                i0 = int(idxs[0])
+                mu_i = torch.tensor([[float(mu_full[i0])]], dtype=torch.float32, device=device)
+                nu_i = torch.tensor([[float(nu_full[i0])]], dtype=torch.float32, device=device)
 
-    abs_diff_pod_dl = [x - y for x, y in zip(solutions, pod_dl_solutions)]
-    abs_error_pod_dl.append(error_loader(abs_diff_pod_dl))
-    rel_error_pod_dl.append(error_loader([x / y for x, y in zip(abs_diff_pod_dl, norm_solutions)]))
-    
+                # forward timing
+                fwd_ms = time_one_forward(fw[rom_name], mu_i, nu_i, repeats=5)
 
-    abs_diff_colora_dl = [x - y for x, y in zip(solutions, colora_dl_solutions)]
-    abs_error_colora_dl.append(error_loader(abs_diff_colora_dl))
-    rel_error_colora_dl.append(error_loader([x / y for x, y in zip(abs_diff_colora_dl, norm_solutions)]))
-    
-    ambient_diff = [x - y for x, y in zip(solutions, proj_solutions)]
-    ambient_errors.append(error_loader([x / y for x, y in zip(ambient_diff, norm_solutions)]))
-    '''=============potentially useless==============
-    # Append Error for Ambient Batch
-    proj_diff_lin_dod_dl = [x - y for x, y in zip(proj_solutions, coeff_dl_solutions)]
-    ambient_abs_error_lin_dod_dl.append(error_loader(proj_diff_lin_dod_dl))
-    ambient_rel_error_lin_dod_dl.append(error_loader([x / y for x, y in zip(proj_diff_lin_dod_dl, norm_solutions)]))
-   
-    prof_diff_colora_dl = [x - y for x, y in zip(proj_solutions, colora_dl_solutions)]
-    ambient_abs_error_colora_dl.append(error_loader(prof_diff_colora_dl))
-    ambient_rel_error_colora_dl.append(error_loader([x / y for x, y in zip(prof_diff_colora_dl, norm_solutions)]))
-    '''
+                # errors (averaged across chosen samples)
+                abs_list, rel_list = [], []
+                for i in idxs:
+                    mu_j = torch.tensor([[float(mu_full[int(i)])]], dtype=torch.float32, device=device)
+                    nu_j = torch.tensor([[float(nu_full[int(i)])]], dtype=torch.float32, device=device)
+                    ref = sol_full[int(i)]  # [Nt, Nh]
+                    abs_e, rel_e = evaluate_rom_forward(
+                        rom_name, fw[rom_name], (mu_j, nu_j), ref, G
+                    )
+                    abs_list.append(abs_e); rel_list.append(rel_e)
 
-#endregion
+                row = {
+                    'profile': profile,
+                    'rom': rom_name,
+                    'epochs': P.generalepochs,
+                    'restarts': P.generalrestarts,
+                    'val_loss': float(val_losses[rom_name]),
+                    'params_total': int(total),
+                    'params_nonzero': int(nonzero),
+                    'forward_ms': float(fwd_ms),
+                    'abs_L2G': float(np.mean(abs_list)),
+                    'rel_L2G': float(np.mean(rel_list)),
+                }
+                writer.writerow(row)
+                print(json.dumps(row))
 
-'''
-----------------
-----------------
-Plot Errors
-----------------
-----------------
-'''
-x = np.linspace(n_set[0], n_set[-1], len(n_set), dtype=int)
-
-# Define color and style map for consistency
-plot_styles = {
-    'POD DL':     {'color': 'blue',  'linestyle': '--'},
-    'Linear DOD DL': {'color': 'green', 'linestyle': '-'},
-    'CoLoRA DL':     {'color': 'red',   'linestyle': ':'},
-    'Ambient Error': {'color': 'grey',  'linestyle': '-.'}
-}
-
-# Start 1x2 subplot grid (since we removed 2 plots)
-fig, axs = plt.subplots(1, 2, figsize=(12, 5))
-axs = axs.flatten()  # for easy indexing
-
-# --- Plot 1: Absolute L2 Errors ---
-axs[0].plot(x, abs_error_pod_dl, label='POD DL', **plot_styles['POD DL'])
-axs[0].plot(x, abs_error_lin_dod_dl, label='Linear DOD DL', **plot_styles['Linear DOD DL'])
-axs[0].plot(x, abs_error_colora_dl, label='CoLoRA DL', **plot_styles['CoLoRA DL'])
-axs[0].set_title('Absolute $L^2$-Errors')
-axs[0].set_xlabel('Reduced Dimension $n$')
-axs[0].set_ylabel('Absolute Error')
-axs[0].grid(True)
-axs[0].legend()
-
-# --- Plot 2: Relative L2 Errors ---
-axs[1].plot(x, rel_error_pod_dl, label='POD DL', **plot_styles['POD DL'])
-axs[1].plot(x, rel_error_lin_dod_dl, label='Linear DOD DL', **plot_styles['Linear DOD DL'])
-axs[1].plot(x, rel_error_colora_dl, label='CoLoRA DL', **plot_styles['CoLoRA DL'])
-axs[1].plot(x, ambient_errors, label='Ambient Error', **plot_styles['Ambient Error'])
-axs[1].set_title('Relative $L^2$-Errors')
-axs[1].set_xlabel('Reduced Dimension $n$')
-axs[1].set_ylabel('Relative Error')
-axs[1].grid(True)
-axs[1].legend()
-
-plt.tight_layout()
-
-plt.savefig('/home/sereom/Documents/University/Studies/Mathe/Wissenschaftliche Arbeiten/Master/Masterarbeit Ohlberger/Programming/master-project-1/examples/ex01/benchmarks/performance.png', dpi=300, bbox_inches='tight')
-
-plt.show()
-
-'''
---------------------
-Cast Timing Results to File
---------------------
-'''
-with open("/home/sereom/Documents/University/Studies/Mathe/Wissenschaftliche Arbeiten/Master/Masterarbeit Ohlberger/Programming/master-project-1/examples/ex01/benchmarks/benchmark_timed.pkl", "wb") as f:
-    pickle.dump(time_results, f)
-time_compare = benchmark.Compare(time_results)
-time_compare.colorize()
-time_compare.print()
-
+if __name__ == "__main__":
+    main()
