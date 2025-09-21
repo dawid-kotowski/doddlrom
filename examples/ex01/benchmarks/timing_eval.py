@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 
 # Load the benchmark results
-with open("/home/sereom/Documents/University/Studies/Mathe/Wissenschaftliche Arbeiten/Master/Masterarbeit Ohlberger/Programming/master-project-1/examples/ex01/benchmarks/benchmark_timed.pkl", "rb") as f:
+with open("examples/ex01/benchmarks/benchmark_timed.pkl", "rb") as f:
     time_results = pickle.load(f)
 
 # Organize data: dict[(model, latent_dim)][num_threads] = time

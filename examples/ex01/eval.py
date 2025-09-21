@@ -1,76 +1,30 @@
 from pymor.basic import *
-from master_project_1 import reduced_order_models as dr
+from master_project_1 import reduced_order_models as rom
+from master_project_1.configs.ex01_parameters import Ex01Parameters  
 import numpy as np
 import torch
 
-# Usage example
-N_h = 5101
-N_A = 64
-N = 64
-N_prime = 16
-n = 4
-Nt = 10
-diameter = 0.02
-parameter_mu_dim = 1
-parameter_nu_dim = 1
-# DOD+DFNN
-preprocess_dim = 2
-dod_structure = [32, 16]
-df_layers = [16, 8]
-# DOD-DL-ROM
-dod_dl_df_layers = [32, 16, 8]
-dod_in_channels = 1
-dod_hidden_channels = 1
-dod_lin_dim_ae = 0
-dod_kernel = 3
-dod_stride = 2
-dod_padding = 1
-# POD-DL-ROM
-pod_df_layers = [32, 16, 8]
-pod_in_channels = 1
-pod_hidden_channels = 1
-pod_lin_dim_ae = 0
-pod_kernel = 3
-pod_stride = 2
-pod_padding = 1
-# CoLoRA-ROM
-L = 3
-stat_m = 4
-stat_dod_structure = [128, 64]
-stat_phi_n_structure = [16, 8]
+#region --- Configure this run ------------------------------------------------------
+P = Ex01Parameters(profile="baseline")          # or "wide"/"tiny"/"debug"
+P.assert_consistent()
 
-# Training Example
-generalepochs = 500
-generalrestarts = 10
-generalpatience = 3
+# --- Build models ------------------------------------------------------------------
 
-#region Loading of all Models
-# Initialize the models
-innerDOD_model = dr.innerDOD(preprocess_dim, parameter_mu_dim, dod_structure, N_prime, N_A)
-DFNN_Nprime_model = dr.DFNN(parameter_mu_dim, parameter_nu_dim, N_prime, df_layers)
+innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs())
 
-output = int(np.sqrt(N_A))
-pod_num_layers = 0
-while (output - int(np.sqrt(n)) > pod_lin_dim_ae):
-    output = int(np.floor((output + 2*pod_padding - pod_kernel) / pod_stride) + 1)
-    pod_num_layers += 1
-Decoder_model = dr.Decoder(N, pod_in_channels, pod_hidden_channels, 
-                           n, pod_num_layers, pod_kernel, pod_stride, pod_padding)
-DFNN_POD_n_model = dr.DFNN(parameter_mu_dim, parameter_nu_dim, n, pod_df_layers)
+DFNN_Nprime_model = rom.DFNN(**P.make_dod_dfnn_DFNN_kwargs())
 
-output = int(np.sqrt(N_prime))
-dod_num_layers = 0
-while (output - int(np.sqrt(n)) > dod_lin_dim_ae):
-    output = int(np.floor((output + 2*dod_padding - dod_kernel) / dod_stride) + 1)
-    dod_num_layers += 1
-DOD_Decoder_model = dr.Decoder(N_prime, dod_in_channels, dod_hidden_channels, n, 
-                      dod_num_layers, pod_kernel, dod_stride, dod_padding)
-DFNN_DOD_n_model = dr.DFNN(parameter_mu_dim, parameter_nu_dim, n, dod_dl_df_layers)
+POD_coeff_model = rom.DFNN(**P.make_pod_DFNN_kwargs())
+POD_Encoder_model = rom.Encoder(**P.make_pod_Encoder_kwargs())
+POD_Decoder_model = rom.Decoder(**P.make_pod_Decoder_kwargs())
 
-stat_DOD_model = dr.statDOD(parameter_mu_dim, preprocess_dim, N_prime, N_A, stat_dod_structure)
-stat_Coeff_model = dr.statHadamardNN(parameter_mu_dim, parameter_nu_dim, stat_m, 
-                               N_prime, stat_phi_n_structure)
-CoLoRA_model = dr.CoLoRA(N_A, L, N_prime, parameter_nu_dim)
+DOD_DL_coeff_model = rom.DFNN(**P.make_dod_dl_DFNN_kwargs())
+DOD_DL_Encoder_model = rom.Encoder(**P.make_dod_dl_Encoder_kwargs())
+DOD_DL_Decoder_model = rom.Decoder(**P.make_dod_dl_Decoder_kwargs())
+
+stat_DOD_model = rom.statDOD(**P.make_statDOD_kwargs())
+stat_Coeff_model = rom.statHadamardNN(**P.make_statHadamard_kwargs())
+CoLoRA_model = rom.CoLoRA(**P.make_CoLoRA_kwargs())
 
 # Load state_dicts
 innerDOD_model.load_state_dict(torch.load('examples/ex01/state_dicts/DOD_Module.pth'))
@@ -80,16 +34,16 @@ DFNN_Nprime_model.load_state_dict(torch.load('examples/ex01/state_dicts/DODFNN_M
 DFNN_Nprime_model.eval()
 
 checkpoint = torch.load('examples/ex01/state_dicts/DOD_DL_ROM_Module.pth')
-DOD_Decoder_model.load_state_dict(checkpoint['decoder'])
-DFNN_DOD_n_model.load_state_dict(checkpoint['coeff_model'])
-DOD_Decoder_model.eval()
-DFNN_DOD_n_model.eval()
+DOD_DL_Decoder_model.load_state_dict(checkpoint['decoder'])
+DOD_DL_coeff_model.load_state_dict(checkpoint['coeff_model'])
+DOD_DL_Decoder_model.eval()
+DOD_DL_coeff_model.eval()
 
 checkpoint = torch.load('examples/ex01/state_dicts/POD_DL_ROM_Module.pth')
-Decoder_model.load_state_dict(checkpoint['decoder'])
-DFNN_POD_n_model.load_state_dict(checkpoint['coeff_model'])
-Decoder_model.eval()
-DFNN_POD_n_model.eval()
+POD_Decoder_model.load_state_dict(checkpoint['decoder'])
+POD_coeff_model.load_state_dict(checkpoint['coeff_model'])
+POD_Decoder_model.eval()
+POD_coeff_model.eval()
 
 stat_DOD_model.load_state_dict(torch.load('examples/ex01/state_dicts/stat_DOD_Module.pth'))
 stat_Coeff_model.load_state_dict(torch.load('examples/ex01/state_dicts/stat_CoeffDOD_Module.pth'))
@@ -100,11 +54,11 @@ CoLoRA_model.eval()
 
 #endregion
 
-#region Set up of FOM for pymor utility
+#region --- Set up of FOM for pymor utility------------------------------------------
 data = np.load('examples/ex01/training_data/full_order_training_data_ex01.npz')
 mu = data['mu']          # shape [Ns]
 nu = data['nu']          # shape [Ns]
-solution = data['solution']  # shape [Ns, Nt, Nh]
+solution = data['solution']  # shape [Ns, P.Nt, Nh]
 Ns = mu.shape[0]
 idx = np.arange(Ns)
 np.random.shuffle(idx)
@@ -136,11 +90,11 @@ problem = InstationaryProblem(
     stationary_part=stationary_problem,
     name='advection_problem'
 )
-fom, fom_data = discretize_instationary_cg(problem, diameter=diameter, nt=Nt)
+fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt)
 
 #endregion
 
-# Set up solutions
+# --- Set up solutions --------------------------------------------------------------
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 true_solution = fom.solution_space.empty()
@@ -167,29 +121,29 @@ for entry in training_data:
     true_solution.append(u_i)
 
     # --- POD-DL-ROM ---
-    pod_dl_sol = dr.pod_dl_rom_forward(A_P, DFNN_POD_n_model, 
-                                       Decoder_model, mu_i, nu_i, Nt)  # -> [Nt+1, Nh]
+    pod_dl_sol = rom.pod_dl_rom_forward(A_P, POD_coeff_model, 
+                                       POD_Decoder_model, mu_i, nu_i, P.Nt, P.T)  # -> [P.Nt+1, Nh]
     Tmin = min(sol.shape[0], pod_dl_sol.shape[0])
     pod_dl_residual = fom.solution_space.from_numpy(np.abs(sol[:Tmin] - pod_dl_sol[:Tmin]))
     pod_dl_sol_vec = fom.solution_space.from_numpy(pod_dl_sol)
 
     # --- DOD-DL-ROM ---
-    dod_dl_sol = dr.dod_dl_rom_forward(A, innerDOD_model, DFNN_DOD_n_model, 
-                                       DOD_Decoder_model, mu_i, nu_i, Nt)  # -> [Nt+1, Nh]
+    dod_dl_sol = rom.dod_dl_rom_forward(A, innerDOD_model, DOD_DL_coeff_model, 
+                                       DOD_DL_Decoder_model, mu_i, nu_i, P.Nt, P.T)  # -> [P.Nt+1, Nh]
     Tmin = min(sol.shape[0], dod_dl_sol.shape[0])
     dod_dl_residual = fom.solution_space.from_numpy(np.abs(sol[:Tmin] - dod_dl_sol[:Tmin]))
     dod_dl_sol_vec = fom.solution_space.from_numpy(dod_dl_sol)
 
     # --- CoLoRA ---
-    u_i_colora = dr.colora_forward(A, stat_DOD_model, stat_Coeff_model, 
-                                   CoLoRA_model, mu_i, nu_i, Nt)  # -> [Nt+1, Nh]
+    u_i_colora = rom.colora_forward(A, stat_DOD_model, stat_Coeff_model, 
+                                   CoLoRA_model, mu_i, nu_i, P.Nt, P.T)  # -> [P.Nt+1, Nh]
     Tmin = min(sol.shape[0], u_i_colora.shape[0])
     colora_dl_residual = fom.solution_space.from_numpy(np.abs(sol[:Tmin] - u_i_colora[:Tmin]))
     u_i_colora_vec = fom.solution_space.from_numpy(u_i_colora)
 
     # --- DOD+DFNN ---
-    coeff_dl_sol = dr.dod_dfnn_forward(A, innerDOD_model, DFNN_Nprime_model, 
-                                         mu_i, nu_i, Nt)  # -> [Nt+1, Nh]
+    coeff_dl_sol = rom.dod_dfnn_forward(A, innerDOD_model, DFNN_Nprime_model, 
+                                         mu_i, nu_i, P.Nt, P.T)  # -> [P.Nt+1, Nh]
     Tmin = min(sol.shape[0], coeff_dl_sol.shape[0])
     dod_dl_residual = fom.solution_space.from_numpy(np.abs(sol[:Tmin] - coeff_dl_sol[:Tmin]))
     coeff_dl_sol_vec = fom.solution_space.from_numpy(coeff_dl_sol)

@@ -8,10 +8,6 @@ import copy
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 
-# Some Constants
-time_end = 1
-nt = 10
-
 # Initialize weights
 def initialize_weights(m):
     if isinstance(m, nn.Conv2d):
@@ -153,8 +149,10 @@ class innerDOD(nn.Module):
 
 # Define DOD_DL_-DL training
 class innerDODTrainer:
-    def __init__(self, dod_model, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
+    def __init__(self, nt, T, dod_model, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience = 3):
+        self.nt = nt
+        self.T = T
         self.learning_rate = learning_rate
         self.restarts = restart
         self.epochs = epochs
@@ -193,8 +191,8 @@ class innerDODTrainer:
         temp_proj = 0.0
         temp_orth = 0.0
 
-        for i in range(nt + 1):
-            t_batch = torch.full((B, 1), i * time_end / (nt + 1),
+        for i in range(self.nt + 1):
+            t_batch = torch.full((B, 1), i * self.T / (self.nt + 1),
                             dtype=torch.float32, device=self.device) # [B, 1]
 
             V = self.model(mu_batch, t_batch)                        # [B, N_A, N']
@@ -210,8 +208,8 @@ class innerDODTrainer:
                 pen = self.orth_penalty(V)
                 temp_orth = temp_orth + pen
             
-        data_loss = temp_proj / (B * (nt + 1))
-        orth_loss = (temp_orth / (nt + 1))
+        data_loss = temp_proj / (B * (self.nt + 1))
+        orth_loss = (temp_orth / (self.nt + 1))
         loss = data_loss + lambda_orth * orth_loss
         return loss
 
@@ -366,8 +364,10 @@ class DFNN(nn.Module):
 
 # Define the Trainer for both HadamardNN and DFNN
 class DFNNTrainer:
-    def __init__(self, N_A, DOD_DL_model, coeffnn_model, train_valid_set, epochs, restarts, learning_rate,
+    def __init__(self, nt, T, N_A, DOD_DL_model, coeffnn_model, train_valid_set, epochs, restarts, learning_rate,
                  batch_size, device='cuda' if torch.cuda.is_available() else 'cpu', patience = 3):
+        self.nt = nt
+        self.T = T
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.restarts = restarts
@@ -394,8 +394,8 @@ class DFNNTrainer:
         B = mu_batch.size(0)
         temp_error = 0.0
 
-        for i in range(nt + 1):
-            t_batch = torch.full((B, 1), i * time_end / (nt + 1),
+        for i in range(self.nt + 1):
+            t_batch = torch.full((B, 1), i * self.T / (self.nt + 1),
                                 dtype=torch.float32, device=self.device)                   # [B,1]
 
             coeff_pred = self.model(mu_batch, nu_batch, t_batch)                             # [B, N']
@@ -407,7 +407,7 @@ class DFNNTrainer:
             error = coeff_pred - alpha_true                                                  # [B, N']
             temp_error = temp_error + torch.sum(torch.norm(error, dim=1) ** 2)               
 
-        loss = temp_error / (B * (nt + 1))
+        loss = temp_error / (B * (self.nt + 1))
         return loss
 
 
@@ -590,8 +590,10 @@ class Decoder(nn.Module):
     
 # Define the Trainer for the DOD-DL-ROM Coefficients
 class DOD_DL_ROMTrainer:
-    def __init__(self, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, error_weight=0.5,
+    def __init__(self, nt, T, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, error_weight=0.5,
                  epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
+        self.nt = nt
+        self.T = T
         self.learning_rate = learning_rate
         self.error_weight = error_weight
         self.epochs = epochs
@@ -612,21 +614,20 @@ class DOD_DL_ROMTrainer:
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         """
-        Dimensionality:
+        Dimensionality (this variant):
         V = innerDOD(mu,t):                 [B, N_A, N']   # Euclidean-orthonormal columns
         coeff_pred = Coeff_DOD_DL(...):     [B, n]         # DFNN output
-        decoder(coeff_pred):                [B, N']        # expands n -> N'
-        V @ decoder_out:                    [B, N_A]       # ambient recon from predicted coeffs
-        encoder(ambient_vec):               [B, n]         # compress ambient -> n
+        decoder(coeff_pred):                [B, N']        # expands n -> N'  (beta_pred)
+        V @ beta_pred:                      [B, N_A]       # ambient recon from predicted coeffs (u_pred)
+        encoder(alpha_vec in DOD-space):    [B, n]         # compress N' -> n
         solution_batch[:, i, :]:            [B, N_A]       # ambient POD solution at time i
         alpha_true = V^T u:                 [B, N']        # true N' coeffs from data
-        u_true = V alpha_true:              [B, N_A]       # ambient recon from true coeffs
         """
         B = mu_batch.size(0)
         temp_error = 0.0
 
-        for i in range(nt + 1):
-            t_batch = torch.full((B, 1), i * time_end / (nt + 1),
+        for i in range(self.nt + 1):
+            t_batch = torch.full((B, 1), i * self.T / (self.nt + 1),
                                 dtype=torch.float32, device=self.device)                # [B,1]
 
             coeff_pred = self.coeff_model(mu_batch, nu_batch, t_batch)                  # [B, n]
@@ -649,7 +650,7 @@ class DOD_DL_ROMTrainer:
                 (1.0 - self.error_weight) * 0.5 * torch.sum(torch.norm(proj_error,  dim=1) ** 2)
             )
 
-        loss = temp_error / (B * (nt + 1))
+        loss = temp_error / (B * (self.nt + 1))
         return loss
 
 
@@ -741,8 +742,10 @@ u(mu, nu, t) = A Decoder(Coeff(mu, nu, t))
 '''
 # Define the Trainer for the standard POD DL
 class POD_DL_ROMTrainer:
-    def __init__(self, Coeff_model, Encoder_model, Decoder_model, train_valid_set, error_weight,
+    def __init__(self, nt, T, Coeff_model, Encoder_model, Decoder_model, train_valid_set, error_weight,
                  epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
+        self.nt = nt
+        self.T = T
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.error_weight = error_weight
@@ -763,27 +766,22 @@ class POD_DL_ROMTrainer:
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
         temp_error = 0.0
-        for i in range(nt + 1):
+        for i in range(self.nt + 1):
             t_batch = torch.stack(
-                [torch.tensor(i * time_end / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+                [torch.tensor(i * self.T / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
             ).unsqueeze(1)
-            # Get the coefficient model output; expected shape: (B, n)
-            coeff_output = self.coeff_model(mu_batch, nu_batch, t_batch)
-            # Get the non linear expansion output; expected shape: (B, N_A)
-            decoder_output = self.de_model(coeff_output)
+            coeff_output = self.coeff_model(mu_batch, nu_batch, t_batch)           # [B, n]
+            decoder_output = self.de_model(coeff_output)                           # [B, N_A]
 
-            # Extract the solution slice at time step i; expected shape: (B, N_A)
-            solution_slice = solution_batch[:, i, :]
+            solution_slice = solution_batch[:, i, :]                               # [B, N_A]
+            encoder_output = self.en_model(solution_slice)                         # [B, N]
 
-            # Encoder output; expected shape: (B, N)
-            encoder_output = self.en_model(solution_slice)
-
-            dynam_error = solution_slice - decoder_output  # (B, N_A)
-            proj_error = encoder_output - coeff_output # (B, n)
+            dynam_error = solution_slice - decoder_output                          # [B, N_A]
+            proj_error = encoder_output - coeff_output                             # [B, n]
             temp_error += (self.error_weight / 2 * torch.sum(torch.norm(dynam_error, dim=1) ** 2) 
                            + (1-self.error_weight) / 2 * torch.sum(torch.norm(proj_error, dim=1) ** 2))
 
-        loss = temp_error / batch_size
+        loss = temp_error / (batch_size * (self.nt + 1))
         return loss
 
     def train(self):
@@ -1221,8 +1219,10 @@ class CoLoRA(nn.Module):
 
 # Define CoLoRA trainer
 class CoLoRATrainer():
-    def __init__(self, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, epochs, restarts, learning_rate,
+    def __init__(self, nt, T, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, epochs, restarts, learning_rate,
                  batch_size, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
+        self.nt = nt
+        self.T = T
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.restarts = restarts
@@ -1242,24 +1242,22 @@ class CoLoRATrainer():
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
         temp_error = 0.0
-        for i in range(nt + 1):
+        for i in range(self.nt + 1):
             t_batch = torch.stack(
-                [torch.tensor(i * time_end / (nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+                [torch.tensor(i * self.T / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
             ).unsqueeze(1)
-            # Get the stationary coefficient model output; expected shape: (B, n, 1)
             coeff_0_output = self.model_0(mu_batch, nu_batch).unsqueeze(2)
-            # Get the stationary DOD model output; expected shape: (B, n, N_A)
-            DOD_0_output = self.DOD_0(mu_batch)
-            # Get the CoLoRA prediction output
-            output = self.model(torch.bmm(DOD_0_output.transpose(1, 2), coeff_0_output), nu_batch, t_batch)
+            DOD_0_output = self.DOD_0(mu_batch)                         
 
-            # Extract the solution slice at time step i; expected shape: (B, N_A)
-            u_proj = solution_batch[:, i, :]
+            output = self.model(torch.bmm(
+                DOD_0_output.transpose(1, 2), coeff_0_output), nu_batch, t_batch)     # [B, N', N_A]
 
-            error = output - u_proj  # (B, N_A)
+            u_proj = solution_batch[:, i, :]                                            
+
+            error = output - u_proj                                                   # [B, N_A]
             temp_error += torch.sum(torch.norm(error, dim=1) ** 2)
 
-        loss = temp_error / batch_size
+        loss = temp_error / (batch_size * (self.nt + 1))
         return loss
     
     def train(self):
@@ -1352,10 +1350,10 @@ Define simple forward pass assuming existence of networks
 -------------------
 '''
 
-def dod_dfnn_forward(A, innerDOD_model, Coeff_model, mu_i, nu_i, nt_):
+def dod_dfnn_forward(A, innerDOD_model, Coeff_model, mu_i, nu_i, nt_, T):
     dod_dl_solution = []
     for j in range(nt_ + 1):
-        time = torch.tensor(j * time_end / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+        time = torch.tensor(j * T / (nt_ + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
         time = time.unsqueeze(0).unsqueeze(1)
         tilde_V = innerDOD_model(mu_i, time)
         coeff = Coeff_model(mu_i, nu_i, time).squeeze(0)
@@ -1367,10 +1365,10 @@ def dod_dfnn_forward(A, innerDOD_model, Coeff_model, mu_i, nu_i, nt_):
     u_i_dod_dl = u_i_dod_dl.detach().numpy()
     return u_i_dod_dl
 
-def pod_dl_rom_forward(A_P, POD_DL_model, De_model, mu_i, nu_i, nt_):
+def pod_dl_rom_forward(A_P, POD_DL_model, De_model, mu_i, nu_i, nt_, T):
     pod_dl_solution = []
     for j in range(nt_ + 1):
-        time = torch.tensor(j * time_end / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+        time = torch.tensor(j * T / (nt_ + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
         time = time.unsqueeze(0).unsqueeze(1)
         coeff_n_output = POD_DL_model(mu_i, nu_i, time).unsqueeze(0)
         decoded_output = De_model(coeff_n_output).squeeze(0)
@@ -1381,10 +1379,10 @@ def pod_dl_rom_forward(A_P, POD_DL_model, De_model, mu_i, nu_i, nt_):
     u_i_pod_dl = u_i_pod_dl.detach().numpy()
     return u_i_pod_dl
 
-def dod_dl_rom_forward(A, innerDOD_model, DOD_DL_model, De_model, mu_i, nu_i, nt_):
+def dod_dl_rom_forward(A, innerDOD_model, DOD_DL_model, De_model, mu_i, nu_i, nt_, T):
     dod_dl_rom_solution = []
     for j in range(nt_ + 1):
-        time = torch.tensor(j * time_end / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+        time = torch.tensor(j * T / (nt_ + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
         time = time.unsqueeze(0).unsqueeze(1)
         tilde_V = innerDOD_model(mu_i, time)
         V = torch.matmul(A, tilde_V)
@@ -1397,10 +1395,10 @@ def dod_dl_rom_forward(A, innerDOD_model, DOD_DL_model, De_model, mu_i, nu_i, nt
     u_i_dod_dl_rom = u_i_dod_dl_rom.detach().numpy()
     return u_i_dod_dl_rom
 
-def colora_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, mu_i, nu_i, nt_):
+def colora_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, mu_i, nu_i, nt_, T):
     colora_dl_solution = []
     for j in range(nt_ + 1):
-        time = torch.tensor(j * time_end / (nt + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
+        time = torch.tensor(j * T / (nt_ + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
         time = time.unsqueeze(0).unsqueeze(1)
         stat_coeff_n_output = stat_Coeff_model(mu_i, nu_i).unsqueeze(0).unsqueeze(2)
         stat_dod_output = stat_DOD_model(mu_i)
