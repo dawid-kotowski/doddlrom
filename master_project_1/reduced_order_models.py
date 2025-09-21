@@ -85,11 +85,7 @@ class DatasetLoader(Dataset):
 In the following a innerDOD is introduced, which dynamically approximates a reduced basis
 w.r.t the geometric parameter mu
 
-<<<<<<< HEAD
-V: (Theta \times Gamma) -> (R^(N_h \times N'))
-=======
 V: (Theta \times [0, T]) -> (R^(N_h \times N'))
->>>>>>> rework-v1-clean
 ------------------------------------
 '''
 
@@ -124,15 +120,9 @@ class RootModule(nn.Module):
 
 # Define Complete DOD_DL_ DL Model 
 # returns a tensor of size [N_A, N']
-<<<<<<< HEAD
-class DOD_DL(nn.Module):
-    def __init__(self, seed_dim, geometric_dim, root_layer_sizes, N_prime, N_A):
-        super(DOD_DL, self).__init__()
-=======
 class innerDOD(nn.Module):
     def __init__(self, seed_dim, geometric_dim, root_layer_sizes, N_prime, N_A):
         super(innerDOD, self).__init__()
->>>>>>> rework-v1-clean
         self.seed_module = SeedModule(geometric_dim, seed_dim)
         self.root_modules = nn.ModuleList(
             [RootModule(seed_dim, N_A, root_layer_sizes) for _ in range(N_prime)])
@@ -158,14 +148,8 @@ class innerDOD(nn.Module):
             return V if B > 1 else V.squeeze(0)
 
 # Define DOD_DL_-DL training
-<<<<<<< HEAD
-
-class DOD_DL_Trainer:
-    def __init__(self, dod_model, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
-=======
 class innerDODTrainer:
     def __init__(self, nt, T, dod_model, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
->>>>>>> rework-v1-clean
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience = 3):
         self.nt = nt
         self.T = T
@@ -184,8 +168,6 @@ class innerDODTrainer:
                                        batch_size=self.batch_size, shuffle=True)
         self.valid_loader = DataLoader(DatasetLoader(valid_data), 
                                        batch_size=self.batch_size, shuffle=False)
-<<<<<<< HEAD
-=======
         
     def orth_penalty(self, V):
         """
@@ -196,7 +178,6 @@ class innerDODTrainer:
         S = torch.bmm(V.transpose(1, 2), V)                    # [B, N', N']
         I = torch.eye(Np, device=V.device, dtype=V.dtype).expand_as(S)
         return ((S - I).pow(2).sum(dim=(-2, -1)) / Np).mean()  
->>>>>>> rework-v1-clean
 
     def loss_function(self, mu_batch, solution_batch, lambda_orth=1e-2):
         """
@@ -207,17 +188,8 @@ class innerDODTrainer:
         B = mu_batch.size(0)
         assert solution_batch.dim() == 3, "solution_batch must be [B, nt+1, N_A]"
 
-<<<<<<< HEAD
-        for i in range(nt + 1):
-            t_batch = torch.stack(
-                [torch.tensor(i * time_end/(nt + 1), 
-                              dtype=torch.float32, device=self.device) for _ in range(batch_size)]
-            ).unsqueeze(1)
-            output = self.model(mu_batch, t_batch)
-=======
         temp_proj = 0.0
         temp_orth = 0.0
->>>>>>> rework-v1-clean
 
         for i in range(self.nt + 1):
             t_batch = torch.full((B, 1), i * self.T / (self.nt + 1),
@@ -301,17 +273,10 @@ class innerDODTrainer:
 Adding to the innerDOD is a network trying to approximate the latent dynamics of the underlying 
 n-dim solution manifold. We present the following different approaches for this
 
-<<<<<<< HEAD
-Coeff_DL     : (Theta \times Theta' \times \Gamma) -> R^N'
-             ; Linear(Linear(mu_t)) @ Linear(Linear(nu_t)) \mapsto u_N'
-
-AE_DL        : (Theta \times Theta' \times \Gamma) -> R^N'
-=======
 DOD+DFNN     : (Theta \times Theta' \times [0, T]) -> R^N'
              ; Linear(Linear(mu_t)) @ Linear(Linear(nu_t)) \mapsto u_N'
 
 DOD-DL-ROM   : (Theta \times Theta' \times [0, T]) -> R^N'
->>>>>>> rework-v1-clean
              ; Encoder(Linear(Linear(mu_t)) @ Linear(Linear(nu_t))) \mapsto u_N'
 ------------------------------------
 '''
@@ -360,15 +325,9 @@ class Phi2Module(nn.Module):
         nu_t = nu_t.view(-1, self.m, self.n)
         return nu_t
 
-<<<<<<< HEAD
-# Define Complete parameter-to-DOD_DL-coefficients Model 
-# returns [B, N']
-class Coeff_DOD_DL(nn.Module):
-=======
 # Define Complete parameter-to-innerDOD-coefficients Model 
 # returns [B, N']
 class HadamardNN(nn.Module):
->>>>>>> rework-v1-clean
     def __init__(self, geometric_dim, physical_dim, m_0, n_0, layer_sizes=None):
         super(HadamardNN, self).__init__()
         self.phi_1_module = Phi1Module(geometric_dim, m_0, n_0, layer_sizes)
@@ -383,11 +342,6 @@ class HadamardNN(nn.Module):
         phi_sum = torch.sum(phi, dim=1).squeeze()
         return phi_sum
 
-<<<<<<< HEAD
-# Define the Trainer
-class Coeff_DOD_DL_Trainer:
-    def __init__(self, N_A, DOD_DL_model, coeffnn_model, train_valid_set, epochs, restarts, learning_rate,
-=======
 # Define optional parameter-to-latent-dynamic Model
 #returns [B, N'] or [B, n]
 class DFNN(nn.Module):
@@ -411,7 +365,6 @@ class DFNN(nn.Module):
 # Define the Trainer for both HadamardNN and DFNN
 class DFNNTrainer:
     def __init__(self, nt, T, N_A, DOD_DL_model, coeffnn_model, train_valid_set, epochs, restarts, learning_rate,
->>>>>>> rework-v1-clean
                  batch_size, device='cuda' if torch.cuda.is_available() else 'cpu', patience = 3):
         self.nt = nt
         self.T = T
@@ -513,11 +466,7 @@ class DFNNTrainer:
         return best_loss
     
 # Define Encoder 
-<<<<<<< HEAD
-# takes [B, input_dim] return [B, N' = loop(floor((input_dim + 2p - k) / s) + 1)**2)] 
-=======
 # takes [B, n] return [B, N' = loop(floor((n + 2p - k) / s) + 1)**2)] 
->>>>>>> rework-v1-clean
 class Encoder(nn.Module):
     def __init__(self, input_dim, in_channels, hidden_channels, latent_dim,
                 num_layers, kernel, stride, padding):
@@ -584,11 +533,7 @@ class Encoder(nn.Module):
         return z
 
 # Define Decoder 
-<<<<<<< HEAD
-# takes [B, N' = loop(floor((input_dim + 2p - k) / s) + 1)**2)] return [B, input_dim]
-=======
 # takes [B, N' = loop(floor((n + 2p - k) / s) + 1)**2)] return [B, n]
->>>>>>> rework-v1-clean
 class Decoder(nn.Module):
     def __init__(self, output_dim, out_channels, hidden_channels, latent_dim, 
                  num_layers, kernel, stride, padding):
@@ -643,15 +588,9 @@ class Decoder(nn.Module):
         x_recon = self.deconv(x_unflat)
         return x_recon.view(B, -1)[:, :self.output_dim]
     
-<<<<<<< HEAD
-# Define the Trainer for the AE DOD DL
-class AE_DOD_DL_Trainer:
-    def __init__(self, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, error_weight=0.5,
-=======
 # Define the Trainer for the DOD-DL-ROM Coefficients
 class DOD_DL_ROMTrainer:
     def __init__(self, nt, T, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, error_weight=0.5,
->>>>>>> rework-v1-clean
                  epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.nt = nt
         self.T = T
@@ -800,13 +739,8 @@ u(mu, nu, t) = A Decoder(Coeff(mu, nu, t))
 -----------------------------------
 '''
 # Define the Trainer for the standard POD DL
-<<<<<<< HEAD
-class POD_DL_Trainer:
-    def __init__(self, Coeff_model, Encoder_model, Decoder_model, train_valid_set, error_weight,
-=======
 class POD_DL_ROMTrainer:
     def __init__(self, nt, T, Coeff_model, Encoder_model, Decoder_model, train_valid_set, error_weight,
->>>>>>> rework-v1-clean
                  epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.nt = nt
         self.T = T
@@ -1032,11 +966,7 @@ class statHadamardNN(nn.Module):
         return phi_sum
 
 # Define the trainer for these
-<<<<<<< HEAD
-class DODTrainer:
-=======
 class statDODTrainer:
->>>>>>> rework-v1-clean
     def __init__(self, nn_model, ambient_dim, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
@@ -1125,11 +1055,7 @@ class statDODTrainer:
 
         self.model.load_state_dict(best_model)
         return best_loss
-<<<<<<< HEAD
-class CoeffDODTrainer:
-=======
 class statHadamardNNTrainer:
->>>>>>> rework-v1-clean
     def __init__(self, dod_model, coeffnn_model, ambient_dim, train_valid_set, epochs=1, restarts=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.learning_rate = learning_rate
@@ -1290,13 +1216,8 @@ class CoLoRA(nn.Module):
         return X
 
 # Define CoLoRA trainer
-<<<<<<< HEAD
-class CoLoRA_DL_Trainer():
-    def __init__(self, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, epochs, restarts, learning_rate,
-=======
 class CoLoRATrainer():
     def __init__(self, nt, T, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, epochs, restarts, learning_rate,
->>>>>>> rework-v1-clean
                  batch_size, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.nt = nt
         self.T = T
