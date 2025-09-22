@@ -59,28 +59,13 @@ _PRESETS: Dict[str, Dict[str, Any]] = {
         "df_layers": [16, 8],          
 
         # DOD-DL-ROM 
-        "dod_dl_df_layers": [16, 8],
-        "dod_in_channels": 1,
-        "dod_hidden_channels": 1,
-        "dod_lin_dim_ae": 0,
-        "dod_kernel": 3,
-        "dod_stride": 2,
-        "dod_padding": 1,
-        "dod_num_layers": 1,           
+        "dod_dl_df_layers": [16, 8],    
 
         # POD-DL-ROM 
         "pod_df_layers": [16, 8],
-        "pod_in_channels": 1,
-        "pod_hidden_channels": 1,
-        "pod_lin_dim_ae": 0,
-        "pod_kernel": 3,
-        "pod_stride": 2,
-        "pod_padding": 1,
-        "pod_num_layers": 2,
 
         # Stationary + CoLoRA
-        "L": 3,
-        "stat_m": 4,                    
+        "L": 3,                 
         "stat_dod_structure": [128, 64],
         "stat_phi_n_structure": [16, 8],
 
@@ -94,40 +79,36 @@ _PRESETS: Dict[str, Dict[str, Any]] = {
         "df_layers": [32, 16],
         "dod_dl_df_layers": [32, 16],
         "pod_df_layers": [32, 16],
+        "L": 3,
         "stat_dod_structure": [128, 64],
         "stat_phi_n_structure": [32, 16],
-        "dod_num_layers": 1,
-        "pod_num_layers": 3,
     },
     "deep": {
         "dod_structure": [64, 64, 64],
         "df_layers": [16, 16, 16],
         "dod_dl_df_layers": [16, 16, 16],
         "pod_df_layers": [16, 16, 16],
+        "L": 3,
         "stat_dod_structure": [64, 64, 64],
         "stat_phi_n_structure": [16, 16, 16],
-        "dod_num_layers": 1,
-        "pod_num_layers": 3,
     },
     "tiny": {
         "dod_structure": [32],
         "df_layers": [8],
         "dod_dl_df_layers": [8],
         "pod_df_layers": [8],
+        "L": 2,
         "stat_dod_structure": [32],
         "stat_phi_n_structure": [8],
-        "dod_num_layers": 1,
-        "pod_num_layers": 3,
     },
     "debug": {
         "dod_structure": [8],
         "df_layers": [4],
         "dod_dl_df_layers": [8, 4],
         "pod_df_layers": [8, 4],
+        "L": 1,
         "stat_dod_structure": [8],
         "stat_phi_n_structure": [4],
-        "dod_num_layers": 1,
-        "pod_num_layers": 3,
     },
 }
 
@@ -162,7 +143,7 @@ class Ex01Parameters:
     dod_kernel: int = 3
     dod_stride: int = 2
     dod_padding: int = 1
-    dod_num_layers: int = 2
+    dod_num_layers: int = 1
 
     # -------- POD-DL-ROM (AE on N_A <-> n) ----------------------------------
     pod_df_layers: List[int] = field(default_factory=lambda: [32, 16, 8])
@@ -172,7 +153,7 @@ class Ex01Parameters:
     pod_kernel: int = 3
     pod_stride: int = 2
     pod_padding: int = 1
-    pod_num_layers: int = 2
+    pod_num_layers: int = 3
 
     # -------- Stationary + CoLoRA ------------------------------------------
     L: int = 3
@@ -343,7 +324,7 @@ class Ex02Parameters:
     N_prime: int = 16
     n: int = 4
     Nt: int = 10
-    Ns: int = 16
+    Ns: int = 400
     T: float = 1.
     diameter: float = 0.01
     parameter_mu_dim: int = 3
@@ -364,7 +345,7 @@ class Ex02Parameters:
     dod_kernel: int = 3
     dod_stride: int = 2
     dod_padding: int = 1
-    dod_num_layers: int = 2
+    dod_num_layers: int = 1
 
     # -------- POD-DL-ROM (AE on N_A <-> n) ----------------------------------
     pod_df_layers: List[int] = field(default_factory=lambda: [32, 16, 8])
@@ -374,11 +355,11 @@ class Ex02Parameters:
     pod_kernel: int = 3
     pod_stride: int = 2
     pod_padding: int = 1
-    pod_num_layers: int = 2
+    pod_num_layers: int = 5
 
     # -------- Stationary + CoLoRA ------------------------------------------
     L: int = 3
-    stat_m: int = 4
+    stat_m: int = 8
     stat_dod_structure: List[int] = field(default_factory=lambda: [128, 64])
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 

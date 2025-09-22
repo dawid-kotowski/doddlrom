@@ -1,7 +1,7 @@
 """
 Testing for {example_name}.
 
-This is a runable program for the example01, that tests for different complexities
+This is a runable program, that tests for different complexities
 the respective ROMs.
 
 Run Program
@@ -133,7 +133,7 @@ def build_trainers_and_models(P, device, train_valid_set_N_A, train_valid_set_N)
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--example', type=str, default='ex01')
+    parser.add_argument('--example', type=str, required=True)
     parser.add_argument('--profiles', nargs='+', default=['baseline','wide','tiny','debug'])
     parser.add_argument('--epochs', type=int, default=None)
     parser.add_argument('--restarts', type=int, default=None)
