@@ -43,8 +43,8 @@ class FetchTrainAndValidSet:
         data = np.load(path_npz)
 
         # raw arrays
-        self.mu = data['mu'].astype(np.float32)              # [Ns]
-        self.nu = data['nu'].astype(np.float32)              # [Ns]
+        self.mu = data['mu'].astype(np.float32)              # [Ns, p]
+        self.nu = data['nu'].astype(np.float32)              # [Ns, q]
         self.solution = data['solution'].astype(np.float32)  # [Ns, Nt, D] or [Ns, D]
 
         Ns = self.mu.shape[0]
@@ -59,34 +59,44 @@ class FetchTrainAndValidSet:
         sol_tr = self.solution[self.train_idx]
 
         eps = 1e-8
-        if sol_tr.ndim == 3:        # [Ntr, Nt, D]
+        if sol_tr.ndim == 3:   # [Ntr, Nt, D]
             axis = (0, 1)
-        elif sol_tr.ndim == 2:      # [Ntr, D]
+        elif sol_tr.ndim == 2: # [Ntr, D]
             axis = 0
         else:
             raise ValueError(f"Unexpected solution ndim: {sol_tr.ndim}")
 
-        mu_min = float(mu_tr.min()); mu_max = float(mu_tr.max())
-        nu_min = float(nu_tr.min()); nu_max = float(nu_tr.max())
-        sol_min = sol_tr.min(axis=axis); sol_max = sol_tr.max(axis=axis) # [D]
+        # Treat mu/nu as 2D: [N, d] even if scalar → d=1
+        mu_tr_2d = mu_tr if mu_tr.ndim == 2 else mu_tr[:, None]
+        nu_tr_2d = nu_tr if nu_tr.ndim == 2 else nu_tr[:, None]
 
+        mu_min = mu_tr_2d.min(axis=0)   # [p]
+        mu_max = mu_tr_2d.max(axis=0)   # [p]
+        nu_min = nu_tr_2d.min(axis=0)   # [q]
+        nu_max = nu_tr_2d.max(axis=0)   # [q]
 
-        # Save 
+        sol_min = sol_tr.min(axis=axis) # [D]
+        sol_max = sol_tr.max(axis=axis) # [D]
+
+        # Save vector stats (keeps compatibility: scalars become length-1 arrays)
         stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
         np.savez_compressed(stats_path,
-                            mu_min=mu_min, mu_max=mu_max,
-                            nu_min=nu_min, nu_max=nu_max,
-                            sol_min=sol_min.astype(np.float32),
-                            sol_max=sol_max.astype(np.float32))
+            mu_min=mu_min.astype(np.float32), mu_max=mu_max.astype(np.float32),
+            nu_min=nu_min.astype(np.float32), nu_max=nu_max.astype(np.float32),
+            sol_min=sol_min.astype(np.float32), sol_max=sol_max.astype(np.float32)
+        )
 
-        self.mu_n = (self.mu - mu_min) / (mu_max - mu_min + eps)
-        self.nu_n = (self.nu - nu_min) / (nu_max - nu_min + eps)
-        self.solution_n = (self.solution - sol_min[None,...]) / (
-            sol_max[None,...] - sol_min[None,...] + eps)
+        # Normalize with broadcasting
+        mu_2d = self.mu if self.mu.ndim == 2 else self.mu[:, None]
+        nu_2d = self.nu if self.nu.ndim == 2 else self.nu[:, None]
+
+        self.mu_n = (mu_2d - mu_min) / (mu_max - mu_min + eps)       # [Ns, p]
+        self.nu_n = (nu_2d - nu_min) / (nu_max - nu_min + eps)       # [Ns, q]
+        self.solution_n = (self.solution - sol_min[None, ...]) / (sol_max[None, ...] - sol_min[None, ...] + eps)
 
     def _tuples(self, idx_array):
-        return [(float(self.mu_n[i]), float(self.nu_n[i]), self.solution_n[i]) for i in idx_array]
-
+        return [(self.mu_n[i], self.nu_n[i], self.solution_n[i]) for i in idx_array]
+    
     def __call__(self, set_type: str):
         if set_type == 'train':
             return self._tuples(self.train_idx)
@@ -106,9 +116,11 @@ class DatasetLoader(Dataset):
 
     def __getitem__(self, idx):
         mu, nu, solution = self.data[idx] 
-        mu = torch.tensor([mu], dtype=torch.float32)
-        nu = torch.tensor([nu], dtype=torch.float32)
+        mu = torch.tensor(mu, dtype=torch.float32)
+        nu = torch.tensor(nu, dtype=torch.float32)
         solution = torch.tensor(solution, dtype=torch.float32)
+        if mu.dim() == 0: mu = mu.unsqueeze(0)
+        if nu.dim() == 0: nu = nu.unsqueeze(0)
         return mu, nu, solution
 
 
@@ -1346,36 +1358,69 @@ Define simple forward pass assuming existence of networks
 -------------------
 '''
 
+def _load_stats_vec(name: str, d: dict, dtype, device):
+    """Return 1D torch tensors for min/max, handling legacy scalar stats."""
+    arr_min = d[f'{name}_min']
+    arr_max = d[f'{name}_max']
+    if np.isscalar(arr_min):
+        arr_min = np.array([arr_min], dtype=np.float32)
+        arr_max = np.array([arr_max], dtype=np.float32)
+    tmin = torch.tensor(arr_min, dtype=dtype, device=device)  # [d]
+    tmax = torch.tensor(arr_max, dtype=dtype, device=device)  # [d]
+    return tmin, tmax
+
 def normalize_mu(mu: torch.Tensor, example_name: str, reduction_tag: str):
     """
-    Normalize mu according to training-set min/max in the stats file.
-    Input: mu as torch.Tensor of shape [1,1] or [B,1].
+    Normalize mu using training-set min/max.
+    Accepts shapes [B, p], [p], or scalar tensor -> returns same shape.
     """
     stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
     d = np.load(stats_path)
-    mu_min = float(d['mu_min']); mu_max = float(d['mu_max'])
-    return (mu - mu_min) / (mu_max - mu_min + 1e-8)
-
+    # Remember original shape to return shape-consistently
+    orig_shape = mu.shape
+    x = mu
+    if x.dim() == 0:
+        x = x.unsqueeze(0)              # -> [1]
+    if x.dim() == 1:
+        x = x.unsqueeze(0)              # -> [1, p]
+    mu_min, mu_max = _load_stats_vec('mu', d, dtype=x.dtype, device=x.device)  # [p]
+    eps = torch.tensor(1e-8, dtype=x.dtype, device=x.device)
+    x = (x - mu_min) / (mu_max - mu_min + eps)          # [B, p]
+    # restore original shape
+    if len(orig_shape) == 0:
+        return x.squeeze(0).squeeze(0)
+    if len(orig_shape) == 1:
+        return x.squeeze(0)
+    return x
 
 def normalize_nu(nu: torch.Tensor, example_name: str, reduction_tag: str):
     """
-    Normalize nu according to training-set min/max in the stats file.
-    Input: nu as torch.Tensor of shape [1,1] or [B,1].
+    Normalize nu using training-set min/max.
+    Accepts shapes [B, q], [q], or scalar tensor -> returns same shape.
     """
     stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
     d = np.load(stats_path)
-    nu_min = float(d['nu_min']); nu_max = float(d['nu_max'])
-    return (nu - nu_min) / (nu_max - nu_min + 1e-8)
-
+    orig_shape = nu.shape
+    x = nu
+    if x.dim() == 0:
+        x = x.unsqueeze(0)
+    if x.dim() == 1:
+        x = x.unsqueeze(0)
+    nu_min, nu_max = _load_stats_vec('nu', d, dtype=x.dtype, device=x.device)
+    eps = torch.tensor(1e-8, dtype=x.dtype, device=x.device)
+    x = (x - nu_min) / (nu_max - nu_min + eps)
+    if len(orig_shape) == 0:
+        return x.squeeze(0).squeeze(0)
+    if len(orig_shape) == 1:
+        return x.squeeze(0)
+    return x
 
 def denormalize_solution(sol_norm: torch.Tensor, example_name: str, reduction_tag: str):
     stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
     d = np.load(stats_path)
     m = torch.tensor(d['sol_min'], dtype=sol_norm.dtype, device=sol_norm.device)  # [D]
     M = torch.tensor(d['sol_max'], dtype=sol_norm.dtype, device=sol_norm.device)  # [D]
-
     scale = (M - m)
-
     if sol_norm.ndim == 3:   # [Ns, Nt, D]
         return sol_norm * scale.unsqueeze(0).unsqueeze(0) + m.unsqueeze(0).unsqueeze(0)
     elif sol_norm.ndim == 2: # [Nt, D] or [Ns, D]
@@ -1383,7 +1428,7 @@ def denormalize_solution(sol_norm: torch.Tensor, example_name: str, reduction_ta
     elif sol_norm.ndim == 1: # [D]
         return sol_norm * scale + m
     else:
-        raise ValueError(f"Unexpected ndim={sol_norm.ndim} for sol_norm")
+        raise ValueError(f"Unexpected sol_norm.ndim={sol_norm.ndim}")
 
 
 
@@ -1452,3 +1497,59 @@ def colora_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model,
         u = torch.matmul(A, u)                                            # lift
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
+
+
+'''
+----------------------
+Evaluation Helpers
+---------------------
+'''
+
+def forward_wrappers(P, device, models, example_name):
+    A = np.load(f'examples/{example_name}/training_data/N_A_ambient_{example_name}.npz')['ambient'].astype(np.float32)
+    A_P = np.load(f'examples/{example_name}/training_data/N_ambient_{example_name}.npz')['ambient'].astype(np.float32)
+    A_t = torch.tensor(A, dtype=torch.float32, device=device)
+    A_P_t = torch.tensor(A_P, dtype=torch.float32, device=device)
+
+    def dod_dfnn(mu_i, nu_i):
+        return dod_dfnn_forward(A_t, models["DOD+DFNN"]["inner"], models["DOD+DFNN"]["coeff"],
+                                    mu_i, nu_i, P.Nt, example_name, reduction_tag='N_A_reduced')
+
+    def dod_dl(mu_i, nu_i):
+        return dod_dl_rom_forward(A_t, models["DOD-DL-ROM"]["inner"],
+                                      models["DOD-DL-ROM"]["coeff"], models["DOD-DL-ROM"]["dec"],
+                                      mu_i, nu_i, P.Nt, example_name, reduction_tag='N_A_reduced')
+
+    def pod_dl(mu_i, nu_i):
+        return pod_dl_rom_forward(A_P_t, models["POD-DL-ROM"]["coeff"],
+                                      models["POD-DL-ROM"]["dec"], mu_i, nu_i, 
+                                      P.Nt, example_name, reduction_tag='N_reduced')
+
+    def colora(mu_i, nu_i):
+        return colora_forward(A_t, models["CoLoRA"]["inner"], models["CoLoRA"]["inner_coeff"], 
+                              models["CoLoRA"]["coeff"], mu_i, nu_i, P.Nt, 
+                              example_name, reduction_tag='N_A_reduced')
+
+    return {"DOD+DFNN": dod_dfnn, "DOD-DL-ROM": dod_dl, "POD-DL-ROM": pod_dl, "CoLoRA": colora}
+
+def g_norm_batch(G, U):  # U: [Nt, Nh] or [Nh]
+    if U.ndim == 1:
+        return float(np.sqrt(U @ (G @ U) + 1e-12))
+    vals = []
+    for t in range(U.shape[0]):
+        u = U[t]
+        vals.append(float(np.sqrt(u @ (G @ u) + 1e-12)))
+    return np.array(vals, dtype=np.float64)
+
+def evaluate_rom_forward(rom_name, forward_fn, args, ref_sol, G):
+    # forward_fn should return array with shape [Nt, Nh] 
+    U_hat = forward_fn(*args)
+    Tm = min(ref_sol.shape[0], U_hat.shape[0])
+    U_ref = ref_sol[:Tm]
+    U_hat = U_hat[:Tm]
+    diffs = U_ref - U_hat
+    num = np.array([g_norm_batch(G, diffs[t]) for t in range(Tm)])
+    den = np.array([g_norm_batch(G, U_ref[t])  for t in range(Tm)])
+    abs_err = float(num.mean())
+    rel_err = float((num / (den + 1e-12)).mean())
+    return abs_err, rel_err, U_hat

@@ -62,28 +62,6 @@ def freeze(module):
         p.requires_grad = False
     module.eval()
 
-def g_norm_batch(G, U):  # U: [Nt, Nh] or [Nh]
-    if U.ndim == 1:
-        return float(np.sqrt(U @ (G @ U) + 1e-12))
-    vals = []
-    for t in range(U.shape[0]):
-        u = U[t]
-        vals.append(float(np.sqrt(u @ (G @ u) + 1e-12)))
-    return np.array(vals, dtype=np.float64)
-
-def evaluate_rom_forward(rom_name, forward_fn, args, ref_sol, G):
-    # forward_fn should return array with shape [Nt, Nh] (like eval.py forwards)
-    U_hat = forward_fn(*args)
-    Tm = min(ref_sol.shape[0], U_hat.shape[0])
-    U_ref = ref_sol[:Tm]
-    U_hat = U_hat[:Tm]
-    diffs = U_ref - U_hat
-    num = np.array([g_norm_batch(G, diffs[t]) for t in range(Tm)])
-    den = np.array([g_norm_batch(G, U_ref[t])  for t in range(Tm)])
-    abs_err = float(num.mean())
-    rel_err = float((num / (den + 1e-12)).mean())
-    return abs_err, rel_err
-
 def time_one_forward(fn, *args, repeats=5):
     times = []
     for _ in range(repeats):
@@ -152,27 +130,6 @@ def build_trainers_and_models(P, device, train_valid_set_N_A, train_valid_set_N)
     }
     return models, trainers
 
-def forward_wrappers(P, device, models, example_name):
-    A = np.load(f'examples/{example_name}/training_data/N_A_ambient_ex01.npz')['ambient'].astype(np.float32)
-    A_P = np.load(f'examples/{example_name}/training_data/N_ambient_ex01.npz')['ambient'].astype(np.float32)
-    A_t = torch.tensor(A, dtype=torch.float32, device=device)
-    A_P_t = torch.tensor(A_P, dtype=torch.float32, device=device)
-
-    def dod_dfnn(mu_i, nu_i):
-        return rom.dod_dfnn_forward(A_t, models["DOD+DFNN"]["inner"], models["DOD+DFNN"]["coeff"],
-                                    mu_i, nu_i, P.Nt, example_name='ex01', reduction_tag='N_A_reduced')
-
-    def dod_dl(mu_i, nu_i):
-        return rom.dod_dl_rom_forward(A_t, models["DOD-DL-ROM"]["inner"],
-                                      models["DOD-DL-ROM"]["coeff"], models["DOD-DL-ROM"]["dec"],
-                                      mu_i, nu_i, P.Nt, example_name='ex01', reduction_tag='N_A_reduced')
-
-    def pod_dl(mu_i, nu_i):
-        return rom.pod_dl_rom_forward(A_P_t, models["POD-DL-ROM"]["coeff"],
-                                      models["POD-DL-ROM"]["dec"], mu_i, nu_i, 
-                                      P.Nt, example_name='ex01', reduction_tag='N_reduced')
-
-    return {"DOD+DFNN": dod_dfnn, "DOD-DL-ROM": dod_dl, "POD-DL-ROM": pod_dl}
 
 def main():
     parser = argparse.ArgumentParser()
@@ -189,12 +146,12 @@ def main():
     outdir.mkdir(parents=True, exist_ok=True)
 
     # Data
-    tv_NA = rom.FetchTrainAndValidSet(0.8, 'ex01', 'N_A_reduced')
-    tv_N = rom.FetchTrainAndValidSet(0.8, 'ex01', 'N_reduced')
-    full = np.load(f'examples/{example_name}/training_data/full_order_training_data_ex01.npz')
+    tv_NA = rom.FetchTrainAndValidSet(0.8, example_name, 'N_A_reduced')
+    tv_N = rom.FetchTrainAndValidSet(0.8, example_name, 'N_reduced')
+    full = np.load(f'examples/{example_name}/training_data/full_order_training_data_{example_name}.npz')
     mu_full, nu_full, sol_full = full['mu'], full['nu'], full['solution']
 
-    G = np.load(f'examples/{example_name}/training_data/gram_matrix_ex01.npz')['gram'].astype(np.float32)
+    G = np.load(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npz')['gram'].astype(np.float32)
 
     # metrics file
     csv_path = outdir / 'rom_sweep.csv'
@@ -213,7 +170,7 @@ def main():
             if args.restarts is not None: P.generalrestarts = args.restarts
 
             models, trainers = build_trainers_and_models(P, device, tv_NA, tv_N)
-            fw = forward_wrappers(P, device, models, example_name)
+            fw = rom.forward_wrappers(P, device, models, example_name)
 
             # Train per ROM
             val_losses = {}
@@ -243,8 +200,13 @@ def main():
 
                 # Errors and forward time: use first selected sample for timing
                 i0 = int(idxs[0])
-                mu_i = torch.tensor([[float(mu_full[i0])]], dtype=torch.float32, device=device)
-                nu_i = torch.tensor([[float(nu_full[i0])]], dtype=torch.float32, device=device)
+                def to_batch_vec(x):
+                    x_np = np.asarray(x)
+                    if x_np.ndim == 0:
+                        x_np = x_np[None]         
+                    return torch.tensor(x_np, dtype=torch.float32, device=device).unsqueeze(0)
+                mu_i = to_batch_vec(mu_full[i0])
+                nu_i = to_batch_vec(nu_full[i0])
 
                 # forward timing
                 fwd_ms = time_one_forward(fw[rom_name], mu_i, nu_i, repeats=5)
@@ -252,10 +214,10 @@ def main():
                 # errors (averaged across chosen samples)
                 abs_list, rel_list = [], []
                 for i in idxs:
-                    mu_j = torch.tensor([[float(mu_full[int(i)])]], dtype=torch.float32, device=device)
-                    nu_j = torch.tensor([[float(nu_full[int(i)])]], dtype=torch.float32, device=device)
-                    ref = sol_full[int(i)]  # [Nt, Nh]
-                    abs_e, rel_e = evaluate_rom_forward(
+                    mu_j = to_batch_vec(mu_full[int(i)])  
+                    nu_j = to_batch_vec(nu_full[int(i)])
+                    ref = sol_full[int(i)]    # [Nt, Nh]
+                    abs_e, rel_e, _ = rom.evaluate_rom_forward(
                         rom_name, fw[rom_name], (mu_j, nu_j), ref, G
                     )
                     abs_list.append(abs_e); rel_list.append(rel_e)

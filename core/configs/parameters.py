@@ -53,13 +53,13 @@ _PRESETS: Dict[str, Dict[str, Any]] = {
     "baseline": {
         # DOD only
         "preprocess_dim": 2,           
-        "dod_structure": [32, 16],     
+        "dod_structure": [64],     
 
         # DOD+DFNN 
         "df_layers": [16, 8],          
 
         # DOD-DL-ROM 
-        "dod_dl_df_layers": [32, 16, 8],
+        "dod_dl_df_layers": [16, 8],
         "dod_in_channels": 1,
         "dod_hidden_channels": 1,
         "dod_lin_dim_ae": 0,
@@ -69,7 +69,7 @@ _PRESETS: Dict[str, Dict[str, Any]] = {
         "dod_num_layers": 1,           
 
         # POD-DL-ROM 
-        "pod_df_layers": [32, 16, 8],
+        "pod_df_layers": [16, 8],
         "pod_in_channels": 1,
         "pod_hidden_channels": 1,
         "pod_lin_dim_ae": 0,
@@ -90,32 +90,44 @@ _PRESETS: Dict[str, Dict[str, Any]] = {
         "generalpatience": 3,
     },
     "wide": {
-        "dod_structure": [64, 32],
-        "df_layers": [64, 32],
-        "dod_dl_df_layers": [64, 32, 16],
-        "pod_df_layers": [64, 32, 16],
-        "stat_dod_structure": [256, 128],
+        "dod_structure": [128, 64],
+        "df_layers": [32, 16],
+        "dod_dl_df_layers": [32, 16],
+        "pod_df_layers": [32, 16],
+        "stat_dod_structure": [128, 64],
         "stat_phi_n_structure": [32, 16],
-        "dod_num_layers": 3,
+        "dod_num_layers": 1,
+        "pod_num_layers": 3,
+    },
+    "deep": {
+        "dod_structure": [64, 64, 64],
+        "df_layers": [16, 16, 16],
+        "dod_dl_df_layers": [16, 16, 16],
+        "pod_df_layers": [16, 16, 16],
+        "stat_dod_structure": [64, 64, 64],
+        "stat_phi_n_structure": [16, 16, 16],
+        "dod_num_layers": 1,
         "pod_num_layers": 3,
     },
     "tiny": {
-        "dod_structure": [8],
+        "dod_structure": [32],
         "df_layers": [8],
-        "dod_dl_df_layers": [16, 8],
-        "pod_df_layers": [16, 8],
-        "stat_dod_structure": [64],
+        "dod_dl_df_layers": [8],
+        "pod_df_layers": [8],
+        "stat_dod_structure": [32],
         "stat_phi_n_structure": [8],
         "dod_num_layers": 1,
-        "pod_num_layers": 1,
+        "pod_num_layers": 3,
     },
     "debug": {
-        "df_layers": [4],
         "dod_structure": [8],
+        "df_layers": [4],
         "dod_dl_df_layers": [8, 4],
         "pod_df_layers": [8, 4],
+        "stat_dod_structure": [8],
+        "stat_phi_n_structure": [4],
         "dod_num_layers": 1,
-        "pod_num_layers": 1,
+        "pod_num_layers": 3,
     },
 }
 
@@ -325,20 +337,20 @@ class Ex01Parameters:
 @dataclass
 class Ex02Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
-    N_h: int = 5101
+    N_h: int = 222211
     N_A: int = 64
     N: int = 64
     N_prime: int = 16
     n: int = 4
     Nt: int = 10
-    Ns: int = 400
+    Ns: int = 16
     T: float = 1.
-    diameter: float = 0.02
-    parameter_mu_dim: int = 1
+    diameter: float = 0.01
+    parameter_mu_dim: int = 3
     parameter_nu_dim: int = 1
 
     # -------- innerDOD ------------------------------------------------------
-    preprocess_dim: int = 2
+    preprocess_dim: int = 4
     dod_structure: List[int] = field(default_factory=lambda: [32, 16])
 
     # -------- DOD+DFNN ------------------------------------------------------
@@ -371,9 +383,9 @@ class Ex02Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 20
+    generalepochs: int = 500
     generalrestarts: int = 3
-    generalpatience: int = 3
+    generalpatience: int = 2
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"

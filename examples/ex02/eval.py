@@ -1,12 +1,12 @@
 from pymor.basic import *
 from core import reduced_order_models as rom
-from core.configs.parameters import Ex01Parameters  
+from core.configs.parameters import Ex02Parameters  
 import numpy as np
 import torch
 
 #region --- Configure this run ------------------------------------------------------
-example_name = 'ex01'
-P = Ex01Parameters(profile="tiny")          # or "wide"/"tiny"/"debug"
+example_name = 'ex02'
+P = Ex02Parameters(profile="baseline")          # or "wide"/"tiny"/"debug"
 P.assert_consistent()
 
 #region --- Set up of FOM for pymor utility------------------------------------------
@@ -23,21 +23,27 @@ training_data = [(mu[i], nu[i], solution[i]) for i in sel]
 
 # Define Full Order Model again
 def advection_function(x, mu):
-    mu_value = mu['mu']
-    return np.array([[np.cos(mu_value)*30, np.sin(mu_value)*30] for _ in range(x.shape[0])])
-advection_params = Parameters({'mu': 1})
-advection_generic_function = GenericFunction(advection_function, 
-                                             dim_domain=2, shape_range=(2,), 
-                                             parameters=advection_params)
+    mu_value = mu['mu'][2]
+    return np.array([[np.cos(np.pi/(100*mu_value)), np.sin(np.pi/(100*mu_value))] for _ in range(x.shape[0])])
+
+def rhs_function(x, mu):
+    mu_values_1 = mu['mu'][0]
+    mu_values_2 = mu['mu'][1]
+    x0 = x[:, 0]
+    x1 = x[:, 1]
+    values = 10 * np.exp(-((x0 - mu_values_1)**2 + (x1 - mu_values_2)**2) / 0.07**2)
+    return values
+
+mu_param = Parameters({'mu': 3, 'nu': 1})
+advection_generic_function = GenericFunction(advection_function, dim_domain=2, shape_range=(2,), parameters=mu_param)
+rhs_generic_function = GenericFunction(rhs_function, dim_domain=2, shape_range=(), parameters=mu_param)
 stationary_problem = StationaryProblem(
     domain=RectDomain(),
-    rhs=ExpressionFunction('0', 2),
-    diffusion=LincombFunction(
-        [ExpressionFunction('1 - x[0]', 2), ExpressionFunction('x[0]', 2)],
-        [ProjectionParameterFunctional('nu', 1), 1]
-    ),
-    dirichlet_data=ExpressionFunction('(-(x[1] - 0.5)**2 + 0.25) * (x[0] < 1e-10)', 2),
+    rhs=rhs_generic_function,
+    diffusion=LincombFunction([ExpressionFunction('1', 2)],
+                              [ProjectionParameterFunctional('nu', 1)]),
     advection=advection_generic_function,
+    neumann_data=ConstantFunction(0, 2),
     name='advection_problem'
 )
 problem = InstationaryProblem(
