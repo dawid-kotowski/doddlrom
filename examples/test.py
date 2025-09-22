@@ -6,22 +6,48 @@ the respective ROMs.
 
 Run Program
 -----------------
-python examples/{example_name}/test.py 
+python examples/test.py 
+--example "ex0{number}"
 --profiles "profiles" 
 --epochs "epochs" 
 --restarts "restarts" 
 --eval_samples "number of samples to test error with"
---outdir "path/to/benchmark/dir"
 -----------------
 
 """
 import argparse, json, time, csv, random, math
+from typing import Type
+import importlib
 from pathlib import Path
 import numpy as np
 import torch
 from tqdm import tqdm
-from master_project_1 import reduced_order_models as rom
-from master_project_1.configs.parameters import Ex01Parameters
+from core import reduced_order_models as rom
+
+
+def load_parameters(example_name: str, profile: str):
+    """
+    Imports core/configs/parameters.py and returns a Parameters instance.
+    The module should export Ex01Parameters / Ex02Parameters / Ex03Parameters, etc.
+    """
+    mod = importlib.import_module("core.configs.parameters")
+
+    CLASS_BY_EXAMPLE = {
+        "ex01": "Ex01Parameters",
+        "ex02": "Ex02Parameters",
+        "ex03": "Ex03Parameters",
+    }
+    try:
+        cls_name = CLASS_BY_EXAMPLE[example_name]
+    except KeyError:
+        raise ImportError(f"Unsuitable Example Name: {example_name!r}")
+
+    if not hasattr(mod, cls_name):
+        raise ImportError(f"No class {cls_name} in core/configs/parameters.py")
+
+    ParamCls: Type = getattr(mod, cls_name)
+    return ParamCls(profile=profile)
+
 
 def count_params(module, include_frozen=True):
     ps = list(module.parameters())
@@ -126,9 +152,9 @@ def build_trainers_and_models(P, device, train_valid_set_N_A, train_valid_set_N)
     }
     return models, trainers
 
-def forward_wrappers(P, device, models):
-    A = np.load('examples/ex01/training_data/N_A_ambient_ex01.npz')['ambient'].astype(np.float32)
-    A_P = np.load('examples/ex01/training_data/N_ambient_ex01.npz')['ambient'].astype(np.float32)
+def forward_wrappers(P, device, models, example_name):
+    A = np.load(f'examples/{example_name}/training_data/N_A_ambient_ex01.npz')['ambient'].astype(np.float32)
+    A_P = np.load(f'examples/{example_name}/training_data/N_ambient_ex01.npz')['ambient'].astype(np.float32)
     A_t = torch.tensor(A, dtype=torch.float32, device=device)
     A_P_t = torch.tensor(A_P, dtype=torch.float32, device=device)
 
@@ -150,23 +176,25 @@ def forward_wrappers(P, device, models):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--example', type=str, default='ex01')
     parser.add_argument('--profiles', nargs='+', default=['baseline','wide','tiny','debug'])
     parser.add_argument('--epochs', type=int, default=None)
     parser.add_argument('--restarts', type=int, default=None)
     parser.add_argument('--eval_samples', type=int, default=5)
-    parser.add_argument('--outdir', type=str, default='examples/ex01/benchmarks')
     args = parser.parse_args()
 
+    example_name = args.example
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
+    outdir = (Path(__file__).resolve().parent.parent / "examples" / example_name / "benchmarks")
+    outdir.mkdir(parents=True, exist_ok=True)
 
     # Data
     tv_NA = rom.FetchTrainAndValidSet(0.8, 'ex01', 'N_A_reduced')
     tv_N = rom.FetchTrainAndValidSet(0.8, 'ex01', 'N_reduced')
-    full = np.load('examples/ex01/training_data/full_order_training_data_ex01.npz')
+    full = np.load(f'examples/{example_name}/training_data/full_order_training_data_ex01.npz')
     mu_full, nu_full, sol_full = full['mu'], full['nu'], full['solution']
 
-    G = np.load('examples/ex01/training_data/gram_matrix_ex01.npz')['gram'].astype(np.float32)
+    G = np.load(f'examples/{example_name}/training_data/gram_matrix_ex01.npz')['gram'].astype(np.float32)
 
     # metrics file
     csv_path = outdir / 'rom_sweep.csv'
@@ -179,13 +207,13 @@ def main():
         if first_write: writer.writeheader()
 
         for profile in args.profiles:
-            P = Ex01Parameters(profile=profile)
+            P = load_parameters(example_name, profile=profile)
             P.assert_consistent()
             if args.epochs is not None: P.generalepochs = args.epochs
             if args.restarts is not None: P.generalrestarts = args.restarts
 
             models, trainers = build_trainers_and_models(P, device, tv_NA, tv_N)
-            fw = forward_wrappers(P, device, models)
+            fw = forward_wrappers(P, device, models, example_name)
 
             # Train per ROM
             val_losses = {}

@@ -1346,6 +1346,28 @@ Define simple forward pass assuming existence of networks
 -------------------
 '''
 
+def normalize_mu(mu: torch.Tensor, example_name: str, reduction_tag: str):
+    """
+    Normalize mu according to training-set min/max in the stats file.
+    Input: mu as torch.Tensor of shape [1,1] or [B,1].
+    """
+    stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
+    d = np.load(stats_path)
+    mu_min = float(d['mu_min']); mu_max = float(d['mu_max'])
+    return (mu - mu_min) / (mu_max - mu_min + 1e-8)
+
+
+def normalize_nu(nu: torch.Tensor, example_name: str, reduction_tag: str):
+    """
+    Normalize nu according to training-set min/max in the stats file.
+    Input: nu as torch.Tensor of shape [1,1] or [B,1].
+    """
+    stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
+    d = np.load(stats_path)
+    nu_min = float(d['nu_min']); nu_max = float(d['nu_max'])
+    return (nu - nu_min) / (nu_max - nu_min + 1e-8)
+
+
 def denormalize_solution(sol_norm: torch.Tensor, example_name: str, reduction_tag: str):
     stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
     d = np.load(stats_path)
@@ -1371,7 +1393,9 @@ def pod_dl_rom_forward(A_P, POD_DL_model, De_model,
     preds = []
     for j in range(nt_ + 1):
         t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
-        coeff = POD_DL_model(mu_i, nu_i, t).unsqueeze(0)                 # [1, n]
+        mu_i_norm = normalize_mu(mu_i, example_name, reduction_tag)
+        nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)    
+        coeff = POD_DL_model(mu_i_norm, nu_i_norm, t).unsqueeze(0)                 # [1, n]
         y_norm = De_model(coeff).squeeze(0)                              # [N] (normalized reduced)
         y = denormalize_solution(y_norm, example_name, reduction_tag)    # [N]
         u = torch.matmul(A_P, y)                                         # [N_A]
@@ -1384,8 +1408,10 @@ def dod_dfnn_forward(A, innerDOD_model, DFNN_Nprime_model,
     preds = []
     for j in range(nt_ + 1):
         t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
-        V_tilde = innerDOD_model(mu_i, t)                                        # [N_A, N']
-        coeff = DFNN_Nprime_model(mu_i, nu_i, t).squeeze(0)                         # [N']
+        mu_i_norm = normalize_mu(mu_i, example_name, reduction_tag)
+        nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)    
+        V_tilde = innerDOD_model(mu_i_norm, t)                                        # [N_A, N']
+        coeff = DFNN_Nprime_model(mu_i_norm, nu_i_norm, t).squeeze(0)                        # [N']
         u_red_norm = torch.matmul(V_tilde, coeff)                                # [N_A]
         u_red = denormalize_solution(u_red_norm, example_name, reduction_tag)    # [N_A]
         u = torch.matmul(A, u_red)                                               # [Nh]
@@ -1399,8 +1425,10 @@ def dod_dl_rom_forward(A, innerDOD_model, DOD_DL_model, De_model,
     preds = []
     for j in range(nt_ + 1):
         t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
-        V_tilde = innerDOD_model(mu_i, t)                                      # [N_A, N']
-        coeff_n = DOD_DL_model(mu_i, nu_i, t)                                  # [1, n]
+        mu_i_norm = normalize_mu(mu_i, example_name, reduction_tag)
+        nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)    
+        V_tilde = innerDOD_model(mu_i_norm, t)                                      # [N_A, N']
+        coeff_n = DOD_DL_model(mu_i_norm, nu_i_norm, t)                                  # [1, n]
         beta = De_model(coeff_n).squeeze(0)                                    # [N'] 
         u_red_norm = torch.matmul(V_tilde, beta)                               # [N_A] (normalized)
         u_red = denormalize_solution(u_red_norm, example_name, reduction_tag)  # [N_A]
@@ -1414,10 +1442,12 @@ def colora_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model,
     preds = []
     for j in range(nt_ + 1):
         t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
-        coeff0 = stat_Coeff_model(mu_i, nu_i).unsqueeze(0).unsqueeze(2)   # [1, N', 1]
-        V0 = stat_DOD_model(mu_i)                                         # [1, N_A, N']
+        mu_i_norm = normalize_mu(mu_i, example_name, reduction_tag)
+        nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)    
+        coeff0 = stat_Coeff_model(mu_i_norm, nu_i_norm).unsqueeze(0).unsqueeze(2)   # [1, N', 1]
+        V0 = stat_DOD_model(mu_i_norm)                                         # [1, N_A, N']
         v_0 = torch.bmm(V0.transpose(1, 2), coeff0)                       # [N_A]
-        u_norm = CoLoRA_DL_model(v_0, nu_i, t).squeeze(0)                 # [N_A] (normalized reduced)
+        u_norm = CoLoRA_DL_model(v_0, nu_i_norm, t).squeeze(0)                 # [N_A] (normalized reduced)
         u = denormalize_solution(u_norm, example_name, reduction_tag)     # [N_A]
         u = torch.matmul(A, u)                                            # lift
         preds.append(u)

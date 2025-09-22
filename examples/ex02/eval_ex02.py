@@ -1,5 +1,5 @@
 from pymor.basic import *
-from master_project_1 import reduced_order_models as dr
+from core import reduced_order_models as dr
 import numpy as np
 import torch
 

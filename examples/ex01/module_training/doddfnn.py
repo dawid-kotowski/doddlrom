@@ -1,6 +1,6 @@
 import torch
-from master_project_1 import reduced_order_models as rom
-from master_project_1.configs.parameters import Ex01Parameters
+from core import reduced_order_models as rom
+from core.configs.parameters import Ex01Parameters
 
 # --- Configure / hyperparams -------------------------------------------------
 P = Ex01Parameters(profile="tiny")                 # or "wide" / "tiny" / "debug"
