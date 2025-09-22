@@ -24,8 +24,7 @@ DFNN_D_n_model = rom.DFNN(**P.make_dod_dl_DFNN_kwargs())
 
 # --- Trainer -----------------------------------------------------------------
 DFNN_D_n_trainer = rom.DOD_DL_ROMTrainer(
-    P.Nt,
-    P.T,
+    P.Nt, 
     innerDOD_model,
     DFNN_D_n_model,
     En_model,

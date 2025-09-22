@@ -17,7 +17,6 @@ DOD_model = rom.innerDOD(**P.make_innerDOD_kwargs())
 # --- Trainer -----------------------------------------------------------------
 DOD_trainer = rom.innerDODTrainer(
     P.Nt,
-    P.T,
     DOD_model,
     train_valid_data,
     trainer["epochs"],

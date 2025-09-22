@@ -69,12 +69,12 @@ def time_one_forward(fn, *args, repeats=5):
         times.append((t1 - t0) * 1000.0)
     return float(np.median(times))
 
-def build_trainers_and_models(P, device, train_valid_set):
+def build_trainers_and_models(P, device, train_valid_set_N_A, train_valid_set_N):
     # inner DOD used by DOD+DFNN and DOD-DL-ROM
     innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs()).to(device)
     inner_trainer = rom.innerDODTrainer(
-        nt=P.Nt, T=P.T, dod_model=innerDOD_model,
-        train_valid_set=train_valid_set,
+        nt=P.Nt, dod_model=innerDOD_model,
+        train_valid_set=train_valid_set_N_A,
         epochs=P.generalepochs,              
         restart=P.generalrestarts,
         learning_rate=1e-3,
@@ -86,8 +86,8 @@ def build_trainers_and_models(P, device, train_valid_set):
     # DOD+DFNN (DFNN -> N')
     dfnn_nprime = rom.DFNN(**P.make_dod_dfnn_DFNN_kwargs()).to(device)
     dfnn_trainer = rom.DFNNTrainer(
-        nt=P.Nt, T=P.T, N_A=P.N_A, DOD_DL_model=innerDOD_model, coeffnn_model=dfnn_nprime,
-        train_valid_set=train_valid_set, epochs=P.generalepochs, restarts=P.generalrestarts,
+        nt=P.Nt, N_A=P.N_A, DOD_DL_model=innerDOD_model, coeffnn_model=dfnn_nprime,
+        train_valid_set=train_valid_set_N_A, epochs=P.generalepochs, restarts=P.generalrestarts,
         learning_rate=1e-3, batch_size=128, device=device, patience=P.generalpatience
     )
 
@@ -96,8 +96,8 @@ def build_trainers_and_models(P, device, train_valid_set):
     enc = rom.Encoder(**P.make_dod_dl_Encoder_kwargs()).to(device)
     dec = rom.Decoder(**P.make_dod_dl_Decoder_kwargs()).to(device)
     doddl_trainer = rom.DOD_DL_ROMTrainer(
-        nt=P.Nt, T=P.T, DOD_DL_model=innerDOD_model, Coeff_DOD_DL_model=coeff_n,
-        Encoder_model=enc, Decoder_model=dec, train_valid_set=train_valid_set,
+        nt=P.Nt, DOD_DL_model=innerDOD_model, Coeff_DOD_DL_model=coeff_n,
+        Encoder_model=enc, Decoder_model=dec, train_valid_set=train_valid_set_N_A,
         error_weight=0.5, epochs=P.generalepochs, restarts=P.generalrestarts,
         learning_rate=1e-3, batch_size=128, device=device, patience=P.generalpatience
     )
@@ -107,8 +107,8 @@ def build_trainers_and_models(P, device, train_valid_set):
     pod_enc = rom.Encoder(**P.make_pod_Encoder_kwargs()).to(device)
     pod_dec = rom.Decoder(**P.make_pod_Decoder_kwargs()).to(device)
     pod_trainer = rom.POD_DL_ROMTrainer(
-        nt=P.Nt, T=P.T, Coeff_model=pod_coeff, Encoder_model=pod_enc, Decoder_model=pod_dec,
-        train_valid_set=train_valid_set, error_weight=0.5, epochs=P.generalepochs,
+        nt=P.Nt, Coeff_model=pod_coeff, Encoder_model=pod_enc, Decoder_model=pod_dec,
+        train_valid_set=train_valid_set_N, error_weight=0.5, epochs=P.generalepochs,
         restarts=P.generalrestarts, learning_rate=1e-3, batch_size=128, device=device,
         patience=P.generalpatience
     )
@@ -134,16 +134,17 @@ def forward_wrappers(P, device, models):
 
     def dod_dfnn(mu_i, nu_i):
         return rom.dod_dfnn_forward(A_t, models["DOD+DFNN"]["inner"], models["DOD+DFNN"]["coeff"],
-                                    mu_i, nu_i, P.Nt, P.T)
+                                    mu_i, nu_i, P.Nt, example_name='ex01', reduction_tag='N_A_reduced')
 
     def dod_dl(mu_i, nu_i):
         return rom.dod_dl_rom_forward(A_t, models["DOD-DL-ROM"]["inner"],
                                       models["DOD-DL-ROM"]["coeff"], models["DOD-DL-ROM"]["dec"],
-                                      mu_i, nu_i, P.Nt, P.T)
+                                      mu_i, nu_i, P.Nt, example_name='ex01', reduction_tag='N_A_reduced')
 
     def pod_dl(mu_i, nu_i):
         return rom.pod_dl_rom_forward(A_P_t, models["POD-DL-ROM"]["coeff"],
-                                      models["POD-DL-ROM"]["dec"], mu_i, nu_i, P.Nt, P.T)
+                                      models["POD-DL-ROM"]["dec"], mu_i, nu_i, 
+                                      P.Nt, example_name='ex01', reduction_tag='N_reduced')
 
     return {"DOD+DFNN": dod_dfnn, "DOD-DL-ROM": dod_dl, "POD-DL-ROM": pod_dl}
 
@@ -161,6 +162,7 @@ def main():
 
     # Data
     tv_NA = rom.FetchTrainAndValidSet(0.8, 'ex01', 'N_A_reduced')
+    tv_N = rom.FetchTrainAndValidSet(0.8, 'ex01', 'N_reduced')
     full = np.load('examples/ex01/training_data/full_order_training_data_ex01.npz')
     mu_full, nu_full, sol_full = full['mu'], full['nu'], full['solution']
 
@@ -182,7 +184,7 @@ def main():
             if args.epochs is not None: P.generalepochs = args.epochs
             if args.restarts is not None: P.generalrestarts = args.restarts
 
-            models, trainers = build_trainers_and_models(P, device, tv_NA)
+            models, trainers = build_trainers_and_models(P, device, tv_NA, tv_N)
             fw = forward_wrappers(P, device, models)
 
             # Train per ROM

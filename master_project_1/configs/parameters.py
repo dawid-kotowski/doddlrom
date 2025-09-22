@@ -168,7 +168,7 @@ class Ex01Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 200
+    generalepochs: int = 20
     generalrestarts: int = 3
     generalpatience: int = 3
 
@@ -264,7 +264,7 @@ class Ex01Parameters:
 
     def make_pod_Encoder_kwargs(self) -> Dict[str, Any]:
         return dict(
-            input_dim=self.N_A,
+            input_dim=self.N,
             in_channels=self.pod_in_channels,
             hidden_channels=self.pod_hidden_channels,
             latent_dim=self.n,
@@ -276,7 +276,7 @@ class Ex01Parameters:
 
     def make_pod_Decoder_kwargs(self) -> Dict[str, Any]:
         return dict(
-            output_dim=self.N_A,
+            output_dim=self.N,
             out_channels=self.pod_in_channels,
             hidden_channels=self.pod_hidden_channels,
             latent_dim=self.n,

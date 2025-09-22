@@ -31,19 +31,21 @@ def initialize_weights(m):
 
 class FetchTrainAndValidSet:
     """
-    Loader for compact .npz datasets saved as:
-    - mu:       [Ns] float32
-    - nu:       [Ns] float32
-    - solution: [Ns, Nt, N_A], [Ns, Nt, N]  (instationary) or [Ns, N_A] (stationary)
+    Loads compact .npz saved as:
+      - mu:       [Ns] float32
+      - nu:       [Ns] float32
+      - solution: [Ns, Nt, D]  (instationary) or [Ns, D] (stationary)
+    Normalizes mu, nu (z-score on TRAIN split) and solution per mode (z-score on TRAIN split).
+    D refers to reduction dimension.
     """
-    def __init__(self, train_to_val_ratio: float, example_name: str, reduction_type: str):
-        self.train_to_val_ratio = train_to_val_ratio
-        path_npz = f'examples/{example_name}/training_data/{reduction_type}_training_data_{example_name}.npz'
-
+    def __init__(self, train_to_val_ratio: float, example_name: str, reduction_tag: str):
+        path_npz = f'examples/{example_name}/training_data/{reduction_tag}_training_data_{example_name}.npz'
         data = np.load(path_npz)
-        self.mu = data['mu']              # [Ns]
-        self.nu = data['nu']              # [Ns]
-        self.solution = data['solution']  # [Ns, Nt, N_A], [Ns, Nt, N] or [Ns, N_A]
+
+        # raw arrays
+        self.mu = data['mu'].astype(np.float32)              # [Ns]
+        self.nu = data['nu'].astype(np.float32)              # [Ns]
+        self.solution = data['solution'].astype(np.float32)  # [Ns, Nt, D] or [Ns, D]
 
         Ns = self.mu.shape[0]
         idx = np.arange(Ns, dtype=np.int32)
@@ -52,8 +54,38 @@ class FetchTrainAndValidSet:
         self.train_idx = idx[:n_train]
         self.valid_idx = idx[n_train:]
 
+        mu_tr = self.mu[self.train_idx]
+        nu_tr = self.nu[self.train_idx]
+        sol_tr = self.solution[self.train_idx]
+
+        eps = 1e-8
+        if sol_tr.ndim == 3:        # [Ntr, Nt, D]
+            axis = (0, 1)
+        elif sol_tr.ndim == 2:      # [Ntr, D]
+            axis = 0
+        else:
+            raise ValueError(f"Unexpected solution ndim: {sol_tr.ndim}")
+
+        mu_min = float(mu_tr.min()); mu_max = float(mu_tr.max())
+        nu_min = float(nu_tr.min()); nu_max = float(nu_tr.max())
+        sol_min = sol_tr.min(axis=axis); sol_max = sol_tr.max(axis=axis) # [D]
+
+
+        # Save 
+        stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
+        np.savez_compressed(stats_path,
+                            mu_min=mu_min, mu_max=mu_max,
+                            nu_min=nu_min, nu_max=nu_max,
+                            sol_min=sol_min.astype(np.float32),
+                            sol_max=sol_max.astype(np.float32))
+
+        self.mu_n = (self.mu - mu_min) / (mu_max - mu_min + eps)
+        self.nu_n = (self.nu - nu_min) / (nu_max - nu_min + eps)
+        self.solution_n = (self.solution - sol_min[None,...]) / (
+            sol_max[None,...] - sol_min[None,...] + eps)
+
     def _tuples(self, idx_array):
-        return [(float(self.mu[i]), float(self.nu[i]), self.solution[i]) for i in idx_array]
+        return [(float(self.mu_n[i]), float(self.nu_n[i]), self.solution_n[i]) for i in idx_array]
 
     def __call__(self, set_type: str):
         if set_type == 'train':
@@ -62,6 +94,7 @@ class FetchTrainAndValidSet:
             return self._tuples(self.valid_idx)
         else:
             raise ValueError("Type must be 'train' or 'valid'")
+
 
 # Define DatasetLoader
 class DatasetLoader(Dataset):
@@ -72,9 +105,9 @@ class DatasetLoader(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        mu, nu, solution = self.data[idx]   # unpack tuple
-        mu = torch.tensor(mu, dtype=torch.float32).unsqueeze(0)  # keep 2D shape
-        nu = torch.tensor(nu, dtype=torch.float32).unsqueeze(0)
+        mu, nu, solution = self.data[idx] 
+        mu = torch.tensor([mu], dtype=torch.float32)
+        nu = torch.tensor([nu], dtype=torch.float32)
         solution = torch.tensor(solution, dtype=torch.float32)
         return mu, nu, solution
 
@@ -149,10 +182,9 @@ class innerDOD(nn.Module):
 
 # Define DOD_DL_-DL training
 class innerDODTrainer:
-    def __init__(self, nt, T, dod_model, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
+    def __init__(self, nt, dod_model, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
                  batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience = 3):
         self.nt = nt
-        self.T = T
         self.learning_rate = learning_rate
         self.restarts = restart
         self.epochs = epochs
@@ -192,7 +224,7 @@ class innerDODTrainer:
         temp_orth = 0.0
 
         for i in range(self.nt + 1):
-            t_batch = torch.full((B, 1), i * self.T / (self.nt + 1),
+            t_batch = torch.full((B, 1), i  / (self.nt + 1),
                             dtype=torch.float32, device=self.device) # [B, 1]
 
             V = self.model(mu_batch, t_batch)                        # [B, N_A, N']
@@ -364,10 +396,9 @@ class DFNN(nn.Module):
 
 # Define the Trainer for both HadamardNN and DFNN
 class DFNNTrainer:
-    def __init__(self, nt, T, N_A, DOD_DL_model, coeffnn_model, train_valid_set, epochs, restarts, learning_rate,
+    def __init__(self, nt, N_A, DOD_DL_model, coeffnn_model, train_valid_set, epochs, restarts, learning_rate,
                  batch_size, device='cuda' if torch.cuda.is_available() else 'cpu', patience = 3):
         self.nt = nt
-        self.T = T
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.restarts = restarts
@@ -395,7 +426,7 @@ class DFNNTrainer:
         temp_error = 0.0
 
         for i in range(self.nt + 1):
-            t_batch = torch.full((B, 1), i * self.T / (self.nt + 1),
+            t_batch = torch.full((B, 1), i / (self.nt + 1),
                                 dtype=torch.float32, device=self.device)                   # [B,1]
 
             coeff_pred = self.model(mu_batch, nu_batch, t_batch)                             # [B, N']
@@ -590,10 +621,9 @@ class Decoder(nn.Module):
     
 # Define the Trainer for the DOD-DL-ROM Coefficients
 class DOD_DL_ROMTrainer:
-    def __init__(self, nt, T, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, error_weight=0.5,
+    def __init__(self, nt, DOD_DL_model, Coeff_DOD_DL_model, Encoder_model, Decoder_model, train_valid_set, error_weight=0.5,
                  epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.nt = nt
-        self.T = T
         self.learning_rate = learning_rate
         self.error_weight = error_weight
         self.epochs = epochs
@@ -627,7 +657,7 @@ class DOD_DL_ROMTrainer:
         temp_error = 0.0
 
         for i in range(self.nt + 1):
-            t_batch = torch.full((B, 1), i * self.T / (self.nt + 1),
+            t_batch = torch.full((B, 1), i / (self.nt + 1),
                                 dtype=torch.float32, device=self.device)                # [B,1]
 
             coeff_pred = self.coeff_model(mu_batch, nu_batch, t_batch)                  # [B, n]
@@ -740,10 +770,9 @@ u(mu, nu, t) = A Decoder(Coeff(mu, nu, t))
 '''
 # Define the Trainer for the standard POD DL
 class POD_DL_ROMTrainer:
-    def __init__(self, nt, T, Coeff_model, Encoder_model, Decoder_model, train_valid_set, error_weight,
+    def __init__(self, nt, Coeff_model, Encoder_model, Decoder_model, train_valid_set, error_weight,
                  epochs=1, restarts=1, learning_rate=1e-3, batch_size=32, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.nt = nt
-        self.T = T
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.error_weight = error_weight
@@ -766,7 +795,7 @@ class POD_DL_ROMTrainer:
         temp_error = 0.0
         for i in range(self.nt + 1):
             t_batch = torch.stack(
-                [torch.tensor(i * self.T / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+                [torch.tensor(i / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
             ).unsqueeze(1)
             coeff_output = self.coeff_model(mu_batch, nu_batch, t_batch)           # [B, n]
             decoder_output = self.de_model(coeff_output)                           # [B, N_A]
@@ -1217,10 +1246,9 @@ class CoLoRA(nn.Module):
 
 # Define CoLoRA trainer
 class CoLoRATrainer():
-    def __init__(self, nt, T, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, epochs, restarts, learning_rate,
+    def __init__(self, nt, DOD_0_model, coeffnn_0_model, colora_model, train_valid_set, epochs, restarts, learning_rate,
                  batch_size, device='cuda' if torch.cuda.is_available() else 'cpu', patience=3):
         self.nt = nt
-        self.T = T
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.restarts = restarts
@@ -1242,7 +1270,7 @@ class CoLoRATrainer():
         temp_error = 0.0
         for i in range(self.nt + 1):
             t_batch = torch.stack(
-                [torch.tensor(i * self.T / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+                [torch.tensor(i  / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
             ).unsqueeze(1)
             coeff_0_output = self.model_0(mu_batch, nu_batch).unsqueeze(2)
             DOD_0_output = self.DOD_0(mu_batch)                         
@@ -1313,97 +1341,84 @@ class CoLoRATrainer():
         return best_loss
 
 '''
----------------------
-Further additions for testing
----------------------
-'''
-
-# Works on numpy and torch
-class L2Norm():
-    def __init__(self, G):
-        self.G = G
-
-    def __call__(self, *args, **kwds):
-        if isinstance(*args, torch.Tensor):
-            return torch.sum(torch.sqrt(torch.einsum('ij,jk,ik->i', *args, self.G, *args)))
-        elif isinstance(*args, np.ndarray):
-            return np.sum(np.sqrt(np.einsum('ij,jk,ik->i', *args, self.G, *args)))
-        else:
-            print("Type Error in L2 Norm")
-            pass
-
-# Define a mean error Finder
-class MeanError():
-    def __init__(self, norm):
-        self.norm = norm
-    def __call__(self, data, **kwds):
-        error = 0
-        for entry in data:
-            error += self.norm(entry)
-        return error / len(data)
-
-'''
 -------------------
 Define simple forward pass assuming existence of networks
 -------------------
 '''
 
-def dod_dfnn_forward(A, innerDOD_model, Coeff_model, mu_i, nu_i, nt_, T):
-    dod_dl_solution = []
+def denormalize_solution(sol_norm: torch.Tensor, example_name: str, reduction_tag: str):
+    stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
+    d = np.load(stats_path)
+    m = torch.tensor(d['sol_min'], dtype=sol_norm.dtype, device=sol_norm.device)  # [D]
+    M = torch.tensor(d['sol_max'], dtype=sol_norm.dtype, device=sol_norm.device)  # [D]
+
+    scale = (M - m)
+
+    if sol_norm.ndim == 3:   # [Ns, Nt, D]
+        return sol_norm * scale.unsqueeze(0).unsqueeze(0) + m.unsqueeze(0).unsqueeze(0)
+    elif sol_norm.ndim == 2: # [Nt, D] or [Ns, D]
+        return sol_norm * scale.unsqueeze(0) + m.unsqueeze(0)
+    elif sol_norm.ndim == 1: # [D]
+        return sol_norm * scale + m
+    else:
+        raise ValueError(f"Unexpected ndim={sol_norm.ndim} for sol_norm")
+
+
+
+def pod_dl_rom_forward(A_P, POD_DL_model, De_model, 
+                       mu_i, nu_i, nt_, example_name: str, reduction_tag: str='N_reduced'):
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    preds = []
     for j in range(nt_ + 1):
-        time = torch.tensor(j * T / (nt_ + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
-        time = time.unsqueeze(0).unsqueeze(1)
-        tilde_V = innerDOD_model(mu_i, time)
-        coeff = Coeff_model(mu_i, nu_i, time).squeeze(0)
-        V = torch.matmul(A, tilde_V)
-        u_ij_dod_dfnn = torch.matmul(V, coeff)
-        dod_dl_solution.append(u_ij_dod_dfnn)
+        t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
+        coeff = POD_DL_model(mu_i, nu_i, t).unsqueeze(0)                 # [1, n]
+        y_norm = De_model(coeff).squeeze(0)                              # [N] (normalized reduced)
+        y = denormalize_solution(y_norm, example_name, reduction_tag)    # [N]
+        u = torch.matmul(A_P, y)                                         # [N_A]
+        preds.append(u)
+    return torch.stack(preds, dim=0).detach().cpu().numpy()
 
-    u_i_dod_dl = torch.stack(dod_dl_solution, dim=0)
-    u_i_dod_dl = u_i_dod_dl.detach().numpy()
-    return u_i_dod_dl
-
-def pod_dl_rom_forward(A_P, POD_DL_model, De_model, mu_i, nu_i, nt_, T):
-    pod_dl_solution = []
+def dod_dfnn_forward(A, innerDOD_model, DFNN_Nprime_model,
+                     mu_i, nu_i, nt_, example_name: str, reduction_tag: str='N_A_reduced'):
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    preds = []
     for j in range(nt_ + 1):
-        time = torch.tensor(j * T / (nt_ + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
-        time = time.unsqueeze(0).unsqueeze(1)
-        coeff_n_output = POD_DL_model(mu_i, nu_i, time).unsqueeze(0)
-        decoded_output = De_model(coeff_n_output).squeeze(0)
-        u_ij_pod_dl = torch.matmul(A_P, decoded_output)
-        pod_dl_solution.append(u_ij_pod_dl)
-    
-    u_i_pod_dl = torch.stack(pod_dl_solution, dim=0)
-    u_i_pod_dl = u_i_pod_dl.detach().numpy()
-    return u_i_pod_dl
+        t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
+        V_tilde = innerDOD_model(mu_i, t)                                        # [N_A, N']
+        coeff = DFNN_Nprime_model(mu_i, nu_i, t).squeeze(0)                         # [N']
+        u_red_norm = torch.matmul(V_tilde, coeff)                                # [N_A]
+        u_red = denormalize_solution(u_red_norm, example_name, reduction_tag)    # [N_A]
+        u = torch.matmul(A, u_red)                                               # [Nh]
+        preds.append(u)
+    return torch.stack(preds, dim=0).detach().cpu().numpy()
 
-def dod_dl_rom_forward(A, innerDOD_model, DOD_DL_model, De_model, mu_i, nu_i, nt_, T):
-    dod_dl_rom_solution = []
+
+def dod_dl_rom_forward(A, innerDOD_model, DOD_DL_model, De_model, 
+                       mu_i, nu_i, nt_, example_name: str, reduction_tag: str='N_A_reduced'):
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    preds = []
     for j in range(nt_ + 1):
-        time = torch.tensor(j * T / (nt_ + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
-        time = time.unsqueeze(0).unsqueeze(1)
-        tilde_V = innerDOD_model(mu_i, time)
-        V = torch.matmul(A, tilde_V)
-        coeff_n = DOD_DL_model(mu_i, nu_i, time)
-        decoded_N_prime = De_model(coeff_n).squeeze(0)
-        u_ij_dod_dl = torch.matmul(V, decoded_N_prime)
-        dod_dl_rom_solution.append(u_ij_dod_dl)
-    
-    u_i_dod_dl_rom = torch.stack(dod_dl_rom_solution, dim=0)
-    u_i_dod_dl_rom = u_i_dod_dl_rom.detach().numpy()
-    return u_i_dod_dl_rom
+        t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
+        V_tilde = innerDOD_model(mu_i, t)                                      # [N_A, N']
+        coeff_n = DOD_DL_model(mu_i, nu_i, t)                                  # [1, n]
+        beta = De_model(coeff_n).squeeze(0)                                    # [N'] 
+        u_red_norm = torch.matmul(V_tilde, beta)                               # [N_A] (normalized)
+        u_red = denormalize_solution(u_red_norm, example_name, reduction_tag)  # [N_A]
+        u = torch.matmul(A, u_red)                                             # [N_h]
+        preds.append(u)
+    return torch.stack(preds, dim=0).detach().cpu().numpy()
 
-def colora_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, mu_i, nu_i, nt_, T):
-    colora_dl_solution = []
+def colora_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, 
+                   mu_i, nu_i, nt_, example_name: str, reduction_tag: str='N_A_reduced'):
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    preds = []
     for j in range(nt_ + 1):
-        time = torch.tensor(j * T / (nt_ + 1), dtype=torch.float32).to('cuda' if torch.cuda.is_available() else 'cpu')
-        time = time.unsqueeze(0).unsqueeze(1)
-        stat_coeff_n_output = stat_Coeff_model(mu_i, nu_i).unsqueeze(0).unsqueeze(2)
-        stat_dod_output = stat_DOD_model(mu_i)
-        v_0 = torch.bmm(stat_dod_output.transpose(1, 2), stat_coeff_n_output)
-        u_ij_colora = torch.matmul(A, CoLoRA_DL_model(v_0, nu_i, time).squeeze(0))
-        colora_dl_solution.append(u_ij_colora)
-
-    u_i_colora_dl = torch.stack(colora_dl_solution, dim=0)
-    u_i_colora_dl = u_i_colora_dl.detach().numpy()
-    return u_i_colora_dl
+        t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
+        coeff0 = stat_Coeff_model(mu_i, nu_i).unsqueeze(0).unsqueeze(2)   # [1, N', 1]
+        V0 = stat_DOD_model(mu_i)                                         # [1, N_A, N']
+        v_0 = torch.bmm(V0.transpose(1, 2), coeff0)                       # [N_A]
+        u_norm = CoLoRA_DL_model(v_0, nu_i, t).squeeze(0)                 # [N_A] (normalized reduced)
+        u = denormalize_solution(u_norm, example_name, reduction_tag)     # [N_A]
+        u = torch.matmul(A, u)                                            # lift
+        preds.append(u)
+    return torch.stack(preds, dim=0).detach().cpu().numpy()

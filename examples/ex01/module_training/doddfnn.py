@@ -21,7 +21,6 @@ DOD_coeff_model = rom.DFNN(**P.make_dod_dfnn_DFNN_kwargs())
 # --- Trainer -----------------------------------------------------------------
 DOD_coeff_trainer = rom.DFNNTrainer(
     P.Nt,
-    P.T,
     P.N_A,                           
     innerDOD_model,
     DOD_coeff_model,

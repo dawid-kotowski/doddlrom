@@ -122,28 +122,32 @@ for entry in training_data:
 
     # --- POD-DL-ROM ---
     pod_dl_sol = rom.pod_dl_rom_forward(A_P, POD_coeff_model, 
-                                       POD_Decoder_model, mu_i, nu_i, P.Nt, P.T)  # -> [P.Nt+1, Nh]
+                                       POD_Decoder_model, mu_i, nu_i, P.Nt, 
+                                       example_name='ex01', reduction_tag='N_reduced')  # -> [P.Nt+1, Nh]
     Tmin = min(sol.shape[0], pod_dl_sol.shape[0])
     pod_dl_residual = fom.solution_space.from_numpy(np.abs(sol[:Tmin] - pod_dl_sol[:Tmin]))
     pod_dl_sol_vec = fom.solution_space.from_numpy(pod_dl_sol)
 
     # --- DOD-DL-ROM ---
     dod_dl_sol = rom.dod_dl_rom_forward(A, innerDOD_model, DOD_DL_coeff_model, 
-                                       DOD_DL_Decoder_model, mu_i, nu_i, P.Nt, P.T)  # -> [P.Nt+1, Nh]
+                                       DOD_DL_Decoder_model, mu_i, nu_i, P.Nt, 
+                                       example_name='ex01', reduction_tag='N_A_reduced')  # -> [P.Nt+1, Nh]
     Tmin = min(sol.shape[0], dod_dl_sol.shape[0])
     dod_dl_residual = fom.solution_space.from_numpy(np.abs(sol[:Tmin] - dod_dl_sol[:Tmin]))
     dod_dl_sol_vec = fom.solution_space.from_numpy(dod_dl_sol)
 
     # --- CoLoRA ---
     u_i_colora = rom.colora_forward(A, stat_DOD_model, stat_Coeff_model, 
-                                   CoLoRA_model, mu_i, nu_i, P.Nt, P.T)  # -> [P.Nt+1, Nh]
+                                   CoLoRA_model, mu_i, nu_i, P.Nt, 
+                                   example_name='ex01', reduction_tag='N_A_reduced')  # -> [P.Nt+1, Nh]
     Tmin = min(sol.shape[0], u_i_colora.shape[0])
     colora_dl_residual = fom.solution_space.from_numpy(np.abs(sol[:Tmin] - u_i_colora[:Tmin]))
     u_i_colora_vec = fom.solution_space.from_numpy(u_i_colora)
 
     # --- DOD+DFNN ---
     coeff_dl_sol = rom.dod_dfnn_forward(A, innerDOD_model, DFNN_Nprime_model, 
-                                         mu_i, nu_i, P.Nt, P.T)  # -> [P.Nt+1, Nh]
+                                         mu_i, nu_i, P.Nt, 
+                                         example_name='ex01', reduction_tag='N_A_reduced')  # -> [P.Nt+1, Nh]
     Tmin = min(sol.shape[0], coeff_dl_sol.shape[0])
     dod_dl_residual = fom.solution_space.from_numpy(np.abs(sol[:Tmin] - coeff_dl_sol[:Tmin]))
     coeff_dl_sol_vec = fom.solution_space.from_numpy(coeff_dl_sol)

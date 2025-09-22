@@ -18,8 +18,7 @@ DFNN_P_n_model = dr.DFNN(**P.make_pod_DFNN_kwargs())
 
 # --- Trainer -----------------------------------------------------------------
 DFNN_P_n_trainer = dr.POD_DL_ROMTrainer(
-    P.Nt,
-    P.T,
+    P.Nt, 
     DFNN_P_n_model, En_model, De_model,
     train_valid_data, 0.999,
     trainer["epochs"], trainer["restarts"],
