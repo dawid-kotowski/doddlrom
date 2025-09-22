@@ -73,7 +73,7 @@ def train_doddfnn(P, example_name, trainer_overrides):
 
 def train_dod_dl_rom(P, example_name, trainer_overrides):
     # data: N-reduced
-    tv = rom.FetchTrainAndValidSet(0.8, example_name, 'N_reduced')
+    tv = rom.FetchTrainAndValidSet(0.8, example_name, 'N_A_reduced')
     inner = rom.innerDOD(**P.make_innerDOD_kwargs())
     inner.load_state_dict(torch.load(f'examples/{example_name}/state_dicts/DOD_Module.pth', map_location='cpu'))
     inner.eval()

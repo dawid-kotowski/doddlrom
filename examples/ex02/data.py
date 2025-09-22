@@ -20,6 +20,7 @@ def rhs_function(x, mu):
     return values
 
 # Define the stationary problem
+# Note, that the Dirichlet Boundary conditions are NOT enforced here, so the Dirichlet shift can be skipped!
 mu_param = Parameters({'mu': 3, 'nu': 1})
 advection_generic_function = GenericFunction(advection_function, dim_domain=2, shape_range=(2,), parameters=mu_param)
 rhs_generic_function = GenericFunction(rhs_function, dim_domain=2, shape_range=(), parameters=mu_param)
@@ -30,6 +31,7 @@ stationary_problem = StationaryProblem(
                               [ProjectionParameterFunctional('nu', 1)]),
     advection=advection_generic_function,
     neumann_data=ConstantFunction(0, 2),
+    dirichlet_data=None,
     name='advection_problem'
 )
 
@@ -41,22 +43,20 @@ problem = InstationaryProblem(
     name='advection_problem'
 )
 
-'''
---------------------------
-Instationary Training Data for the POD-DL-ROM inspired NN
---------------------------
-'''
-
 # Discretize the problem
 fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt)
 
-# Discretize the problem
-fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt)
-
-print(fom.parameters)
+# Discretize the stationary problem
+stat_fom, stat_fom_data = discretize_stationary_cg(stationary_problem, diameter=P.diameter)
 
 # Define the parameter space with ranges for 'mu' and 'nu'
 parameter_space = fom.parameters.space({
+    'mu': (0.3, 0.7),
+    'nu': (0.002, 0.005)
+})
+
+# --- stationary FOM & shift ---
+stat_parameter_space = stat_fom.parameters.space({
     'mu': (0.3, 0.7),
     'nu': (0.002, 0.005)
 })
@@ -65,39 +65,56 @@ parameter_space = fom.parameters.space({
 sample_size_per_param = int(np.ceil(np.power(P.Ns, 1 / 4)))
 training_set = parameter_space.sample_uniformly(sample_size_per_param)
 
-# Create an empty list to hold the training data
-training_data = []
-solution_set = fom.solution_space.empty()
-
-# Generate training and validation sets
-sample_size_per_param = int(np.ceil(np.sqrt(P.Ns)))
-training_set = parameter_space.sample_uniformly(sample_size_per_param)
-
 # Collect parameter arrays
 mu_arr = np.array([p['mu'] for p in training_set], dtype=np.float32)
 nu_arr = np.array([p['nu'] for p in training_set], dtype=np.float32)
 
-# Solve all samples once; stack to [Ns, Nt, Nh], float32
+# Solve all stationary samples; make both a shifted solution_set for POD and a raw array for saving
+stat_mu = np.array([p['mu'] for p in training_set], dtype=np.float32)
+stat_nu = np.array([p['nu'] for p in training_set], dtype=np.float32)
+
+# Create an empty list to hold the training data
+solution_set = fom.solution_space.empty()         
+stat_solution_set = stat_fom.solution_space.empty()
+
+# Enforce Dirichlet shift
+u_t_0 = fom.solve(parameter_space.sample_uniformly(1)[0])
+u_t_0_np = u_t_0.to_numpy().astype(np.float32)
+u_0 = stat_fom.solve(stat_parameter_space.sample_uniformly(1)[0])
+u_0_np = u_0.to_numpy().astype(np.float32)
+np.savez_compressed(f"examples/{example_name}/training_data/dirichlet_shift_{example_name}.npz", 
+                    u0=u_0_np, ut0 = u_t_0_np)
+
+'''
+--------------------------
+Instationary Data
+--------------------------
+'''
+
 solutions = []
+shifted_solutions = []
+shifted_solutions_pymor = fom.solution_space.empty()
 for mu_nu in training_set:
-    solution = fom.solve(mu_nu)
-    sol = solution.to_numpy()                   # shape [Nt, Nh]
-    solution_set.append(solution)
-    solutions.append(sol.astype(np.float32))
-solutions = np.stack(solutions, axis=0)         # [Ns, Nt, Nh]
-fom.visualize(solution)                         # visualize last solution as check
+    solution = fom.solve(mu_nu)                                                     # [Nt, Nh]
+    shifted_solution = solution - u_t_0   
+    shifted_solutions_pymor.append(shifted_solution)                                  
+    shifted_solutions.append(shifted_solution.to_numpy().astype(np.float32))
+    solutions.append(solution.to_numpy().astype(np.float32))
+shifted_solutions = np.stack(shifted_solutions, axis=0)
+solutions = np.stack(solutions, axis=0)                                             # [Ns, Nt, Nh]
+fom.visualize(solution)                                                             # visualize last solution as check
 
 # Save compact FOM data
 np.savez_compressed(f'examples/{example_name}/training_data/full_order_training_data_{example_name}.npz',
                     mu=mu_arr, nu=nu_arr, solution=solutions)
 
 # --- Ambient for DOD-based ROMs ---
-pod_modes, singular_values = pod(solution_set, product=fom.h1_0_semi_product, modes=P.N_A)
+pod_modes, singular_values = pod(shifted_solutions_pymor, product=fom.h1_0_semi_product, modes=P.N_A)
 A = pod_modes.to_numpy().T.astype(np.float32)            # [Nh, N_A]
 np.savez_compressed(f'examples/{example_name}/training_data/N_A_ambient_{example_name}.npz', ambient=A)
 
 # --- Ambient for POD-based ROMs ---
-pod_modes_N, singular_values_N = pod(solution_set, product=fom.h1_0_semi_product, modes=P.N)
+pod_modes_N, singular_values_N = pod(shifted_solutions_pymor, product=fom.h1_0_semi_product, modes=P.N)
 A_P = pod_modes_N.to_numpy().T.astype(np.float32)            # [Nh, N]
 np.savez_compressed(f'examples/{example_name}/training_data/N_ambient_{example_name}.npz', ambient=A_P)
 
@@ -108,7 +125,7 @@ np.savez_compressed(f'examples/{example_name}/training_data/gram_matrix_{example
 # --- Reduced instationary data: [Ns, Nt, N_A] ---
 # Compute GA once, then batch-matmul
 GA = (G @ A).astype(np.float32)                           # [Nh, N_A]
-reduced = np.einsum('ijk,kl->ijl', solutions, GA)         # [Ns, Nt, N_A]
+reduced = np.einsum('ijk,kl->ijl', shifted_solutions, GA)         # [Ns, Nt, N_A]
 
 np.savez_compressed(f'examples/{example_name}/training_data/N_A_reduced_training_data_{example_name}.npz',
                     mu=mu_arr, nu=nu_arr, solution=reduced)
@@ -116,10 +133,51 @@ np.savez_compressed(f'examples/{example_name}/training_data/N_A_reduced_training
 # --- Reduced instationary data: [Ns, Nt, N] ---
 # Compute GA_P once, then batch-matmul
 GA_P = (G @ A_P).astype(np.float32)                           # [Nh, N]
-reduced_P = np.einsum('ijk,kl->ijl', solutions, GA_P)         # [Ns, Nt, N]
+reduced_P = np.einsum('ijk,kl->ijl', shifted_solutions, GA_P)         # [Ns, Nt, N]
 
 np.savez_compressed(f'examples/{example_name}/training_data/N_reduced_training_data_{example_name}.npz',
                     mu=mu_arr, nu=nu_arr, solution=reduced_P)
+
+'''
+----------------------------
+Stationary Data 
+----------------------------
+'''
+
+stat_solutions = []
+shifted_stat_solutions = []
+shifted_stat_solutions_pymor = stat_fom.solution_space.empty()
+for mu_nu in training_set:
+    stat_solution = stat_fom.solve(mu_nu)                                                     # [Nh]
+    shifted_stat_solution = stat_solution - u_0   
+    shifted_stat_solutions_pymor.append(shifted_stat_solution)                                  
+    shifted_stat_solutions.append(shifted_stat_solution.to_numpy().astype(np.float32))
+    stat_solutions.append(stat_solution.to_numpy().astype(np.float32))
+shifted_stat_solutions = np.stack(shifted_stat_solutions, axis=0)
+stat_solutions = np.stack(stat_solutions, axis=0)                                             # [Ns, Nh]
+fom.visualize(stat_solution)                                                             # visualize last solution as check
+
+# Save compact stationary FOM data (raw, unshifted)
+np.savez_compressed(f'examples/{example_name}/training_data/stationary_training_data_{example_name}.npz',
+                    mu=stat_mu, nu=stat_nu, solution=stat_solutions)
+
+# --- stationary POD/ambient/gram ---
+stat_pod_modes, stat_singular_values = pod(shifted_stat_solutions_pymor,
+                                           product=stat_fom.h1_0_semi_product, modes=P.N_A)
+stat_A = stat_pod_modes.to_numpy().T.astype(np.float32)                # [Nh, N_A]
+np.savez_compressed(f'examples/{example_name}/training_data/stationary_ambient_matrix_{example_name}.npz',
+                    ambient=stat_A)
+
+stat_G = stat_fom.h1_0_semi_product.matrix.toarray().astype(np.float32)       # [Nh, Nh]
+np.savez_compressed(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npz',
+                    gram=stat_G)
+
+# --- reduced stationary data: [N, N_A] ---
+GA_stat = (stat_G @ stat_A).astype(np.float32)                         # [Nh, N_A]
+stat_reduced = shifted_stat_solutions @ GA_stat                        # [Ns, N_A]
+
+np.savez_compressed(f'examples/{example_name}/training_data/reduced_stationary_training_data_{example_name}.npz',
+                    mu=stat_mu, nu=stat_nu, solution=stat_reduced)
 
 '''
  -------------------------
@@ -179,62 +237,3 @@ for i, mu_vec in enumerate(mu_candidates):
 np.savez_compressed(f'examples/{example_name}/training_data/pod_singular_values_{example_name}.npz',
                     sigma_global_NA=singular_values.astype(np.float32),
                     sigma_mu_t_sup=sigma_mu_t_sup.astype(np.float32))
-
-'''
-----------------------------
-Stationary Data for the CoLoRA inspired NN
-----------------------------
-'''
-
-# Discretize the stationary problem
-stat_fom, stat_fom_data = discretize_stationary_cg(stationary_problem, diameter=P.diameter)
-
-# --- stationary FOM & shift ---
-stat_parameter_space = stat_fom.parameters.space({
-    'mu': (0.3, 0.7),
-    'nu': (0.002, 0.005)
-})
-
-# Dirichlet shift (store compressed)
-u_0 = stat_fom.solve(stat_parameter_space.sample_uniformly(1)[0])
-u_0_np = u_0.to_numpy().astype(np.float32)
-np.savez_compressed(f"examples/{example_name}/training_data/dirichlet_shift_{example_name}.npz", u0=u_0_np)
-
-# Solve all stationary samples; make both a shifted solution_set for POD and a raw array for saving
-stat_mu = np.array([p['mu'] for p in training_set], dtype=np.float32)
-stat_nu = np.array([p['nu'] for p in training_set], dtype=np.float32)
-
-stat_solutions = []          
-stat_solution_set = stat_fom.solution_space.empty()
-
-for mu_nu in training_set:
-    sol_vec = stat_fom.solve(mu_nu)                         # vector in model space
-    sol_np = sol_vec.to_numpy().flatten().astype(np.float32)  # [Nh]
-    stat_solutions.append(sol_np)
-
-    # shift for POD
-    stat_solution_set.append(sol_vec - u_0)
-
-stat_solutions = np.stack(stat_solutions, axis=0)              # [Ns, Nh]
-
-# Save compact stationary FOM data (raw, unshifted)
-np.savez_compressed(f'examples/{example_name}/training_data/stationary_training_data_{example_name}.npz',
-                    mu=stat_mu, nu=stat_nu, solution=stat_solutions)
-
-# --- stationary POD/ambient/gram ---
-stat_pod_modes, stat_singular_values = pod(stat_solution_set,
-                                           product=stat_fom.h1_0_semi_product, modes=P.N_A)
-stat_A = stat_pod_modes.to_numpy().T.astype(np.float32)       # [Nh, N_A]
-np.savez_compressed(f'examples/{example_name}/training_data/stationary_ambient_matrix_{example_name}.npz',
-                    ambient=stat_A)
-
-stat_G = stat_fom.h1_0_semi_product.matrix.toarray().astype(np.float32)  # [Nh, Nh]
-np.savez_compressed(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npz',
-                    gram=stat_G)
-
-# --- reduced stationary data: [N, N_A] ---
-GA_stat = (stat_G @ stat_A).astype(np.float32)                 # [Nh, N_A]
-stat_reduced = stat_solutions @ GA_stat                        # [Ns, N_A]
-
-np.savez_compressed(f'examples/{example_name}/training_data/reduced_stationary_training_data_{example_name}.npz',
-                    mu=stat_mu, nu=stat_nu, solution=stat_reduced)

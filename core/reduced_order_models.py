@@ -66,7 +66,6 @@ class FetchTrainAndValidSet:
         else:
             raise ValueError(f"Unexpected solution ndim: {sol_tr.ndim}")
 
-        # Treat mu/nu as 2D: [N, d] even if scalar → d=1
         mu_tr_2d = mu_tr if mu_tr.ndim == 2 else mu_tr[:, None]
         nu_tr_2d = nu_tr if nu_tr.ndim == 2 else nu_tr[:, None]
 
@@ -78,7 +77,6 @@ class FetchTrainAndValidSet:
         sol_min = sol_tr.min(axis=axis) # [D]
         sol_max = sol_tr.max(axis=axis) # [D]
 
-        # Save vector stats (keeps compatibility: scalars become length-1 arrays)
         stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
         np.savez_compressed(stats_path,
             mu_min=mu_min.astype(np.float32), mu_max=mu_max.astype(np.float32),
@@ -86,7 +84,6 @@ class FetchTrainAndValidSet:
             sol_min=sol_min.astype(np.float32), sol_max=sol_max.astype(np.float32)
         )
 
-        # Normalize with broadcasting
         mu_2d = self.mu if self.mu.ndim == 2 else self.mu[:, None]
         nu_2d = self.nu if self.nu.ndim == 2 else self.nu[:, None]
 
@@ -554,7 +551,9 @@ class Encoder(nn.Module):
     
     def _compute_linear_num(self):
         C, H, W = self._compute_encoder_shape()
-        return int(np.floor(C*H*W / self.latent_dim)) - 1
+        num = int(np.floor(C*H*W / self.latent_dim)) - 1
+        return max(1, num)
+
 
     def _compute_encoder_shape(self):
         D_temp = math.ceil(math.sqrt(self.input_dim))
@@ -616,7 +615,9 @@ class Decoder(nn.Module):
 
     def _compute_linear_num(self):
         C, H, W = self._compute_encoder_shape()
-        return int(np.floor(C*H*W / self.latent_dim)) - 1
+        num = int(np.floor(C*H*W / self.latent_dim)) - 1
+        return max(1, num)
+
     
     def _compute_encoder_shape(self):
         D_temp = math.ceil(math.sqrt(self.output_dim))
@@ -1032,7 +1033,7 @@ class statDODTrainer:
         output = self.model(mu_batch)
 
         # Reshape solution_batch to a 3D tensor with shape [batch_size, N_A, 1]
-        solution_batch = solution_batch.unsqueeze(2)
+        solution_batch = solution_batch.transpose(-2, -1)
 
         # Perform batch matrix multiplications
         v_u = torch.bmm(output, solution_batch)
@@ -1122,7 +1123,7 @@ class statHadamardNNTrainer:
         dod_output = self.dod(mu_batch)
 
         # Reshape solution_batch to a 3D tensor with shape [batch_size, N_A, 1]
-        solution_batch = solution_batch.unsqueeze(2)
+        solution_batch = solution_batch.transpose(-2, -1)
 
         # Perform batch matrix multiplications
         output = torch.bmm(dod_output, solution_batch).squeeze(2)
@@ -1432,7 +1433,7 @@ def denormalize_solution(sol_norm: torch.Tensor, example_name: str, reduction_ta
 
 
 
-def pod_dl_rom_forward(A_P, POD_DL_model, De_model, 
+def pod_dl_rom_forward(ut0, A_P, POD_DL_model, De_model, 
                        mu_i, nu_i, nt_, example_name: str, reduction_tag: str='N_reduced'):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     preds = []
@@ -1443,11 +1444,11 @@ def pod_dl_rom_forward(A_P, POD_DL_model, De_model,
         coeff = POD_DL_model(mu_i_norm, nu_i_norm, t).unsqueeze(0)                 # [1, n]
         y_norm = De_model(coeff).squeeze(0)                              # [N] (normalized reduced)
         y = denormalize_solution(y_norm, example_name, reduction_tag)    # [N]
-        u = torch.matmul(A_P, y)                                         # [N_A]
+        u = ut0[j] + torch.matmul(A_P, y)                                   # [N_h]
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
 
-def dod_dfnn_forward(A, innerDOD_model, DFNN_Nprime_model,
+def dod_dfnn_forward(ut0, A, innerDOD_model, DFNN_Nprime_model,
                      mu_i, nu_i, nt_, example_name: str, reduction_tag: str='N_A_reduced'):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     preds = []
@@ -1459,12 +1460,12 @@ def dod_dfnn_forward(A, innerDOD_model, DFNN_Nprime_model,
         coeff = DFNN_Nprime_model(mu_i_norm, nu_i_norm, t).squeeze(0)                        # [N']
         u_red_norm = torch.matmul(V_tilde, coeff)                                # [N_A]
         u_red = denormalize_solution(u_red_norm, example_name, reduction_tag)    # [N_A]
-        u = torch.matmul(A, u_red)                                               # [Nh]
+        u = ut0[j] + torch.matmul(A, u_red)                                         # [N_h]
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
 
 
-def dod_dl_rom_forward(A, innerDOD_model, DOD_DL_model, De_model, 
+def dod_dl_rom_forward(ut0, A, innerDOD_model, DOD_DL_model, De_model, 
                        mu_i, nu_i, nt_, example_name: str, reduction_tag: str='N_A_reduced'):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     preds = []
@@ -1477,11 +1478,11 @@ def dod_dl_rom_forward(A, innerDOD_model, DOD_DL_model, De_model,
         beta = De_model(coeff_n).squeeze(0)                                    # [N'] 
         u_red_norm = torch.matmul(V_tilde, beta)                               # [N_A] (normalized)
         u_red = denormalize_solution(u_red_norm, example_name, reduction_tag)  # [N_A]
-        u = torch.matmul(A, u_red)                                             # [N_h]
+        u = ut0[j] + torch.matmul(A, u_red)                                       # [N_h]
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
 
-def colora_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, 
+def colora_forward(ut0, u0, stat_G_t, A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, 
                    mu_i, nu_i, nt_, example_name: str, reduction_tag: str='N_A_reduced'):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     preds = []
@@ -1489,12 +1490,13 @@ def colora_forward(A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model,
         t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
         mu_i_norm = normalize_mu(mu_i, example_name, reduction_tag)
         nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)    
-        coeff0 = stat_Coeff_model(mu_i_norm, nu_i_norm).unsqueeze(0).unsqueeze(2)   # [1, N', 1]
-        V0 = stat_DOD_model(mu_i_norm)                                         # [1, N_A, N']
-        v_0 = torch.bmm(V0.transpose(1, 2), coeff0)                       # [N_A]
-        u_norm = CoLoRA_DL_model(v_0, nu_i_norm, t).squeeze(0)                 # [N_A] (normalized reduced)
+        coeff0 = stat_Coeff_model(mu_i_norm, nu_i_norm)                             # [N']
+        V0 = stat_DOD_model(mu_i_norm).squeeze(0)                                   # [N_A, N']
+        red_shift = torch.matmul(torch.matmul(A.T, stat_G_t), u0)
+        v_0 = red_shift + torch.matmul(V0.T, coeff0)                                     # [N_A]
+        u_norm = CoLoRA_DL_model(v_0.unsqueeze(0), nu_i_norm, t).squeeze(0)            # [N_A] (normalized reduced)
         u = denormalize_solution(u_norm, example_name, reduction_tag)     # [N_A]
-        u = torch.matmul(A, u)                                            # lift
+        u = ut0[j] + torch.matmul(A, u)                                      # lift
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
 
@@ -1510,23 +1512,29 @@ def forward_wrappers(P, device, models, example_name):
     A_P = np.load(f'examples/{example_name}/training_data/N_ambient_{example_name}.npz')['ambient'].astype(np.float32)
     A_t = torch.tensor(A, dtype=torch.float32, device=device)
     A_P_t = torch.tensor(A_P, dtype=torch.float32, device=device)
+    stat_G = np.load(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npz')['gram'].astype(np.float32)
+    stat_G_t = torch.tensor(stat_G, dtype=torch.float32, device=device)
+
+    shifts = np.load(f'examples/{example_name}/training_data/dirichlet_shift_{example_name}.npz')
+    ut0 = torch.tensor(shifts['ut0'], dtype=torch.float32, device=device)  # [Nt, Nh]
+    u0 = torch.tensor(shifts['u0'], dtype=torch.float32, device=device).squeeze(0)  # [Nh]
 
     def dod_dfnn(mu_i, nu_i):
-        return dod_dfnn_forward(A_t, models["DOD+DFNN"]["inner"], models["DOD+DFNN"]["coeff"],
+        return dod_dfnn_forward(ut0, A_t, models["DOD+DFNN"]["inner"], models["DOD+DFNN"]["coeff"],
                                     mu_i, nu_i, P.Nt, example_name, reduction_tag='N_A_reduced')
 
     def dod_dl(mu_i, nu_i):
-        return dod_dl_rom_forward(A_t, models["DOD-DL-ROM"]["inner"],
+        return dod_dl_rom_forward(ut0, A_t, models["DOD-DL-ROM"]["inner"],
                                       models["DOD-DL-ROM"]["coeff"], models["DOD-DL-ROM"]["dec"],
                                       mu_i, nu_i, P.Nt, example_name, reduction_tag='N_A_reduced')
 
     def pod_dl(mu_i, nu_i):
-        return pod_dl_rom_forward(A_P_t, models["POD-DL-ROM"]["coeff"],
+        return pod_dl_rom_forward(ut0, A_P_t, models["POD-DL-ROM"]["coeff"],
                                       models["POD-DL-ROM"]["dec"], mu_i, nu_i, 
                                       P.Nt, example_name, reduction_tag='N_reduced')
 
     def colora(mu_i, nu_i):
-        return colora_forward(A_t, models["CoLoRA"]["inner"], models["CoLoRA"]["inner_coeff"], 
+        return colora_forward(ut0, u0, stat_G_t, A_t, models["CoLoRA"]["inner"], models["CoLoRA"]["inner_coeff"], 
                               models["CoLoRA"]["coeff"], mu_i, nu_i, P.Nt, 
                               example_name, reduction_tag='N_A_reduced')
 

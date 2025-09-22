@@ -117,8 +117,8 @@ _PRESETS: Dict[str, Dict[str, Any]] = {
 class Ex01Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
     N_h: int = 5101
-    N_A: int = 64
-    N: int = 64
+    N_A: int = 32
+    N: int = 32
     N_prime: int = 16
     n: int = 4
     Nt: int = 10
@@ -318,15 +318,15 @@ class Ex01Parameters:
 @dataclass
 class Ex02Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
-    N_h: int = 222211
-    N_A: int = 64
+    N_h: int = 9113
+    N_A: int = 100
     N: int = 64
     N_prime: int = 16
-    n: int = 4
+    n: int = 8
     Nt: int = 10
     Ns: int = 400
-    T: float = 1.
-    diameter: float = 0.01
+    T: float = 0.5
+    diameter: float = 0.015
     parameter_mu_dim: int = 3
     parameter_nu_dim: int = 1
 
@@ -355,7 +355,7 @@ class Ex02Parameters:
     pod_kernel: int = 3
     pod_stride: int = 2
     pod_padding: int = 1
-    pod_num_layers: int = 5
+    pod_num_layers: int = 3
 
     # -------- Stationary + CoLoRA ------------------------------------------
     L: int = 3
