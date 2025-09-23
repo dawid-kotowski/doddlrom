@@ -134,7 +134,7 @@ def build_trainers_and_models(P, device, train_valid_set_N_A, train_valid_set_N)
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--example', type=str, required=True)
-    parser.add_argument('--profiles', nargs='+', default=['baseline','wide','tiny','debug'])
+    parser.add_argument('--profiles', nargs='+', default=['test1, test2, test3, test4, test5'])
     parser.add_argument('--epochs', type=int, default=None)
     parser.add_argument('--restarts', type=int, default=None)
     parser.add_argument('--eval_samples', type=int, default=5)
@@ -159,7 +159,7 @@ def main():
     with open(csv_path, 'a', newline='') as fcsv:
         writer = csv.DictWriter(fcsv, fieldnames=[
             'profile','rom','epochs','restarts','val_loss','params_total','params_nonzero',
-            'forward_ms','abs_L2G','rel_L2G'
+            'forward_ms','abs_L2G','rel_L2G', 'N_s', 'N_t'
         ])
         if first_write: writer.writeheader()
 
@@ -233,6 +233,8 @@ def main():
                     'forward_ms': float(fwd_ms),
                     'abs_L2G': float(np.mean(abs_list)),
                     'rel_L2G': float(np.mean(rel_list)),
+                    'N_s': int(P.Ns),
+                    'N_t': int(P.Nt)
                 }
                 writer.writerow(row)
                 print(json.dumps(row))

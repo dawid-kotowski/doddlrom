@@ -5,7 +5,7 @@ from core.configs.parameters import Ex02Parameters
 
 # --- Configure this run ------------------------------------------------------
 example_name = 'ex02'
-P = Ex02Parameters(profile="baseline")            # or "wide" / "tiny" / "debug"
+P = Ex02Parameters(profile="baseline")        
 P.assert_consistent()
 
 trainer_defaults = P.trainer_defaults()  

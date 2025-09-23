@@ -62,7 +62,6 @@ true_solution = fom.solution_space.empty()
 G = np.load(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npz')['gram'].astype(np.float32)
 
 for entry in training_data:
-    # unpack tuple
     mu, nu, sol = entry
 
     def to_batch_vec(x):

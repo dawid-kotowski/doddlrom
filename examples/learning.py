@@ -4,8 +4,7 @@ Learning script for {example_name}.
 Run Programm:
 -----------------------------------
 python examples/learning.py 
---example "ex0{number}"
---profiles "profiles" 
+--example "ex0{number}" [REQUIRED]
 --epochs "epochs" 
 --restarts "restarts" 
 -----------------------------------
@@ -129,7 +128,6 @@ def train_colora(P, example_name, trainer_overrides):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--example', type=str, required=True)
-    ap.add_argument('--profile', type=str, required=True)
     ap.add_argument('--epochs', type=int, default=None)
     ap.add_argument('--restarts', type=int, default=None)
     args = ap.parse_args()
@@ -137,7 +135,7 @@ def main():
     example_name = args.example
     ensure_dirs(example_name)
 
-    P = load_parameters(example_name, profile=args.profile)
+    P = load_parameters(example_name, profile='baseline')
     P.assert_consistent()
     td = P.trainer_defaults()
     if args.epochs is not None:   td["epochs"] = args.epochs

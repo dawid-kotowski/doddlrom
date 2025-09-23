@@ -778,7 +778,7 @@ class DOD_DL_ROMTrainer:
 We furthermore add a POD DL ROM Trainer on the basis of the Autoencoder,
 as the POD Matrix is already provided. The approximation is then given via
 
-u(mu, nu, t) = A Decoder(Coeff(mu, nu, t))
+u(mu, nu, t) = A_P Decoder(Coeff(mu, nu, t))
 -----------------------------------
 '''
 # Define the Trainer for the standard POD DL
@@ -1540,24 +1540,43 @@ def forward_wrappers(P, device, models, example_name):
 
     return {"DOD+DFNN": dod_dfnn, "DOD-DL-ROM": dod_dl, "POD-DL-ROM": pod_dl, "CoLoRA": colora}
 
-def g_norm_batch(G, U):  # U: [Nt, Nh] or [Nh]
-    if U.ndim == 1:
-        return float(np.sqrt(U @ (G @ U) + 1e-12))
-    vals = []
-    for t in range(U.shape[0]):
-        u = U[t]
-        vals.append(float(np.sqrt(u @ (G @ u) + 1e-12)))
-    return np.array(vals, dtype=np.float64)
+def g_norm_batch(G, U):
+    U64 = np.asarray(U, dtype=np.float64)
+    G64 = np.asarray(G, dtype=np.float64)
+
+    if U64.ndim == 1:
+        val = U64 @ (G64 @ U64)
+        return float(np.sqrt(val if val > 0.0 else 0.0))
+
+    vals = np.einsum('ti,ij,tj->t', U64, G64, U64, optimize=True)  
+    vals = np.maximum(vals, 0.0)
+    return np.sqrt(vals, dtype=np.float64)
 
 def evaluate_rom_forward(rom_name, forward_fn, args, ref_sol, G):
-    # forward_fn should return array with shape [Nt, Nh] 
+    """
+    forward_fn(*args) -> [T, N_h]
+    Returns:
+      abs_err = ( E_t ||u_ref - u_hat||_G^2 )^{1/2}
+      rel_err = ( \int ||u_ref - u_hat||_G^2 )^{1/2} / ( \int ||u_ref||_G^2 )^{1/2}
+    """
     U_hat = forward_fn(*args)
     Tm = min(ref_sol.shape[0], U_hat.shape[0])
-    U_ref = ref_sol[:Tm]
-    U_hat = U_hat[:Tm]
-    diffs = U_ref - U_hat
-    num = np.array([g_norm_batch(G, diffs[t]) for t in range(Tm)])
-    den = np.array([g_norm_batch(G, U_ref[t])  for t in range(Tm)])
-    abs_err = float(num.mean())
-    rel_err = float((num / (den + 1e-12)).mean())
-    return abs_err, rel_err, U_hat
+
+    U_ref = np.asarray(ref_sol[:Tm], dtype=np.float64)  # [T, N_h]
+    U_hat = np.asarray(U_hat[:Tm],  dtype=np.float64)   # [T, N_h]
+    G64   = np.asarray(G,           dtype=np.float64)   # [N_h, N_h]
+
+    D = U_ref - U_hat  # [T, N_h]
+
+    # squared G-norm per time step
+    def g_sq(X):  
+        vals = np.einsum('ti,ij,tj->t', X, G64, X, optimize=True)
+        return np.maximum(vals, 0.0)
+
+    num_sq = g_sq(D)       
+    den_sq = g_sq(U_ref)   
+
+    abs_err = float(np.sqrt(num_sq.mean()))
+    rel_err = float(np.sqrt(num_sq.sum()) / (np.sqrt(den_sq.sum()) + 1e-24))
+
+    return abs_err, rel_err, U_hat.astype(ref_sol.dtype, copy=False)

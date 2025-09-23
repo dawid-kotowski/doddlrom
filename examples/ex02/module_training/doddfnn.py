@@ -4,7 +4,7 @@ from core.configs.parameters import Ex02Parameters
 
 # --- Configure / hyperparams -------------------------------------------------
 example_name = 'ex02'
-P = Ex02Parameters(profile="baseline")                 # or "wide" / "tiny" / "debug"
+P = Ex02Parameters(profile="baseline")        
 P.assert_consistent()
 
 trainer = P.trainer_defaults()  
