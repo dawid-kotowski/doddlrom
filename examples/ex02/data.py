@@ -1,41 +1,44 @@
 from pymor.basic import *
 import numpy as np
-from core.configs.parameters import Ex01Parameters  
+from core.configs.parameters import Ex02Parameters  
 
-P = Ex01Parameters()
-example_name = 'ex01'
-
-'''
---------------------------
-Set up Problem
---------------------------
-'''
+P = Ex02Parameters()
+example_name = 'ex02'
 
 # Define the advection function dependent on 'mu'
 def advection_function(x, mu):
-    mu_value = mu['mu']
-    return np.array([[np.cos(mu_value)*30, np.sin(mu_value)*30] for _ in range(x.shape[0])])
+    mu_value = mu['mu'][2]
+    return np.array([[np.cos(np.pi/(100*mu_value)), np.sin(np.pi/(100*mu_value))] for _ in range(x.shape[0])])
+    
+# Define rhs 
+def rhs_function(x, mu):
+    mu_values_1 = mu['mu'][0]
+    mu_values_2 = mu['mu'][1]
+    x0 = x[:, 0]
+    x1 = x[:, 1]
+    values = 10 * np.exp(-((x0 - mu_values_1)**2 + (x1 - mu_values_2)**2) / 0.07**2)
+    return values
 
 # Define the stationary problem
-advection_params = Parameters({'mu': 1})
-advection_generic_function = GenericFunction(advection_function, dim_domain=2, 
-                                             shape_range=(2,), parameters=advection_params)
+# Note, that the Dirichlet Boundary conditions are NOT enforced here, so the Dirichlet shift can be skipped!
+mu_param = Parameters({'mu': 3, 'nu': 1})
+advection_generic_function = GenericFunction(advection_function, dim_domain=2, shape_range=(2,), parameters=mu_param)
+rhs_generic_function = GenericFunction(rhs_function, dim_domain=2, shape_range=(), parameters=mu_param)
 stationary_problem = StationaryProblem(
     domain=RectDomain(),
-    rhs=ExpressionFunction('0', 2),
-    diffusion=LincombFunction(
-        [ExpressionFunction('1 - x[0]', 2), ExpressionFunction('x[0]', 2)],
-        [ProjectionParameterFunctional('nu', 1), 1]
-    ),
-    dirichlet_data=ExpressionFunction('(-(x[1] - 0.5)**2 + 0.25) * (x[0] < 1e-10)', 2),
+    rhs=rhs_generic_function,
+    diffusion=LincombFunction([ExpressionFunction('1', 2)],
+                              [ProjectionParameterFunctional('nu', 1)]),
     advection=advection_generic_function,
+    neumann_data=ConstantFunction(0, 2),
+    dirichlet_data=None,
     name='advection_problem'
 )
 
 # Define the instationary problem
 problem = InstationaryProblem(
-    T=P.T,
-    initial_data=ConstantFunction(0., 2),
+    T=1.,
+    initial_data=ConstantFunction(0, 2),
     stationary_part=stationary_problem,
     name='advection_problem'
 )
@@ -47,13 +50,19 @@ fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt
 stat_fom, stat_fom_data = discretize_stationary_cg(stationary_problem, diameter=P.diameter)
 
 # Define the parameter space with ranges for 'mu' and 'nu'
-parameter_space = fom.parameters.space({'nu': (0.5, 1), 'mu': (0.2, np.pi-0.2)})
+parameter_space = fom.parameters.space({
+    'mu': (0.3, 0.7),
+    'nu': (0.002, 0.005)
+})
 
 # --- stationary FOM & shift ---
-stat_parameter_space = stat_fom.parameters.space({'nu': (0.5, 1), 'mu': (0.2, np.pi-0.2)})
+stat_parameter_space = stat_fom.parameters.space({
+    'mu': (0.3, 0.7),
+    'nu': (0.002, 0.005)
+})
 
 # Generate training and validation sets
-sample_size_per_param = int(np.ceil(np.sqrt(P.Ns)))
+sample_size_per_param = int(np.ceil(np.power(P.Ns, 1 / 4)))
 training_set = parameter_space.sample_uniformly(sample_size_per_param)
 
 # Collect parameter arrays
@@ -65,7 +74,7 @@ stat_mu = np.array([p['mu'] for p in training_set], dtype=np.float32)
 stat_nu = np.array([p['nu'] for p in training_set], dtype=np.float32)
 
 # Create an empty list to hold the training data
-solution_set = fom.solution_space.empty()
+solution_set = fom.solution_space.empty()         
 stat_solution_set = stat_fom.solution_space.empty()
 
 # Enforce Dirichlet shift
@@ -75,7 +84,6 @@ u_0 = stat_fom.solve(stat_parameter_space.sample_uniformly(1)[0])
 u_0_np = u_0.to_numpy().astype(np.float32)
 np.savez_compressed(f"examples/{example_name}/training_data/dirichlet_shift_{example_name}.npz", 
                     u0=u_0_np, ut0 = u_t_0_np)
-
 
 '''
 --------------------------

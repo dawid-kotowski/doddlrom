@@ -1,10 +1,10 @@
 import torch
 from core import reduced_order_models as rom
-from core.configs.parameters import Ex01Parameters
+from core.configs.parameters import Ex02Parameters
 
 # --- Configure run / hyperparams --------------------------------------------
-example_name = 'ex01'
-P = Ex01Parameters(profile="baseline")           
+example_name = 'ex02'
+P = Ex02Parameters(profile="baseline")                
 P.assert_consistent()
 
 trainer = P.trainer_defaults()  
