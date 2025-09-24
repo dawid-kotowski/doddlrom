@@ -205,7 +205,7 @@ np.savez_compressed(f'examples/{example_name}/training_data/stationary_gram_matr
 stat_pod_modes, stat_singular_values = pod(shifted_stat_solutions_pymor,
                                            product=stat_fom.h1_0_semi_product, modes=P.N_A)
 stat_A = stat_pod_modes.to_numpy().T.astype(np.float32)                # [Nh, N_A]
-ensure_modes(stat_A, stat_G, P.N_A)
+#ensure_modes(stat_A, stat_G, P.N_A)
 np.savez_compressed(f'examples/{example_name}/training_data/stationary_ambient_matrix_{example_name}.npz',
                     ambient=stat_A)
 
@@ -274,3 +274,35 @@ for i, mu_vec in enumerate(mu_candidates):
 np.savez_compressed(f'examples/{example_name}/training_data/pod_singular_values_{example_name}.npz',
                     sigma_global_NA=singular_values.astype(np.float32),
                     sigma_mu_t_sup=sigma_mu_t_sup.astype(np.float32))
+
+
+'''
+--------------------------
+Save normalization meta data
+--------------------------
+'''
+
+def _as2d(x: np.ndarray) -> np.ndarray:
+    return x if x.ndim == 2 else x[:, None]
+
+def _save_norm(example_name: str, tag: str, mu: np.ndarray, nu: np.ndarray, sol: np.ndarray):
+    mu2 = _as2d(mu).astype(np.float32)  # [Ns, p]
+    nu2 = _as2d(nu).astype(np.float32)  # [Ns, q]
+
+    mu_min = mu2.min(axis=0).astype(np.float32); mu_max = mu2.max(axis=0).astype(np.float32)
+    nu_min = nu2.min(axis=0).astype(np.float32); nu_max = nu2.max(axis=0).astype(np.float32)
+
+    sol_flat = sol.reshape(-1, sol.shape[-1])    # [(Ns*Nt), D]
+    sol_min = sol_flat.min(axis=0).astype(np.float32)
+    sol_max = sol_flat.max(axis=0).astype(np.float32)
+    np.savez_compressed(
+        f"examples/{example_name}/training_data/normalization_{tag}_{example_name}.npz",
+        mu_min=mu_min, mu_max=mu_max, nu_min=nu_min, nu_max=nu_max,
+        sol_min=sol_min, sol_max=sol_max
+    )
+
+_save_norm(example_name, "N_A_reduced", mu_arr, nu_arr, reduced)
+
+_save_norm(example_name, "N_reduced",   mu_arr, nu_arr, reduced_P)
+
+_save_norm(example_name, "reduced_stationary", stat_mu, stat_nu, stat_reduced)

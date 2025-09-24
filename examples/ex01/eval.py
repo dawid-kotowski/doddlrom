@@ -25,6 +25,7 @@ training_data = [(mu[i], nu[i], solution[i]) for i in sel]
 def advection_function(x, mu):
     mu_value = mu['mu']
     return np.array([[np.cos(mu_value)*30, np.sin(mu_value)*30] for _ in range(x.shape[0])])
+
 advection_params = Parameters({'mu': 1})
 advection_generic_function = GenericFunction(advection_function, 
                                              dim_domain=2, shape_range=(2,), 
@@ -40,12 +41,14 @@ stationary_problem = StationaryProblem(
     advection=advection_generic_function,
     name='advection_problem'
 )
+
 problem = InstationaryProblem(
     T=1.,
     initial_data=ConstantFunction(0, 2),
     stationary_part=stationary_problem,
     name='advection_problem'
 )
+
 fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt)
 
 #endregion

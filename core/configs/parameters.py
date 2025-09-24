@@ -726,7 +726,7 @@ EX03_PRESETS: Dict[str, Dict[str, Any]] = {
 
     "baseline": {
         "preprocess_dim": 2,
-        "dod_structure": [64, 32],
+        "dod_structure": [100],
 
         "df_layers": [16, 8],
 

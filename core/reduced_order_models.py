@@ -32,21 +32,24 @@ def initialize_weights(m):
 class FetchTrainAndValidSet:
     """
     Loads compact .npz saved as:
-      - mu:       [Ns] float32
-      - nu:       [Ns] float32
-      - solution: [Ns, Nt, D]  (instationary) or [Ns, D] (stationary)
-    Normalizes mu, nu (z-score on TRAIN split) and solution per mode (z-score on TRAIN split).
-    D refers to reduction dimension.
+      - mu:       [Ns] or [Ns, p]  float32
+      - nu:       [Ns] or [Ns, q]  float32
+      - solution: [Ns, Nt, D] (instationary) or [Ns, D] (stationary)
+
+    Applies **min-max** normalization using precomputed stats stored at:
+      examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz
+    with keys: mu_min, mu_max, nu_min, nu_max, sol_min, sol_max.
     """
     def __init__(self, train_to_val_ratio: float, example_name: str, reduction_tag: str):
         path_npz = f'examples/{example_name}/training_data/{reduction_tag}_training_data_{example_name}.npz'
         data = np.load(path_npz)
 
         # raw arrays
-        self.mu = data['mu'].astype(np.float32)              # [Ns, p]
-        self.nu = data['nu'].astype(np.float32)              # [Ns, q]
-        self.solution = data['solution'].astype(np.float32)  # [Ns, Nt, D] or [Ns, D]
+        self.mu = data['mu']              # [Ns] or [Ns, p]
+        self.nu = data['nu']              # [Ns] or [Ns, q]
+        self.solution = data['solution']  # [Ns, Nt, D] or [Ns, D]
 
+        # split
         Ns = self.mu.shape[0]
         idx = np.arange(Ns, dtype=np.int32)
         np.random.shuffle(idx)
@@ -54,46 +57,47 @@ class FetchTrainAndValidSet:
         self.train_idx = idx[:n_train]
         self.valid_idx = idx[n_train:]
 
-        mu_tr = self.mu[self.train_idx]
-        nu_tr = self.nu[self.train_idx]
-        sol_tr = self.solution[self.train_idx]
+        # ---- load precomputed normalization stats (no recomputation here) ----
+        stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
+        stats = np.load(stats_path)
+
+        mu_min = stats['mu_min']
+        mu_max = stats['mu_max']
+        nu_min = stats['nu_min']
+        nu_max = stats['nu_max']
+        sol_min = stats['sol_min']
+        sol_max = stats['sol_max']
+
+        def _as2d(x: np.ndarray) -> np.ndarray:
+            return x if x.ndim == 2 else x[:, None]
 
         eps = 1e-8
-        if sol_tr.ndim == 3:   # [Ntr, Nt, D]
-            axis = (0, 1)
-        elif sol_tr.ndim == 2: # [Ntr, D]
-            axis = 0
+
+        mu_2d = _as2d(self.mu).astype(np.float32)
+        nu_2d = _as2d(self.nu).astype(np.float32)
+
+        # ensure stats are float32 and shaped [p]/[q]/[D]
+        mu_min = mu_min.astype(np.float32); mu_max = mu_max.astype(np.float32)
+        nu_min = nu_min.astype(np.float32); nu_max = nu_max.astype(np.float32)
+        sol_min = sol_min.astype(np.float32); sol_max = sol_max.astype(np.float32)
+
+        # normalize mu, nu
+        self.mu_n = (mu_2d - mu_min[None, :]) / (mu_max[None, :] - mu_min[None, :] + eps)   # [Ns, p]
+        self.nu_n = (nu_2d - nu_min[None, :]) / (nu_max[None, :] - nu_min[None, :] + eps)   # [Ns, q]
+
+        # normalize solution per feature (last dim)
+        if self.solution.ndim == 3:
+            # [Ns, Nt, D]
+            self.solution_n = (self.solution - sol_min[None, None, :]) / (sol_max[None, None, :] - sol_min[None, None, :] + eps)
+        elif self.solution.ndim == 2:
+            # [Ns, D]
+            self.solution_n = (self.solution - sol_min[None, :]) / (sol_max[None, :] - sol_min[None, :] + eps)
         else:
-            raise ValueError(f"Unexpected solution ndim: {sol_tr.ndim}")
-
-        mu_tr_2d = mu_tr if mu_tr.ndim == 2 else mu_tr[:, None]
-        nu_tr_2d = nu_tr if nu_tr.ndim == 2 else nu_tr[:, None]
-
-        mu_min = mu_tr_2d.min(axis=0)   # [p]
-        mu_max = mu_tr_2d.max(axis=0)   # [p]
-        nu_min = nu_tr_2d.min(axis=0)   # [q]
-        nu_max = nu_tr_2d.max(axis=0)   # [q]
-
-        sol_min = sol_tr.min(axis=axis) # [D]
-        sol_max = sol_tr.max(axis=axis) # [D]
-
-        stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
-        np.savez_compressed(stats_path,
-            mu_min=mu_min.astype(np.float32), mu_max=mu_max.astype(np.float32),
-            nu_min=nu_min.astype(np.float32), nu_max=nu_max.astype(np.float32),
-            sol_min=sol_min.astype(np.float32), sol_max=sol_max.astype(np.float32)
-        )
-
-        mu_2d = self.mu if self.mu.ndim == 2 else self.mu[:, None]
-        nu_2d = self.nu if self.nu.ndim == 2 else self.nu[:, None]
-
-        self.mu_n = (mu_2d - mu_min) / (mu_max - mu_min + eps)       # [Ns, p]
-        self.nu_n = (nu_2d - nu_min) / (nu_max - nu_min + eps)       # [Ns, q]
-        self.solution_n = (self.solution - sol_min[None, ...]) / (sol_max[None, ...] - sol_min[None, ...] + eps)
+            raise ValueError(f"Unexpected solution ndim: {self.solution.ndim}")
 
     def _tuples(self, idx_array):
         return [(self.mu_n[i], self.nu_n[i], self.solution_n[i]) for i in idx_array]
-    
+
     def __call__(self, set_type: str):
         if set_type == 'train':
             return self._tuples(self.train_idx)
@@ -1364,8 +1368,8 @@ def _load_stats_vec(name: str, d: dict, dtype, device):
     arr_min = d[f'{name}_min']
     arr_max = d[f'{name}_max']
     if np.isscalar(arr_min):
-        arr_min = np.array([arr_min], dtype=np.float32)
-        arr_max = np.array([arr_max], dtype=np.float32)
+        arr_min = np.array([arr_min])
+        arr_max = np.array([arr_max])
     tmin = torch.tensor(arr_min, dtype=dtype, device=device)  # [d]
     tmax = torch.tensor(arr_max, dtype=dtype, device=device)  # [d]
     return tmin, tmax
@@ -1440,10 +1444,9 @@ def pod_dl_rom_forward(ut0, A_P, POD_DL_model, De_model,
     for j in range(nt_ + 1):
         t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
         mu_i_norm = normalize_mu(mu_i, example_name, reduction_tag)
-        nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)    
+        nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)
         coeff = POD_DL_model(mu_i_norm, nu_i_norm, t).unsqueeze(0)                 # [1, n]
-        y_norm = De_model(coeff).squeeze(0)                              # [N] (normalized reduced)
-        y = denormalize_solution(y_norm, example_name, reduction_tag)    # [N]
+        y = De_model(coeff).squeeze(0)                              # [N] (normalized reduced)
         u = ut0[j] + torch.matmul(A_P, y)                                   # [N_h]
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
@@ -1453,13 +1456,12 @@ def dod_dfnn_forward(ut0, A, innerDOD_model, DFNN_Nprime_model,
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     preds = []
     for j in range(nt_ + 1):
-        t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
+        t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)  
         mu_i_norm = normalize_mu(mu_i, example_name, reduction_tag)
-        nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)    
+        nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)
         V_tilde = innerDOD_model(mu_i_norm, t)                                        # [N_A, N']
         coeff = DFNN_Nprime_model(mu_i_norm, nu_i_norm, t).squeeze(0)                        # [N']
-        u_red_norm = torch.matmul(V_tilde, coeff)                                # [N_A]
-        u_red = denormalize_solution(u_red_norm, example_name, reduction_tag)    # [N_A]
+        u_red = torch.matmul(V_tilde, coeff)                                # [N_A]
         u = ut0[j] + torch.matmul(A, u_red)                                         # [N_h]
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
@@ -1476,9 +1478,8 @@ def dod_dl_rom_forward(ut0, A, innerDOD_model, DOD_DL_model, De_model,
         V_tilde = innerDOD_model(mu_i_norm, t)                                      # [N_A, N']
         coeff_n = DOD_DL_model(mu_i_norm, nu_i_norm, t)                                  # [1, n]
         beta = De_model(coeff_n).squeeze(0)                                    # [N'] 
-        u_red_norm = torch.matmul(V_tilde, beta)                               # [N_A] (normalized)
-        u_red = denormalize_solution(u_red_norm, example_name, reduction_tag)  # [N_A]
-        u = ut0[j] + torch.matmul(A, u_red)                                       # [N_h]
+        u_red = torch.matmul(V_tilde, beta)                               # [N_A] 
+        u = ut0[j] + torch.matmul(A, u_red)                                      # [N_h]
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
 
@@ -1494,8 +1495,7 @@ def colora_forward(ut0, u0, stat_G_t, A, stat_DOD_model, stat_Coeff_model, CoLoR
         V0 = stat_DOD_model(mu_i_norm).squeeze(0)                                   # [N_A, N']
         red_shift = torch.matmul(torch.matmul(A.T, stat_G_t), u0)
         v_0 = red_shift + torch.matmul(V0.T, coeff0)                                     # [N_A]
-        u_norm = CoLoRA_DL_model(v_0.unsqueeze(0), nu_i_norm, t).squeeze(0)            # [N_A] (normalized reduced)
-        u = denormalize_solution(u_norm, example_name, reduction_tag)     # [N_A]
+        u = CoLoRA_DL_model(v_0.unsqueeze(0), nu_i_norm, t).squeeze(0)            # [N_A] 
         u = ut0[j] + torch.matmul(A, u)                                      # lift
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
@@ -1508,11 +1508,11 @@ Evaluation Helpers
 '''
 
 def forward_wrappers(P, device, models, example_name):
-    A = np.load(f'examples/{example_name}/training_data/N_A_ambient_{example_name}.npz')['ambient'].astype(np.float32)
-    A_P = np.load(f'examples/{example_name}/training_data/N_ambient_{example_name}.npz')['ambient'].astype(np.float32)
+    A = np.load(f'examples/{example_name}/training_data/N_A_ambient_{example_name}.npz')['ambient']
+    A_P = np.load(f'examples/{example_name}/training_data/N_ambient_{example_name}.npz')['ambient']
     A_t = torch.tensor(A, dtype=torch.float32, device=device)
     A_P_t = torch.tensor(A_P, dtype=torch.float32, device=device)
-    stat_G = np.load(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npz')['gram'].astype(np.float32)
+    stat_G = np.load(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npz')['gram']
     stat_G_t = torch.tensor(stat_G, dtype=torch.float32, device=device)
 
     shifts = np.load(f'examples/{example_name}/training_data/dirichlet_shift_{example_name}.npz')
@@ -1541,14 +1541,11 @@ def forward_wrappers(P, device, models, example_name):
     return {"DOD+DFNN": dod_dfnn, "DOD-DL-ROM": dod_dl, "POD-DL-ROM": pod_dl, "CoLoRA": colora}
 
 def g_norm_batch(G, U):
-    U64 = np.asarray(U, dtype=np.float64)
-    G64 = np.asarray(G, dtype=np.float64)
-
-    if U64.ndim == 1:
-        val = U64 @ (G64 @ U64)
+    if U.ndim == 1:
+        val = U @ (G @ U)
         return float(np.sqrt(val if val > 0.0 else 0.0))
 
-    vals = np.einsum('ti,ij,tj->t', U64, G64, U64, optimize=True)  
+    vals = np.einsum('ti,ij,tj->t', U, G, U, optimize=True)  
     vals = np.maximum(vals, 0.0)
     return np.sqrt(vals, dtype=np.float64)
 
@@ -1558,19 +1555,20 @@ def evaluate_rom_forward(rom_name, forward_fn, args, ref_sol, G):
     Returns:
       abs_err = ( E_t ||u_ref - u_hat||_G^2 )^{1/2}
       rel_err = ( \int ||u_ref - u_hat||_G^2 )^{1/2} / ( \int ||u_ref||_G^2 )^{1/2}
+      U_hat = forward_fn(*args)
     """
     U_hat = forward_fn(*args)
     Tm = min(ref_sol.shape[0], U_hat.shape[0])
 
-    U_ref = np.asarray(ref_sol[:Tm], dtype=np.float64)  # [T, N_h]
-    U_hat = np.asarray(U_hat[:Tm],  dtype=np.float64)   # [T, N_h]
-    G64   = np.asarray(G,           dtype=np.float64)   # [N_h, N_h]
+    U_ref = np.asarray(ref_sol[:Tm])  # [T, N_h]
+    U_hat = np.asarray(U_hat[:Tm])   # [T, N_h]
+    G   = np.asarray(G)   # [N_h, N_h]
 
     D = U_ref - U_hat  # [T, N_h]
 
     # squared G-norm per time step
     def g_sq(X):  
-        vals = np.einsum('ti,ij,tj->t', X, G64, X, optimize=True)
+        vals = np.einsum('ti,ij,tj->t', X, G, X, optimize=True)
         return np.maximum(vals, 0.0)
 
     num_sq = g_sq(D)       
