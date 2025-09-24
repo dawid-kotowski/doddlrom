@@ -6,6 +6,26 @@ P = Ex01Parameters()
 example_name = 'ex01'
 
 '''
+------------------------
+Helper Method
+------------------------
+'''
+
+def ensure_modes(A, G, target: int):
+    """
+    Sanity check for POD
+    """
+    if A.shape[1] != target:
+        print("Actual POD size: ", A.shape[1])
+        raise AssertionError("Reduction too small")
+    I_test = A.T @ G @ A
+    err = np.linalg.norm(I_test - np.eye(I_test.shape[0]), ord='fro')
+    if not np.isclose(err, 0, atol=1e-3):
+        print("A.T G A - I = ", err)
+        raise AssertionError("Not sufficiently orthonormal")
+    
+
+'''
 --------------------------
 Set up Problem
 --------------------------
@@ -29,7 +49,7 @@ stationary_problem = StationaryProblem(
     ),
     dirichlet_data=ExpressionFunction('(-(x[1] - 0.5)**2 + 0.25) * (x[0] < 1e-10)', 2),
     advection=advection_generic_function,
-    name='advection_problem'
+    name='wind_ex01'
 )
 
 # Define the instationary problem
@@ -37,7 +57,7 @@ problem = InstationaryProblem(
     T=P.T,
     initial_data=ConstantFunction(0., 2),
     stationary_part=stationary_problem,
-    name='advection_problem'
+    name='wind_ex01'
 )
 
 # Discretize the problem
@@ -96,6 +116,10 @@ shifted_solutions = np.stack(shifted_solutions, axis=0)
 solutions = np.stack(solutions, axis=0)                                             # [Ns, Nt, Nh]
 fom.visualize(solution)                                                             # visualize last solution as check
 
+# Gram matrix (compact)
+G = fom.h1_0_semi_product.matrix.toarray().astype(np.float32)  # [Nh, Nh]
+np.savez_compressed(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npz', gram=G)
+
 # Save compact FOM data
 np.savez_compressed(f'examples/{example_name}/training_data/full_order_training_data_{example_name}.npz',
                     mu=mu_arr, nu=nu_arr, solution=solutions)
@@ -103,16 +127,15 @@ np.savez_compressed(f'examples/{example_name}/training_data/full_order_training_
 # --- Ambient for DOD-based ROMs ---
 pod_modes, singular_values = pod(shifted_solutions_pymor, product=fom.h1_0_semi_product, modes=P.N_A)
 A = pod_modes.to_numpy().T.astype(np.float32)            # [Nh, N_A]
+ensure_modes(A, G, P.N_A)
 np.savez_compressed(f'examples/{example_name}/training_data/N_A_ambient_{example_name}.npz', ambient=A)
 
 # --- Ambient for POD-based ROMs ---
 pod_modes_N, singular_values_N = pod(shifted_solutions_pymor, product=fom.h1_0_semi_product, modes=P.N)
 A_P = pod_modes_N.to_numpy().T.astype(np.float32)            # [Nh, N]
+ensure_modes(A_P, G, P.N)
 np.savez_compressed(f'examples/{example_name}/training_data/N_ambient_{example_name}.npz', ambient=A_P)
 
-# Gram matrix (compact)
-G = fom.h1_0_semi_product.matrix.toarray().astype(np.float32)  # [Nh, Nh]
-np.savez_compressed(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npz', gram=G)
 
 # --- Reduced instationary data: [Ns, Nt, N_A] ---
 # Compute GA once, then batch-matmul
@@ -153,16 +176,17 @@ fom.visualize(stat_solution)                                                    
 np.savez_compressed(f'examples/{example_name}/training_data/stationary_training_data_{example_name}.npz',
                     mu=stat_mu, nu=stat_nu, solution=stat_solutions)
 
+stat_G = stat_fom.h1_0_semi_product.matrix.toarray().astype(np.float32)       # [Nh, Nh]
+np.savez_compressed(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npz',
+                    gram=stat_G)
+
 # --- stationary POD/ambient/gram ---
 stat_pod_modes, stat_singular_values = pod(shifted_stat_solutions_pymor,
                                            product=stat_fom.h1_0_semi_product, modes=P.N_A)
 stat_A = stat_pod_modes.to_numpy().T.astype(np.float32)                # [Nh, N_A]
+ensure_modes(stat_A, stat_G, P.N_A)
 np.savez_compressed(f'examples/{example_name}/training_data/stationary_ambient_matrix_{example_name}.npz',
                     ambient=stat_A)
-
-stat_G = stat_fom.h1_0_semi_product.matrix.toarray().astype(np.float32)       # [Nh, Nh]
-np.savez_compressed(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npz',
-                    gram=stat_G)
 
 # --- reduced stationary data: [N, N_A] ---
 GA_stat = (stat_G @ stat_A).astype(np.float32)                         # [Nh, N_A]

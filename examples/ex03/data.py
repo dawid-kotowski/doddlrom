@@ -1,9 +1,16 @@
 from pymor.basic import *
 import numpy as np
-from core.configs.parameters import Ex02Parameters  
+from core.configs.parameters import Ex03Parameters  
 
-P = Ex02Parameters()
-example_name = 'ex02'
+P = Ex03Parameters()
+example_name = 'ex03'
+
+'''
+====================================
+Note: This example employs 
+      N_h = N_A
+====================================
+'''
 
 '''
 ------------------------
@@ -24,6 +31,33 @@ def ensure_modes(A, G, target: int):
         print("A.T G A - I = ", err)
         raise AssertionError("Not sufficiently orthonormal")
     
+def build_pseudo_ambient(G: np.ndarray, jitter: float = 1e-12,
+                                     dtype=np.float32) -> np.ndarray:
+    """
+    Return A in R^{N_h x N_h} with A^T G A = I_{N_h}.
+    Uses Cholesky: G = L L^T  =>  A = L^{-T}.
+    """
+    Nh = G.shape[0]
+    I = np.eye(Nh, dtype=G.dtype)
+
+    # Robust Cholesky with tiny jitter if needed
+    try:
+        L = np.linalg.cholesky(G)
+    except np.linalg.LinAlgError:
+        L = np.linalg.cholesky(G + jitter * I)
+
+    # A = (L^T)^{-1}
+    A = np.linalg.inv(L.T)
+
+    # Sanity check (float64 first, then cast)
+    Itest = A.T @ G @ A
+    err = np.linalg.norm(Itest - I, ord='fro')
+    if not np.isclose(err, 0.0, atol=1e-5):
+        raise AssertionError(f"A^T G A deviates from identity: ||·||_F = {err:.3e}")
+
+    return A.astype(dtype)
+
+    
 
 '''
 --------------------------
@@ -31,42 +65,45 @@ Set up Problem
 --------------------------
 '''
 
-# Define the advection function dependent on 'mu'
-def advection_function(x, mu):
-    mu_value = mu['mu'][2]
-    return np.array([[np.cos(np.pi/(100*mu_value)), np.sin(np.pi/(100*mu_value))] for _ in range(x.shape[0])])
-    
-# Define rhs 
-def rhs_function(x, mu):
-    mu_values_1 = mu['mu'][0]
-    mu_values_2 = mu['mu'][1]
-    x0 = x[:, 0]
-    x1 = x[:, 1]
-    values = 10 * np.exp(-((x0 - mu_values_1)**2 + (x1 - mu_values_2)**2) / 0.07**2)
-    return values
+# Domain and parameters
+domain = LineDomain([0., 1.], left='dirichlet', right='dirichlet')  # 1D interval
 
-# Define the stationary problem
-# Note, that the Dirichlet Boundary conditions are NOT enforced here, so the Dirichlet shift can be skipped!
-mu_param = Parameters({'mu': 3, 'nu': 1})
-advection_generic_function = GenericFunction(advection_function, dim_domain=2, shape_range=(2,), parameters=mu_param)
-rhs_generic_function = GenericFunction(rhs_function, dim_domain=2, shape_range=(), parameters=mu_param)
-stationary_problem = StationaryProblem(
-    domain=RectDomain(),
-    rhs=rhs_generic_function,
-    diffusion=LincombFunction([ExpressionFunction('1', 2)],
-                              [ProjectionParameterFunctional('nu', 1)]),
-    advection=advection_generic_function,
-    neumann_data=ConstantFunction(0, 2),
-    dirichlet_data=None,
-    name='nonlinear_wind_ex02'
+# Diffusion coefficient
+diffusion_fn = LincombFunction(
+    [ExpressionFunction('1.', 1)],           
+    [ProjectionParameterFunctional('nu')]    
 )
 
-# Define the instationary problem
+# Zero RHS and Dirichlet data
+rhs = ConstantFunction(0.0, 1)
+gD  = ConstantFunction(0.0, 1)
+
+# Initial condition: smoothed step centered at mu
+# u0(x; mu) = 0.5*(1 + tanh((x - mu)/eps))
+def ic_step(x, mu):
+    x0  = float(mu['mu'])
+    eps = 0.01   
+    v = 0.5 * (1.0 + np.tanh((x[:, 0] - x0) / eps))
+    return v
+
+initial_data = GenericFunction(ic_step, dim_domain=1, shape_range=(),
+                               parameters=Parameters({'mu': 1}))
+
+# Stationary part
+stationary_problem = StationaryProblem(
+    domain=domain,
+    diffusion=diffusion_fn,
+    rhs=rhs,
+    dirichlet_data=gD,
+    name='heat_ex03'
+)
+
+# Instationary problem
 problem = InstationaryProblem(
-    T=1.,
-    initial_data=ConstantFunction(0, 2),
+    T=P.T,
+    initial_data=initial_data,
     stationary_part=stationary_problem,
-    name='nonlinear_wind_ex02'
+    name='heat_ex03'
 )
 
 # Discretize the problem
@@ -77,18 +114,18 @@ stat_fom, stat_fom_data = discretize_stationary_cg(stationary_problem, diameter=
 
 # Define the parameter space with ranges for 'mu' and 'nu'
 parameter_space = fom.parameters.space({
-    'mu': (0.3, 0.7),
-    'nu': (0.002, 0.005)
+    'mu': (0.2, 0.8),
+    'nu': (1e-4, 1e-2)
 })
 
 # --- stationary FOM & shift ---
 stat_parameter_space = stat_fom.parameters.space({
-    'mu': (0.3, 0.7),
-    'nu': (0.002, 0.005)
+    'mu': (0.2, 0.8),
+    'nu': (1e-4, 1e-2)
 })
 
 # Generate training and validation sets
-sample_size_per_param = int(np.ceil(np.power(P.Ns, 1 / 4)))
+sample_size_per_param = int(np.ceil(np.power(P.Ns, 1 / 2)))
 training_set = parameter_space.sample_uniformly(sample_size_per_param)
 
 # Collect parameter arrays
@@ -138,10 +175,9 @@ np.savez_compressed(f'examples/{example_name}/training_data/gram_matrix_{example
 np.savez_compressed(f'examples/{example_name}/training_data/full_order_training_data_{example_name}.npz',
                     mu=mu_arr, nu=nu_arr, solution=solutions)
 
-# --- Ambient for DOD-based ROMs ---
-pod_modes, singular_values = pod(shifted_solutions_pymor, product=fom.h1_0_semi_product, l2_err=1e-5,
-                                 modes=P.N_A)
-A = pod_modes.to_numpy().T.astype(np.float32)            # [Nh, N_A]
+# --- Ambient SKIPPED N_h for DOD-based ROMs ---
+A = build_pseudo_ambient(G)
+_, singular_values = pod(shifted_solutions_pymor, product=fom.h1_0_semi_product, modes=P.N_A)
 ensure_modes(A, G, P.N_A)
 np.savez_compressed(f'examples/{example_name}/training_data/N_A_ambient_{example_name}.npz', ambient=A)
 
@@ -202,9 +238,7 @@ np.savez_compressed(f'examples/{example_name}/training_data/stationary_gram_matr
                     gram=stat_G)
 
 # --- stationary POD/ambient/gram ---
-stat_pod_modes, stat_singular_values = pod(shifted_stat_solutions_pymor,
-                                           product=stat_fom.h1_0_semi_product, modes=P.N_A)
-stat_A = stat_pod_modes.to_numpy().T.astype(np.float32)                # [Nh, N_A]
+stat_A = build_pseudo_ambient(stat_G)
 ensure_modes(stat_A, stat_G, P.N_A)
 np.savez_compressed(f'examples/{example_name}/training_data/stationary_ambient_matrix_{example_name}.npz',
                     ambient=stat_A)

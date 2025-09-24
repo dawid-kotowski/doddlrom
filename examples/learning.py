@@ -80,8 +80,8 @@ def train_dod_dl_rom(P, example_name, trainer_overrides):
     dec = rom.Decoder(**P.make_dod_dl_Decoder_kwargs())             # (n -> N')
     coeff = rom.DFNN(**P.make_dod_dl_DFNN_kwargs())                 # (p+q+1 -> n)
     trainer = rom.DOD_DL_ROMTrainer(P.Nt, inner, coeff, enc, dec, tv,
-                                    0.999, trainer_overrides["epochs"], trainer_overrides["restarts"],
-                                    learning_rate=1e-3, batch_size=128, patience=trainer_overrides["patience"])
+                                    0.6, trainer_overrides["epochs"], trainer_overrides["restarts"],
+                                    learning_rate=1e-2, batch_size=128, patience=trainer_overrides["patience"])
     best = trainer.train()
     torch.save({'encoder': enc.state_dict(), 'decoder': dec.state_dict(), 'coeff_model': coeff.state_dict()},
                f'examples/{example_name}/state_dicts/DOD_DL_ROM_Module.pth')
@@ -94,7 +94,7 @@ def train_pod_dl_rom(P, example_name, trainer_overrides):
     dec = rom.Decoder(**P.make_pod_Decoder_kwargs())                # (n -> N)
     coeff = rom.DFNN(**P.make_pod_DFNN_kwargs())                    # (DFNN -> n)
     trainer = rom.POD_DL_ROMTrainer(P.Nt, coeff, enc, dec, tv,
-                                    0.999, trainer_overrides["epochs"], trainer_overrides["restarts"],
+                                    0.6, trainer_overrides["epochs"], trainer_overrides["restarts"],
                                     learning_rate=1e-2, batch_size=128, patience=trainer_overrides["patience"])
     best = trainer.train()
     torch.save({'encoder': enc.state_dict(), 'decoder': dec.state_dict(), 'coeff_model': coeff.state_dict()},
