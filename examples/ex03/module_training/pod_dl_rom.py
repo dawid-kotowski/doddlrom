@@ -1,6 +1,7 @@
 import torch
 from core import reduced_order_models as dr
 from core.configs.parameters import Ex03Parameters
+from utils.paths import state_dicts_path
 
 # --- Configure / hyperparams -------------------------------------------------
 example_name = 'ex03'
@@ -37,5 +38,5 @@ torch.save(
         'decoder': De_model.state_dict(),
         'coeff_model': DFNN_P_n_model.state_dict(),
     },
-    f'examples/{example_name}/state_dicts/POD_DL_ROM_Module.pth'
+    state_dicts_path(example_name) / f'POD_DL_ROM_Module.pth'
 )

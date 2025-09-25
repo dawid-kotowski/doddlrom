@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from tqdm import tqdm
+from utils.paths import benchmarks_path, training_data_path
 from core import reduced_order_models as rom
 
 
@@ -142,8 +143,7 @@ def main():
 
     example_name = args.example
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    outdir = (Path(__file__).resolve().parent.parent / "examples" / example_name / "benchmarks")
-    outdir.mkdir(parents=True, exist_ok=True)
+    outdir = benchmarks_path(example_name)
 
     # Data
     tv_NA = rom.FetchTrainAndValidSet(0.8, example_name, 'N_A_reduced')
@@ -151,7 +151,8 @@ def main():
     full = np.load(f'examples/{example_name}/training_data/full_order_training_data_{example_name}.npz')
     mu_full, nu_full, sol_full = full['mu'], full['nu'], full['solution']
 
-    G = np.load(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npz')['gram'].astype(np.float32)
+    path_to_G = training_data_path(example_name) / f'gram_matrix_{example_name}.npz'
+    G = np.load(path_to_G)['gram'].astype(np.float32)
 
     # metrics file
     csv_path = outdir / 'rom_sweep.csv'

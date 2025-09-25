@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from core import reduced_order_models as rom
 from core.configs.parameters import Ex03Parameters
+from utils.paths import state_dicts_path
 
 # --- Configure this run ------------------------------------------------------
 example_name = 'ex03'
@@ -15,7 +16,7 @@ train_valid_data = rom.FetchTrainAndValidSet(0.8, example_name, 'N_reduced')
 
 # --- DOD basis network -------------------------------------------------------
 innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs())
-innerDOD_model.load_state_dict(torch.load(f'examples/{example_name}/state_dicts/DOD_Module.pth'))
+innerDOD_model.load_state_dict(torch.load(state_dicts_path(example_name) / f'/DOD_Module.pth'))
 innerDOD_model.eval()
 
 # --- DOD-DL -----------------------------------------------------------------
@@ -43,11 +44,8 @@ best_loss = DFNN_D_n_trainer.train()
 print(f"Best validation loss: {best_loss}")
 
 # --- Save modules ------------------------------------------------------------
-torch.save(
-    {
-        'encoder': En_model.state_dict(),
-        'decoder': De_model.state_dict(),
-        'coeff_model': DFNN_D_n_model.state_dict(),
-    },
-    f'examples/{example_name}/state_dicts/DOD_DL_ROM_Module.pth'
-)
+state_dict_path = state_dicts_path(example_name) / 'DOD_DL_ROM_Module.pth'
+torch.save({'encoder': En_model.state_dict(), 
+            'decoder': De_model.state_dict(), 
+            'coeff_model': DFNN_D_n_model.state_dict()},
+            state_dict_path)

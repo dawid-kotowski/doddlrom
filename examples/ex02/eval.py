@@ -77,6 +77,40 @@ for entry in training_data:
     u_i = fom.solution_space.from_numpy(sol)
     true_solution.append(u_i)
 
+
+    # Check for normalization procedure
+    A_NA = np.load(f'examples/{example_name}/training_data/N_A_ambient_{example_name}.npz')['ambient'].astype(np.float32)
+    stats = np.load(f'examples/{example_name}/training_data/normalization_N_A_reduced_{example_name}.npz')
+    sol_min = stats['sol_min'].astype(np.float32)  # [N_A]
+    sol_max = stats['sol_max'].astype(np.float32)  # [N_A]
+    U = sol.astype(np.float32)                              # [Nt, N_h]
+
+    # Project: Y_t = A^T G u_t  -> [Nt, N_A]
+    proj_U = np.einsum('ih,hj,tj->ti', A_NA.T, G, U, optimize=True)
+
+    # Lift: û_t = A alpha_t
+    U_hat  = np.einsum('hi,ti->th', A_NA, proj_U, optimize=True)
+
+    def _g_sq(X, Gmat):
+        v = np.einsum('ti,ij,tj->t', X, Gmat, X, optimize=False)
+        return np.maximum(v, 0.0)
+
+    err_sq = _g_sq(U - U_hat, G)
+    ref_sq = _g_sq(U, G)
+    abs_err = float(np.sqrt(err_sq.mean()))
+    rel_err = float(np.sqrt(err_sq.sum()) / (np.sqrt(ref_sq.sum()) + 1e-24))
+    print(f"[ex03 | A^T G → norm → denorm → A]  abs={abs_err:.3e}  rel={rel_err:.3e}")
+
+    # Visualize
+    U_hat_vec = fom.solution_space.from_numpy(U_hat)
+    fom.visualize(
+        (u_i, U_hat_vec, u_i - U_hat_vec),
+        legend=(f'FOM (μ={mu.tolist()}, ν={nu.tolist()})',
+                'A^T G→norm→denorm→A',
+                f"Rel L² error (G): {rel_err:.3e}")
+    )
+    #! Check
+
     # inner DOD used by DOD+DFNN and DOD-DL-ROM
     innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs()).to(device)
 

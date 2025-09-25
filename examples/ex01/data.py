@@ -1,6 +1,7 @@
 from pymor.basic import *
 import numpy as np
 from core.configs.parameters import Ex01Parameters  
+from utils.paths import training_data_path
 
 P = Ex01Parameters()
 example_name = 'ex01'
@@ -93,9 +94,11 @@ u_t_0 = fom.solve(parameter_space.sample_uniformly(1)[0])
 u_t_0_np = u_t_0.to_numpy().astype(np.float32)
 u_0 = stat_fom.solve(stat_parameter_space.sample_uniformly(1)[0])
 u_0_np = u_0.to_numpy().astype(np.float32)
-np.savez_compressed(f"examples/{example_name}/training_data/dirichlet_shift_{example_name}.npz", 
-                    u0=u_0_np, ut0 = u_t_0_np)
 
+tdir = training_data_path(example_name)
+
+np.savez_compressed(tdir / f"dirichlet_shift_{example_name}.npz", 
+                    u0=u_0_np, ut0 = u_t_0_np)
 
 '''
 --------------------------
@@ -106,51 +109,54 @@ Instationary Data
 solutions = []
 shifted_solutions = []
 shifted_solutions_pymor = fom.solution_space.empty()
+
 for mu_nu in training_set:
-    solution = fom.solve(mu_nu)                                                     # [Nt, Nh]
-    shifted_solution = solution - u_t_0   
-    shifted_solutions_pymor.append(shifted_solution)                                  
+    solution = fom.solve(mu_nu)  # [Nt, Nh]
+    shifted_solution = solution - u_t_0
+    shifted_solutions_pymor.append(shifted_solution)
     shifted_solutions.append(shifted_solution.to_numpy().astype(np.float32))
     solutions.append(solution.to_numpy().astype(np.float32))
-shifted_solutions = np.stack(shifted_solutions, axis=0)
-solutions = np.stack(solutions, axis=0)                                             # [Ns, Nt, Nh]
-fom.visualize(solution)                                                             # visualize last solution as check
+
+shifted_solutions = np.stack(shifted_solutions, axis=0)  # [Ns, Nt, Nh]
+solutions = np.stack(solutions, axis=0)                  # [Ns, Nt, Nh]
+fom.visualize(solution)                                  # visualize last solution as check
 
 # Gram matrix (compact)
 G = fom.h1_0_semi_product.matrix.toarray().astype(np.float32)  # [Nh, Nh]
-np.savez_compressed(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npz', gram=G)
+np.savez_compressed(tdir / f'gram_matrix_{example_name}.npz', gram=G)
 
 # Save compact FOM data
-np.savez_compressed(f'examples/{example_name}/training_data/full_order_training_data_{example_name}.npz',
+np.savez_compressed(tdir / f'full_order_training_data_{example_name}.npz',
                     mu=mu_arr, nu=nu_arr, solution=solutions)
 
 # --- Ambient for DOD-based ROMs ---
 pod_modes, singular_values = pod(shifted_solutions_pymor, product=fom.h1_0_semi_product, modes=P.N_A)
 A = pod_modes.to_numpy().T.astype(np.float32)            # [Nh, N_A]
 ensure_modes(A, G, P.N_A)
-np.savez_compressed(f'examples/{example_name}/training_data/N_A_ambient_{example_name}.npz', ambient=A)
+np.savez_compressed(tdir / f'N_A_ambient_{example_name}.npz', ambient=A)
 
 # --- Ambient for POD-based ROMs ---
 pod_modes_N, singular_values_N = pod(shifted_solutions_pymor, product=fom.h1_0_semi_product, modes=P.N)
-A_P = pod_modes_N.to_numpy().T.astype(np.float32)            # [Nh, N]
+A_P = pod_modes_N.to_numpy().T.astype(np.float32)  # [Nh, N]
 ensure_modes(A_P, G, P.N)
-np.savez_compressed(f'examples/{example_name}/training_data/N_ambient_{example_name}.npz', ambient=A_P)
+np.savez_compressed(tdir / f'N_ambient_{example_name}.npz', ambient=A_P)
 
+# --- Sanity Check for G-orthonormality ---
+I_test = A.T @ G @ A
+print('||ATGA - I||_F =', np.linalg.norm(I_test - np.eye(I_test.shape[0])))
+I_test = A_P.T @ G @ A_P
+print('||ATGA - I||_F =', np.linalg.norm(I_test - np.eye(I_test.shape[0])))
 
 # --- Reduced instationary data: [Ns, Nt, N_A] ---
-# Compute GA once, then batch-matmul
-GA = (G @ A).astype(np.float32)                           # [Nh, N_A]
-reduced = np.einsum('ijk,kl->ijl', shifted_solutions, GA)         # [Ns, Nt, N_A]
-
-np.savez_compressed(f'examples/{example_name}/training_data/N_A_reduced_training_data_{example_name}.npz',
+GA = (G @ A).astype(np.float32)                               # [Nh, N_A]
+reduced = np.einsum('ijk,kl->ijl', shifted_solutions, GA)     # [Ns, Nt, N_A]
+np.savez_compressed(tdir / f'N_A_reduced_training_data_{example_name}.npz',
                     mu=mu_arr, nu=nu_arr, solution=reduced)
 
 # --- Reduced instationary data: [Ns, Nt, N] ---
-# Compute GA_P once, then batch-matmul
 GA_P = (G @ A_P).astype(np.float32)                           # [Nh, N]
-reduced_P = np.einsum('ijk,kl->ijl', shifted_solutions, GA_P)         # [Ns, Nt, N]
-
-np.savez_compressed(f'examples/{example_name}/training_data/N_reduced_training_data_{example_name}.npz',
+reduced_P = np.einsum('ijk,kl->ijl', shifted_solutions, GA_P) # [Ns, Nt, N]
+np.savez_compressed(tdir / f'N_reduced_training_data_{example_name}.npz',
                     mu=mu_arr, nu=nu_arr, solution=reduced_P)
 
 '''
@@ -162,37 +168,38 @@ Stationary Data
 stat_solutions = []
 shifted_stat_solutions = []
 shifted_stat_solutions_pymor = stat_fom.solution_space.empty()
+
 for mu_nu in training_set:
-    stat_solution = stat_fom.solve(mu_nu)                                                     # [Nh]
-    shifted_stat_solution = stat_solution - u_0   
-    shifted_stat_solutions_pymor.append(shifted_stat_solution)                                  
+    stat_solution = stat_fom.solve(mu_nu)  # [Nh]
+    shifted_stat_solution = stat_solution - u_0
+    shifted_stat_solutions_pymor.append(shifted_stat_solution)
     shifted_stat_solutions.append(shifted_stat_solution.to_numpy().astype(np.float32))
     stat_solutions.append(stat_solution.to_numpy().astype(np.float32))
-shifted_stat_solutions = np.stack(shifted_stat_solutions, axis=0)
-stat_solutions = np.stack(stat_solutions, axis=0)                                             # [Ns, Nh]
-fom.visualize(stat_solution)                                                             # visualize last solution as check
+
+shifted_stat_solutions = np.stack(shifted_stat_solutions, axis=0)  # [Ns, Nh]
+stat_solutions = np.stack(stat_solutions, axis=0)                  # [Ns, Nh]
+fom.visualize(stat_solution)  # visualize last solution as check
 
 # Save compact stationary FOM data (raw, unshifted)
-np.savez_compressed(f'examples/{example_name}/training_data/stationary_training_data_{example_name}.npz',
+np.savez_compressed(tdir / f'stationary_training_data_{example_name}.npz',
                     mu=stat_mu, nu=stat_nu, solution=stat_solutions)
 
-stat_G = stat_fom.h1_0_semi_product.matrix.toarray().astype(np.float32)       # [Nh, Nh]
-np.savez_compressed(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npz',
-                    gram=stat_G)
+stat_G = stat_fom.h1_0_semi_product.matrix.toarray().astype(np.float32)  # [Nh, Nh]
+np.savez_compressed(tdir / f'stationary_gram_matrix_{example_name}.npz', gram=stat_G)
 
 # --- stationary POD/ambient/gram ---
-stat_pod_modes, stat_singular_values = pod(shifted_stat_solutions_pymor,
-                                           product=stat_fom.h1_0_semi_product, modes=P.N_A)
-stat_A = stat_pod_modes.to_numpy().T.astype(np.float32)                # [Nh, N_A]
-ensure_modes(stat_A, stat_G, P.N_A)
-np.savez_compressed(f'examples/{example_name}/training_data/stationary_ambient_matrix_{example_name}.npz',
+stat_pod_modes, stat_singular_values = pod(
+    shifted_stat_solutions_pymor, product=stat_fom.h1_0_semi_product, modes=P.N
+)
+stat_A = stat_pod_modes.to_numpy().T.astype(np.float32)  # [Nh, N]
+ensure_modes(stat_A, stat_G, P.N)
+np.savez_compressed(tdir / f'stationary_ambient_matrix_{example_name}.npz',
                     ambient=stat_A)
 
-# --- reduced stationary data: [N, N_A] ---
-GA_stat = (stat_G @ stat_A).astype(np.float32)                         # [Nh, N_A]
-stat_reduced = shifted_stat_solutions @ GA_stat                        # [Ns, N_A]
-
-np.savez_compressed(f'examples/{example_name}/training_data/reduced_stationary_training_data_{example_name}.npz',
+# --- reduced stationary data: [Ns, N] ---
+GA_stat = (stat_G @ stat_A).astype(np.float32)  # [Nh, N]
+stat_reduced = shifted_stat_solutions @ GA_stat  # [Ns, N]
+np.savez_compressed(tdir / f'reduced_stationary_training_data_{example_name}.npz',
                     mu=stat_mu, nu=stat_nu, solution=stat_reduced)
 
 '''
@@ -215,14 +222,14 @@ N_nu_per_mu_t  = 20
 rng = np.random.default_rng(1234)
 
 mu_indices = rng.choice(Ns, size=min(N_mu_samples, Ns), replace=False)
-mu_candidates = mu_arr_2d[mu_indices]                          # [N_mu_samples, p]
+mu_candidates = mu_arr_2d[mu_indices]  # [N_mu_samples, p]
 
 all_t = np.arange(P.Nt, dtype=int)
 t_choices = [rng.choice(all_t, size=min(N_t_samples, len(all_t)), replace=False)
              for _ in range(len(mu_candidates))]
 
-nu_min = nu_arr_2d.min(axis=0)                                  # [q]
-nu_max = nu_arr_2d.max(axis=0)                                  # [q]
+nu_min = nu_arr_2d.min(axis=0)  # [q]
+nu_max = nu_arr_2d.max(axis=0)  # [q]
 
 sigma_mu_t_sup = np.zeros((P.N_A,), dtype=np.float32)
 
@@ -234,9 +241,9 @@ for i, mu_vec in enumerate(mu_candidates):
     for k in range(N_nu_per_mu_t):
         params = fom.parameters.parse({
             'mu': mu_vec.astype(float).tolist(),
-            'nu': nu_batch[k].astype(float).tolist() if q > 1 else float(nu_batch[k,0])
+            'nu': nu_batch[k].astype(float).tolist() if q > 1 else float(nu_batch[k, 0])
         })
-        traj = fom.solve(params)         
+        traj = fom.solve(params)
         nu_trajectories.append(traj)
 
     for t_idx in t_choices[i]:
@@ -250,6 +257,35 @@ for i, mu_vec in enumerate(mu_candidates):
             sv = np.pad(sv, (0, P.N_A - sv.shape[0]))
         np.maximum(sigma_mu_t_sup, sv, out=sigma_mu_t_sup)
 
-np.savez_compressed(f'examples/{example_name}/training_data/pod_singular_values_{example_name}.npz',
+np.savez_compressed(tdir / f'pod_singular_values_{example_name}.npz',
                     sigma_global_NA=singular_values.astype(np.float32),
                     sigma_mu_t_sup=sigma_mu_t_sup.astype(np.float32))
+
+'''
+--------------------------
+Save normalization meta data
+--------------------------
+'''
+
+def _as2d(x: np.ndarray) -> np.ndarray:
+    return x if x.ndim == 2 else x[:, None]
+
+def _save_norm(example_name: str, tag: str, mu: np.ndarray, nu: np.ndarray, sol: np.ndarray):
+    mu2 = _as2d(mu).astype(np.float32)  # [Ns, p]
+    nu2 = _as2d(nu).astype(np.float32)  # [Ns, q]
+
+    mu_min = mu2.min(axis=0).astype(np.float32); mu_max = mu2.max(axis=0).astype(np.float32)
+    nu_min = nu2.min(axis=0).astype(np.float32); nu_max = nu2.max(axis=0).astype(np.float32)
+
+    sol_flat = sol.reshape(-1, sol.shape[-1])    # [(Ns*Nt), D]
+    sol_min = sol_flat.min(axis=0).astype(np.float32)
+    sol_max = sol_flat.max(axis=0).astype(np.float32)
+    np.savez_compressed(
+        tdir / f"normalization_{tag}_{example_name}.npz",
+        mu_min=mu_min, mu_max=mu_max, nu_min=nu_min, nu_max=nu_max,
+        sol_min=sol_min, sol_max=sol_max
+    )
+
+_save_norm(example_name, "N_A_reduced", mu_arr, nu_arr, reduced)
+_save_norm(example_name, "N_reduced",   mu_arr, nu_arr, reduced_P)
+_save_norm(example_name, "reduced_stationary", stat_mu, stat_nu, stat_reduced)

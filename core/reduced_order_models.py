@@ -7,6 +7,8 @@ import math
 import copy
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
+from utils.paths import training_data_path
+
 
 # Initialize weights
 def initialize_weights(m):
@@ -41,7 +43,7 @@ class FetchTrainAndValidSet:
     with keys: mu_min, mu_max, nu_min, nu_max, sol_min, sol_max.
     """
     def __init__(self, train_to_val_ratio: float, example_name: str, reduction_tag: str):
-        path_npz = f'examples/{example_name}/training_data/{reduction_tag}_training_data_{example_name}.npz'
+        path_npz = training_data_path(example_name) / f'{reduction_tag}_training_data_{example_name}.npz'
         data = np.load(path_npz)
 
         # raw arrays
@@ -58,7 +60,7 @@ class FetchTrainAndValidSet:
         self.valid_idx = idx[n_train:]
 
         # ---- load precomputed normalization stats (no recomputation here) ----
-        stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
+        stats_path = training_data_path(example_name) / f'normalization_{reduction_tag}_{example_name}.npz'
         stats = np.load(stats_path)
 
         mu_min = stats['mu_min']
@@ -82,8 +84,8 @@ class FetchTrainAndValidSet:
         sol_min = sol_min.astype(np.float32); sol_max = sol_max.astype(np.float32)
 
         # normalize mu, nu
-        self.mu_n = (mu_2d - mu_min[None, :]) / (mu_max[None, :] - mu_min[None, :] + eps)   # [Ns, p]
-        self.nu_n = (nu_2d - nu_min[None, :]) / (nu_max[None, :] - nu_min[None, :] + eps)   # [Ns, q]
+        self.mu_n = (mu_2d - mu_min[None, :]) / (mu_max[None, :] - mu_min[None, :])   # [Ns, p]
+        self.nu_n = (nu_2d - nu_min[None, :]) / (nu_max[None, :] - nu_min[None, :])   # [Ns, q]
 
         # normalize solution per feature (last dim)
         if self.solution.ndim == 3:
@@ -214,6 +216,16 @@ class innerDODTrainer:
         self.valid_loader = DataLoader(DatasetLoader(valid_data), 
                                        batch_size=self.batch_size, shuffle=False)
         
+    def div_penalty(self, B, V):
+        """
+        V: [B, N_A, N']
+        Returns: penalty for ignoring mu and t
+        """
+        if B >= 2:
+            V_centered = V - V.mean(dim=0, keepdim=True)
+            div_pen = 1.0 / (1.0 + torch.mean(V_centered, dim=(1, 2)).mean())
+            return div_pen
+        
     def orth_penalty(self, V):
         """
         V: [B, N_A, N']  (columns should be orthonormal in Euclidean sense)
@@ -224,7 +236,7 @@ class innerDODTrainer:
         I = torch.eye(Np, device=V.device, dtype=V.dtype).expand_as(S)
         return ((S - I).pow(2).sum(dim=(-2, -1)) / Np).mean()  
 
-    def loss_function(self, mu_batch, solution_batch, lambda_orth=1e-2):
+    def loss_function(self, mu_batch, solution_batch, lambda_orth=1e-1, lambda_div=1e-3):
         """
         mu_batch:        [B, geometric_dim]
         solution_batch:  [B, nt+1, N_A]   (solutions already in the ambient space R^{N_A})
@@ -235,6 +247,7 @@ class innerDODTrainer:
 
         temp_proj = 0.0
         temp_orth = 0.0
+        temp_div = 0.0
 
         for i in range(self.nt + 1):
             t_batch = torch.full((B, 1), i  / (self.nt + 1),
@@ -253,9 +266,13 @@ class innerDODTrainer:
                 pen = self.orth_penalty(V)
                 temp_orth = temp_orth + pen
             
+            if lambda_div > 0.0:
+                temp_div = self.div_penalty(B, V)
+            
         data_loss = temp_proj / (B * (self.nt + 1))
         orth_loss = (temp_orth / (self.nt + 1))
-        loss = data_loss + lambda_orth * orth_loss
+        div_loss = (temp_div / (self.nt + 1))
+        loss = data_loss + lambda_orth * orth_loss + lambda_div * div_loss
         return loss
 
 
@@ -1379,7 +1396,7 @@ def normalize_mu(mu: torch.Tensor, example_name: str, reduction_tag: str):
     Normalize mu using training-set min/max.
     Accepts shapes [B, p], [p], or scalar tensor -> returns same shape.
     """
-    stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
+    stats_path = training_data_path(example_name)/  f'normalization_{reduction_tag}_{example_name}.npz'
     d = np.load(stats_path)
     # Remember original shape to return shape-consistently
     orig_shape = mu.shape
@@ -1403,7 +1420,7 @@ def normalize_nu(nu: torch.Tensor, example_name: str, reduction_tag: str):
     Normalize nu using training-set min/max.
     Accepts shapes [B, q], [q], or scalar tensor -> returns same shape.
     """
-    stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
+    stats_path = training_data_path(example_name)/  f'normalization_{reduction_tag}_{example_name}.npz'
     d = np.load(stats_path)
     orig_shape = nu.shape
     x = nu
@@ -1421,7 +1438,7 @@ def normalize_nu(nu: torch.Tensor, example_name: str, reduction_tag: str):
     return x
 
 def denormalize_solution(sol_norm: torch.Tensor, example_name: str, reduction_tag: str):
-    stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
+    stats_path = training_data_path(example_name)/  f'normalization_{reduction_tag}_{example_name}.npz'
     d = np.load(stats_path)
     m = torch.tensor(d['sol_min'], dtype=sol_norm.dtype, device=sol_norm.device)  # [D]
     M = torch.tensor(d['sol_max'], dtype=sol_norm.dtype, device=sol_norm.device)  # [D]
@@ -1446,7 +1463,8 @@ def pod_dl_rom_forward(ut0, A_P, POD_DL_model, De_model,
         mu_i_norm = normalize_mu(mu_i, example_name, reduction_tag)
         nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)
         coeff = POD_DL_model(mu_i_norm, nu_i_norm, t).unsqueeze(0)                 # [1, n]
-        y = De_model(coeff).squeeze(0)                              # [N] (normalized reduced)
+        y_norm = De_model(coeff).squeeze(0)                              # [N] (normalized reduced)
+        y = denormalize_solution(y_norm, example_name, 'N_reduced')
         u = ut0[j] + torch.matmul(A_P, y)                                   # [N_h]
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
@@ -1461,7 +1479,8 @@ def dod_dfnn_forward(ut0, A, innerDOD_model, DFNN_Nprime_model,
         nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)
         V_tilde = innerDOD_model(mu_i_norm, t)                                        # [N_A, N']
         coeff = DFNN_Nprime_model(mu_i_norm, nu_i_norm, t).squeeze(0)                        # [N']
-        u_red = torch.matmul(V_tilde, coeff)                                # [N_A]
+        u_red_norm = torch.matmul(V_tilde, coeff)                                # [N_A]
+        u_red = denormalize_solution(u_red_norm, example_name, 'N_A_reduced')
         u = ut0[j] + torch.matmul(A, u_red)                                         # [N_h]
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
@@ -1478,13 +1497,14 @@ def dod_dl_rom_forward(ut0, A, innerDOD_model, DOD_DL_model, De_model,
         V_tilde = innerDOD_model(mu_i_norm, t)                                      # [N_A, N']
         coeff_n = DOD_DL_model(mu_i_norm, nu_i_norm, t)                                  # [1, n]
         beta = De_model(coeff_n).squeeze(0)                                    # [N'] 
-        u_red = torch.matmul(V_tilde, beta)                               # [N_A] 
+        u_red_norm = torch.matmul(V_tilde, beta)                               # [N_A] 
+        u_red = denormalize_solution(u_red_norm, example_name, 'N_A_reduced')
         u = ut0[j] + torch.matmul(A, u_red)                                      # [N_h]
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
 
-def colora_forward(ut0, u0, stat_G_t, A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, 
-                   mu_i, nu_i, nt_, example_name: str, reduction_tag: str='N_A_reduced'):
+def colora_forward(ut0, u0, stat_G_t, stat_A, A_P, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, 
+                   mu_i, nu_i, nt_, example_name: str, reduction_tag: str='N_reduced'):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     preds = []
     for j in range(nt_ + 1):
@@ -1493,10 +1513,12 @@ def colora_forward(ut0, u0, stat_G_t, A, stat_DOD_model, stat_Coeff_model, CoLoR
         nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)    
         coeff0 = stat_Coeff_model(mu_i_norm, nu_i_norm)                             # [N']
         V0 = stat_DOD_model(mu_i_norm).squeeze(0)                                   # [N_A, N']
-        red_shift = torch.matmul(torch.matmul(A.T, stat_G_t), u0)
-        v_0 = red_shift + torch.matmul(V0.T, coeff0)                                     # [N_A]
-        u = CoLoRA_DL_model(v_0.unsqueeze(0), nu_i_norm, t).squeeze(0)            # [N_A] 
-        u = ut0[j] + torch.matmul(A, u)                                      # lift
+        red_shift = torch.matmul(torch.matmul(stat_A.T, stat_G_t), u0)
+        v_0_norm = torch.matmul(V0.T, coeff0)                                     # [N_A]
+        v_0 = red_shift + denormalize_solution(v_0_norm, example_name, 'reduced_stationary')
+        u_red_norm = CoLoRA_DL_model(v_0.unsqueeze(0), nu_i_norm, t).squeeze(0)            # [N_A] 
+        u_red = denormalize_solution(u_red_norm, example_name, 'N_reduced')
+        u = ut0[j] + torch.matmul(A_P, u_red)                                      # lift
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
 
@@ -1508,14 +1530,16 @@ Evaluation Helpers
 '''
 
 def forward_wrappers(P, device, models, example_name):
-    A = np.load(f'examples/{example_name}/training_data/N_A_ambient_{example_name}.npz')['ambient']
-    A_P = np.load(f'examples/{example_name}/training_data/N_ambient_{example_name}.npz')['ambient']
+    A = np.load(training_data_path(example_name) / f'N_A_ambient_{example_name}.npz')['ambient']
+    A_P = np.load(training_data_path(example_name) / f'N_ambient_{example_name}.npz')['ambient']
+    stat_A_P = np.load(training_data_path(example_name) / f'stationary_ambient_matrix_{example_name}.npz')['ambient']
     A_t = torch.tensor(A, dtype=torch.float32, device=device)
     A_P_t = torch.tensor(A_P, dtype=torch.float32, device=device)
-    stat_G = np.load(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npz')['gram']
+    stat_A_P_t = torch.tensor(stat_A_P, dtype=torch.float32, device=device)
+    stat_G = np.load(training_data_path(example_name) / f'stationary_gram_matrix_{example_name}.npz')['gram']
     stat_G_t = torch.tensor(stat_G, dtype=torch.float32, device=device)
 
-    shifts = np.load(f'examples/{example_name}/training_data/dirichlet_shift_{example_name}.npz')
+    shifts = np.load(training_data_path(example_name) / f'dirichlet_shift_{example_name}.npz')
     ut0 = torch.tensor(shifts['ut0'], dtype=torch.float32, device=device)  # [Nt, Nh]
     u0 = torch.tensor(shifts['u0'], dtype=torch.float32, device=device).squeeze(0)  # [Nh]
 
@@ -1534,7 +1558,7 @@ def forward_wrappers(P, device, models, example_name):
                                       P.Nt, example_name, reduction_tag='N_reduced')
 
     def colora(mu_i, nu_i):
-        return colora_forward(ut0, u0, stat_G_t, A_t, models["CoLoRA"]["inner"], models["CoLoRA"]["inner_coeff"], 
+        return colora_forward(ut0, u0, stat_G_t, stat_A_P_t, A_P_t, models["CoLoRA"]["inner"], models["CoLoRA"]["inner_coeff"], 
                               models["CoLoRA"]["coeff"], mu_i, nu_i, P.Nt, 
                               example_name, reduction_tag='N_A_reduced')
 
@@ -1553,7 +1577,7 @@ def evaluate_rom_forward(rom_name, forward_fn, args, ref_sol, G):
     """
     forward_fn(*args) -> [T, N_h]
     Returns:
-      abs_err = ( E_t ||u_ref - u_hat||_G^2 )^{1/2}
+      abs_err = ( \int ||u_ref - u_hat||_G^2 )^{1/2}
       rel_err = ( \int ||u_ref - u_hat||_G^2 )^{1/2} / ( \int ||u_ref||_G^2 )^{1/2}
       U_hat = forward_fn(*args)
     """

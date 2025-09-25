@@ -1,6 +1,7 @@
 import torch
 from core import reduced_order_models as rom
 from core.configs.parameters import Ex03Parameters
+from utils.paths import state_dicts_path
 
 # --- Configure run / hyperparams --------------------------------------------
 example_name = 'ex03'
@@ -31,4 +32,4 @@ best_loss = DOD_trainer.train()
 print(f"Best validation loss: {best_loss}")
 
 # --- Save --------------------------------------------------------------------
-torch.save(DOD_model.state_dict(), f'examples/{example_name}/state_dicts/DOD_Module.pth')
+torch.save(DOD_model.state_dict(), state_dicts_path(example_name) / f'DOD_Module.pth')

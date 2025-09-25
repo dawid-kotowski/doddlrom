@@ -1,6 +1,7 @@
 import torch
 from core import reduced_order_models as rom
 from core.configs.parameters import Ex02Parameters
+from utils.paths import state_dicts_path
 
 # --- Configure / hyperparams -------------------------------------------------
 example_name = 'ex02'
@@ -14,7 +15,7 @@ train_valid_data = rom.FetchTrainAndValidSet(0.8, example_name, 'N_A_reduced')
 
 # --- DOD model (pretrained basis) -------------------------------------------
 innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs())
-innerDOD_model.load_state_dict(torch.load(f'examples/{example_name}/state_dicts/DOD_Module.pth'))
+innerDOD_model.load_state_dict(torch.load(state_dicts_path(example_name) / f'/DOD_Module.pth'))
 innerDOD_model.eval()
 
 # --- DFNN  ------------------------------------------------------------------
@@ -38,4 +39,4 @@ best_loss = DOD_coeff_trainer.train()
 print(f"Best validation loss: {best_loss}")
 
 # --- Save --------------------------------------------------------------------
-torch.save(DOD_coeff_model.state_dict(), f'examples/{example_name}/state_dicts/DODFNN_Module.pth')
+torch.save(DOD_coeff_model.state_dict(), state_dicts_path(example_name) / f'DODFNN_Module.pth')

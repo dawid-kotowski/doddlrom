@@ -346,7 +346,7 @@ class Ex01Parameters:
             geometric_dim=self.parameter_mu_dim,
             seed_dim=self.preprocess_dim,
             num_roots=self.N_prime,
-            root_output_dim=self.N_A,
+            root_output_dim=self.N,
             root_layer_sizes=list(self.stat_dod_structure),
         )
 
@@ -361,7 +361,7 @@ class Ex01Parameters:
 
     def make_CoLoRA_kwargs(self) -> Dict[str, Any]:
         return dict(
-            out_dim=self.N_A,
+            out_dim=self.N,
             L=self.L,
             dyn_dim=self.N_prime,
             physical_dim=self.parameter_nu_dim,
@@ -692,7 +692,7 @@ class Ex02Parameters:
             geometric_dim=self.parameter_mu_dim,
             seed_dim=self.preprocess_dim,
             num_roots=self.N_prime,
-            root_output_dim=self.N_A,
+            root_output_dim=self.N,
             root_layer_sizes=list(self.stat_dod_structure),
         )
 
@@ -707,7 +707,7 @@ class Ex02Parameters:
 
     def make_CoLoRA_kwargs(self) -> Dict[str, Any]:
         return dict(
-            out_dim=self.N_A,
+            out_dim=self.N,
             L=self.L,
             dyn_dim=self.N_prime,
             physical_dim=self.parameter_nu_dim,
@@ -853,9 +853,9 @@ class Ex03Parameters:
     N: int = 64
     N_prime: int = 9
     n: int = 2
-    Nt: int = 10
+    Nt: int = 30
     Ns: int = 400
-    T: float = 1.
+    T: float = 3.
     diameter: float = 0.01
     parameter_mu_dim: int = 1
     parameter_nu_dim: int = 1
@@ -906,6 +906,18 @@ class Ex03Parameters:
         for k, v in preset.items():
             if hasattr(self, k):
                 setattr(self, k, v)
+
+    def _overwrite_N(self, N) -> None:
+        self.N = N
+
+    def _overwrite_N_prime(self, N_prime) -> None:
+        self.N_prime = N_prime
+
+    def _overwrite_N_s(self, N_s) -> None:
+        self.Ns = N_s
+
+    def _overwrite_N_t(self, N_t) -> None:
+        self.Nt = N_t
 
     # ----------------- Sanity checks ----------------------------------------
     def assert_consistent(self) -> None:
@@ -1017,7 +1029,7 @@ class Ex03Parameters:
             geometric_dim=self.parameter_mu_dim,
             seed_dim=self.preprocess_dim,
             num_roots=self.N_prime,
-            root_output_dim=self.N_A,
+            root_output_dim=self.N,
             root_layer_sizes=list(self.stat_dod_structure),
         )
 
@@ -1032,7 +1044,7 @@ class Ex03Parameters:
 
     def make_CoLoRA_kwargs(self) -> Dict[str, Any]:
         return dict(
-            out_dim=self.N_A,
+            out_dim=self.N,
             L=self.L,
             dyn_dim=self.N_prime,
             physical_dim=self.parameter_nu_dim,
