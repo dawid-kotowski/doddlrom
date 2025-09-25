@@ -571,7 +571,7 @@ class Ex02Parameters:
     # -------- Training defaults ---------------------------------------------
     generalepochs: int = 5000
     generalrestarts: int = 10
-    generalpatience: int = 2
+    generalpatience: int = 50
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
@@ -895,8 +895,8 @@ class Ex03Parameters:
 
     # -------- Training defaults ---------------------------------------------
     generalepochs: int = 5000
-    generalrestarts: int = 10
-    generalpatience: int = 2
+    generalrestarts: int = 5
+    generalpatience: int = 50
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
@@ -906,18 +906,6 @@ class Ex03Parameters:
         for k, v in preset.items():
             if hasattr(self, k):
                 setattr(self, k, v)
-
-    def _overwrite_N(self, N) -> None:
-        self.N = N
-
-    def _overwrite_N_prime(self, N_prime) -> None:
-        self.N_prime = N_prime
-
-    def _overwrite_N_s(self, N_s) -> None:
-        self.Ns = N_s
-
-    def _overwrite_N_t(self, N_t) -> None:
-        self.Nt = N_t
 
     # ----------------- Sanity checks ----------------------------------------
     def assert_consistent(self) -> None:

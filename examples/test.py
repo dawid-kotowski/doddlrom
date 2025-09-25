@@ -7,11 +7,16 @@ the respective ROMs.
 Run Program
 -----------------
 python examples/test.py 
---example "ex0{number}"
+--example "ex0{number}" [REQUIRED]
+[OPTIONALS]
 --profiles "profiles" 
 --epochs "epochs" 
 --restarts "restarts" 
---eval_samples "number of samples to test error with"
+--eval-samples "number of samples to test error with"
+--N "reduced dimension for POD-based"
+--N-prime "reduced dimension for DOD-based"
+--Ns "sample_size"
+--Nt "sample_time_size"
 -----------------
 
 """
@@ -138,7 +143,11 @@ def main():
     parser.add_argument('--profiles', nargs='+', default=['test1, test2, test3, test4, test5'])
     parser.add_argument('--epochs', type=int, default=None)
     parser.add_argument('--restarts', type=int, default=None)
-    parser.add_argument('--eval_samples', type=int, default=5)
+    parser.add_argument('--eval-samples', type=int, default=5)
+    parser.add_argument('--N', type=int, default=None)
+    parser.add_argument('--N-prime', type=int, default=None)
+    parser.add_argument('--Ns', type=int, default=None)
+    parser.add_argument('--Nts', type=int, default=None)
     args = parser.parse_args()
 
     example_name = args.example
@@ -166,6 +175,10 @@ def main():
 
         for profile in args.profiles:
             P = load_parameters(example_name, profile=profile)
+            if args.N is not None: P.N = args.N
+            if args.N_prime is not None: P.N_prime = args.N_prime
+            if args.Ns is not None: P.Ns = args.Ns
+            if args.Nt is not None: P.Nt = args.Nt
             P.assert_consistent()
             if args.epochs is not None: P.generalepochs = args.epochs
             if args.restarts is not None: P.generalrestarts = args.restarts
@@ -226,6 +239,8 @@ def main():
                 row = {
                     'profile': profile,
                     'rom': rom_name,
+                    'Ns': int(P.Ns),
+                    'Nt': int(P.Nt),
                     'epochs': P.generalepochs,
                     'restarts': P.generalrestarts,
                     'val_loss': float(val_losses[rom_name]),

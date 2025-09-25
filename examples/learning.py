@@ -5,9 +5,14 @@ Run Programm:
 -----------------------------------
 python examples/learning.py 
 --example "ex0{number}" [REQUIRED]
+[OPTIONALS]
 --epochs "epochs" 
 --restarts "restarts" 
---with-stationary (default=TRUE)
+--with-stationary (default=FALSE)
+--N "reduced dimension for POD-based"
+--N-prime "reduced dimension for DOD-based"
+--Ns "sample_size"
+--Nt "sample_time_size"
 -----------------------------------
 """
 import argparse, importlib
@@ -126,14 +131,22 @@ def train_colora(P, example_name, trainer_overrides):
     return best
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--example', type=str, required=True)
-    ap.add_argument('--epochs', type=int, default=None)
-    ap.add_argument('--restarts', type=int, default=None)
-    ap.add_argument('--with-stationary', action='store_true', default=False)
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--example', type=str, required=True)
+    parser.add_argument('--epochs', type=int, default=None)
+    parser.add_argument('--restarts', type=int, default=None)
+    parser.add_argument('--with-stationary', action='store_true', default=False)
+    parser.add_argument('--N', type=int, default=None)
+    parser.add_argument('--N-prime', type=int, default=None)
+    parser.add_argument('--Ns', type=int, default=None)
+    parser.add_argument('--Nt', type=int, default=None)
+    args = parser.parse_args()
 
     P = load_parameters(args.example, profile='baseline')
+    if args.N is not None: P.N = args.N
+    if args.N_prime is not None: P.N_prime = args.N_prime
+    if args.Ns is not None: P.Ns = args.Ns
+    if args.Nt is not None: P.Nt = args.Nt
     P.assert_consistent()
     td = P.trainer_defaults()
     if args.epochs is not None:   td["epochs"]   = args.epochs
