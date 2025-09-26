@@ -63,11 +63,6 @@ def count_params(module, include_frozen=True):
     nonzero = sum((p != 0).sum().item() for p in ps)
     return total, nonzero
 
-def freeze(module):
-    for p in module.parameters():
-        p.requires_grad = False
-    module.eval()
-
 def time_one_forward(fn, *args, repeats=5):
     times = []
     for _ in range(repeats):
@@ -191,8 +186,8 @@ def main():
             for rom_name, trainer in trainers.items():
                 val_losses[rom_name] = trainer.train()
                 if rom_name == "innerDOD":
-                    freeze(models["DOD+DFNN"]["inner"])
-                    freeze(models["DOD-DL-ROM"]["inner"])
+                    rom._freeze(models["DOD+DFNN"]["inner"])
+                    rom._freeze(models["DOD-DL-ROM"]["inner"])
 
 
             # Pick random eval items

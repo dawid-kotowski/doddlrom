@@ -733,14 +733,14 @@ EX03_PRESETS: Dict[str, Dict[str, Any]] = {
         # DOD-DL-ROM (AE on N'=9 ↔ n=2; 3x3 grid)
         "dod_dl_df_layers": [16, 8],
         "dod_in_channels": 1,
-        "dod_hidden_channels": 6,
+        "dod_hidden_channels": 1,
         "dod_kernel": 3, "dod_stride": 2, "dod_padding": 1,
         "dod_num_layers": 2,      # 3→2→1
 
         # POD-DL-ROM (AE on N=64 ↔ n=2; 8x8 grid)
         "pod_df_layers": [16, 8],
         "pod_in_channels": 1,
-        "pod_hidden_channels": 6,
+        "pod_hidden_channels": 1,
         "pod_kernel": 3, "pod_stride": 2, "pod_padding": 1,
         "pod_num_layers": 3,      # 8→4→2→1
 

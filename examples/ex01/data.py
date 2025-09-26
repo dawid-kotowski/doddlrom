@@ -171,7 +171,6 @@ def main():
 
     shifted_solutions = np.stack(shifted_solutions, axis=0)  # [Ns, Nt, Nh]
     solutions = np.stack(solutions, axis=0)                  # [Ns, Nt, Nh]
-    fom.visualize(solution)                                  # visualize last solution as check
 
     # Gram matrix (compact)
     G = fom.h1_0_semi_product.matrix.toarray().astype(np.float32)  # [Nh, Nh]
@@ -230,7 +229,6 @@ def main():
 
     shifted_stat_solutions = np.stack(shifted_stat_solutions, axis=0)  # [Ns, Nh]
     stat_solutions = np.stack(stat_solutions, axis=0)                  # [Ns, Nh]
-    fom.visualize(stat_solution)  # visualize last solution as check
 
     # Save compact stationary FOM data (raw, unshifted)
     np.savez_compressed(tdir / f'stationary_training_data_{example_name}.npz',

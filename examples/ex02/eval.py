@@ -1,16 +1,18 @@
 from pymor.basic import *
 from core import reduced_order_models as rom
-from core.configs.parameters import Ex02Parameters  
+from utils.paths import training_data_path, state_dicts_path
+from core.configs.parameters import Ex02Parameters 
+from utils.paths import training_data_path   
 import numpy as np
 import torch
 
 #region --- Configure this run ------------------------------------------------------
 example_name = 'ex02'
-P = Ex02Parameters(profile="baseline")          # or "wide"/"tiny"/"debug"
+P = Ex02Parameters(profile="baseline")          
 P.assert_consistent()
 
 #region --- Set up of FOM for pymor utility------------------------------------------
-data = np.load(f'examples/{example_name}/training_data/full_order_training_data_{example_name}.npz')
+data = np.load(training_data_path(example_name) / f'full_order_training_data_{example_name}.npz')
 mu = data['mu']          # shape [Ns, p]
 nu = data['nu']          # shape [Ns, q]
 solution = data['solution']  # shape [Ns, P.Nt, Nh]
@@ -59,7 +61,7 @@ fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt
 # --- Set up solutions --------------------------------------------------------------
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 true_solution = fom.solution_space.empty()
-G = np.load(f'examples/{example_name}/training_data/gram_matrix_{example_name}.npz')['gram'].astype(np.float32)
+G = np.load(training_data_path(example_name) / f'gram_matrix_{example_name}.npz')['gram'].astype(np.float32)
 
 for entry in training_data:
     mu, nu, sol = entry
@@ -79,8 +81,8 @@ for entry in training_data:
 
 
     # Check for normalization procedure
-    A_NA = np.load(f'examples/{example_name}/training_data/N_A_ambient_{example_name}.npz')['ambient'].astype(np.float32)
-    stats = np.load(f'examples/{example_name}/training_data/normalization_N_A_reduced_{example_name}.npz')
+    A_NA = np.load(training_data_path(example_name) / f'N_A_ambient_{example_name}.npz')['ambient'].astype(np.float32)
+    stats = np.load(training_data_path(example_name) / f'normalization_N_A_reduced_{example_name}.npz')
     sol_min = stats['sol_min'].astype(np.float32)  # [N_A]
     sol_max = stats['sol_max'].astype(np.float32)  # [N_A]
     U = sol.astype(np.float32)                              # [Nt, N_h]
@@ -102,43 +104,82 @@ for entry in training_data:
     print(f"[ex03 | A^T G → norm → denorm → A]  abs={abs_err:.3e}  rel={rel_err:.3e}")
 
     # Visualize
-    U_hat_vec = fom.solution_space.from_numpy(U_hat)
-    fom.visualize(
-        (u_i, U_hat_vec, u_i - U_hat_vec),
-        legend=(f'FOM (μ={mu.tolist()}, ν={nu.tolist()})',
-                'A^T G→norm→denorm→A',
-                f"Rel L² error (G): {rel_err:.3e}")
-    )
+    # U_hat_vec = fom.solution_space.from_numpy(U_hat)
+    # fom.visualize(
+    #     (u_i, U_hat_vec, u_i - U_hat_vec),
+    #     legend=(f'FOM (μ={mu.tolist()}, ν={nu.tolist()})',
+    #             'A^T G→norm→denorm→A',
+    #             f"Rel L² error (G): {rel_err:.3e}")
+    # )
     #! Check
+
+    
+    # ------------------ Load Modules --------------------------------
+    sd_dir = state_dicts_path(example_name)
+
+    def load_sd(m, p):
+        m.load_state_dict(torch.load(p, map_location=device))
+        m.eval()
+        return m
 
     # inner DOD used by DOD+DFNN and DOD-DL-ROM
     innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs()).to(device)
 
+    innerDOD_model = load_sd(innerDOD_model, sd_dir / "DOD_Module.pth")
+
     # DOD+DFNN (DFNN -> N')
     dfnn_nprime = rom.DFNN(**P.make_dod_dfnn_DFNN_kwargs()).to(device)
 
+    if (sd_dir / "DODFNN_Module.pth").exists():
+        dfnn_nprime = load_sd(dfnn_nprime, sd_dir / "DODFNN_Module.pth")
+    else:
+        raise FileNotFoundError("DOD+DFNN weights not found.")
+
     # DOD-DL-ROM (DFNN -> n, AE: N'<->n)
-    coeff_n = rom.DFNN(**P.make_dod_dl_DFNN_kwargs()).to(device)
-    enc = rom.Encoder(**P.make_dod_dl_Encoder_kwargs()).to(device)
-    dec = rom.Decoder(**P.make_dod_dl_Decoder_kwargs()).to(device)
+    dod_coeff = rom.DFNN(**P.make_dod_dl_DFNN_kwargs()).to(device)
+    dod_enc = rom.Encoder(**P.make_dod_dl_Encoder_kwargs()).to(device)
+    dod_dec = rom.Decoder(**P.make_dod_dl_Decoder_kwargs()).to(device)
+
+    if (sd_dir / "DOD_DL_ROM_Module.pth").exists():
+        blob = torch.load(sd_dir / "DOD_DL_ROM_Module.pth", map_location=device)
+        dod_enc.load_state_dict(blob["encoder"]);   dod_enc.eval()
+        dod_dec.load_state_dict(blob["decoder"]);   dod_dec.eval()
+        dod_coeff.load_state_dict(blob["coeff_model"]); dod_coeff.eval()
+    else:
+        raise FileNotFoundError("DOD-DL-ROM weights not found.")
 
     # POD-DL-ROM (DFNN -> n, AE: N_A<->n)
     pod_coeff = rom.DFNN(**P.make_pod_DFNN_kwargs()).to(device)
     pod_enc = rom.Encoder(**P.make_pod_Encoder_kwargs()).to(device)
     pod_dec = rom.Decoder(**P.make_pod_Decoder_kwargs()).to(device)
 
-    # CoLoRA (statDOD * statHadamard -> n ->(time-sensitive) N_A)
-    stat_dod = rom.statDOD(**P.make_statDOD_kwargs())
-    stat_coeff = rom.statHadamardNN(**P.make_statHadamard_kwargs())
-    colora_coeff = rom.CoLoRA(**P.make_CoLoRA_kwargs())
+    if (sd_dir / "POD_DL_ROM_Module.pth").exists():
+        blob = torch.load(sd_dir / "POD_DL_ROM_Module.pth", map_location=device)
+        pod_enc.load_state_dict(blob["encoder"]); pod_enc.eval()
+        pod_dec.load_state_dict(blob["decoder"]); pod_dec.eval()
+        pod_coeff.load_state_dict(blob["coeff_model"]); pod_coeff.eval()
+    else:
+        raise FileNotFoundError("POD-DL-ROM weights not found.")
+    
+    # CoLoRA (stat -> N, CoLoRA N -> N, POD N -> N_h)
+    stat_dod = rom.statDOD(**P.make_statDOD_kwargs()).to(device)
+    stat_coeff = rom.statHadamardNN(**P.make_statHadamard_kwargs()).to(device)
+    colora_coeff = rom.CoLoRA(**P.make_CoLoRA_kwargs()).to(device)
+    if (sd_dir / "stat_DOD_Module.pth").exists():
+        stat_dod = load_sd(stat_dod, sd_dir / "stat_DOD_Module.pth")
+    if (sd_dir / "stat_CoeffDOD_Module.pth").exists():
+        stat_coeff = load_sd(stat_coeff, sd_dir  / "stat_CoeffDOD_Module.pth")
+    if (sd_dir / "CoLoRA_Module.pth").exists():
+        colora_coeff = load_sd(colora_coeff, sd_dir / "CoLoRA_Module.pth")
+
+    torch.set_grad_enabled(False)
 
     models = {
         "DOD+DFNN": {"inner": innerDOD_model, "coeff": dfnn_nprime},
-        "DOD-DL-ROM": {"inner": innerDOD_model, "coeff": coeff_n, "enc": enc, "dec": dec},
+        "DOD-DL-ROM": {"inner": innerDOD_model, "coeff": dod_coeff, "enc": dod_enc, "dec": dod_dec},
         "POD-DL-ROM": {"coeff": pod_coeff, "enc": pod_enc, "dec": pod_dec},
         "CoLoRA": {"inner": stat_dod, "inner_coeff": stat_coeff, "coeff": colora_coeff}
     }
-
     fw = rom.forward_wrappers(P, device, models, example_name)
 
     _, pod_dl_residual, pod_dl_sol = rom.evaluate_rom_forward(

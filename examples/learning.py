@@ -62,7 +62,6 @@ def train_doddfnn(P, example_name, trainer_overrides):
     tv = rom.FetchTrainAndValidSet(0.8, example_name, 'N_A_reduced')
     inner = rom.innerDOD(**P.make_innerDOD_kwargs())
     inner.load_state_dict(torch.load(state_dicts_path(example_name) / f'DOD_Module.pth', map_location='cpu'))
-    inner.eval()
     coeff = rom.DFNN(**P.make_dod_dfnn_DFNN_kwargs())               # (p+q+1 -> N')
     trainer = rom.DFNNTrainer(P.Nt, P.N_A, inner, coeff, tv,
                               trainer_overrides["epochs"], trainer_overrides["restarts"],
@@ -77,7 +76,6 @@ def train_dod_dl_rom(P, example_name, trainer_overrides):
     tv = rom.FetchTrainAndValidSet(0.8, example_name, 'N_A_reduced')
     inner = rom.innerDOD(**P.make_innerDOD_kwargs())
     inner.load_state_dict(torch.load(state_dicts_path(example_name) / f'DOD_Module.pth', map_location='cpu'))
-    inner.eval()
     enc = rom.Encoder(**P.make_dod_dl_Encoder_kwargs())             # (N' -> n)
     dec = rom.Decoder(**P.make_dod_dl_Decoder_kwargs())             # (n -> N')
     coeff = rom.DFNN(**P.make_dod_dl_DFNN_kwargs())                 # (p+q+1 -> n)
