@@ -181,9 +181,9 @@ for entry in training_data:
         raise FileNotFoundError("POD-DL-ROM weights not found.")
     
     # CoLoRA (stat -> N, CoLoRA N -> N, POD N -> N_h)
-    stat_dod = rom.statDOD(**P.make_statDOD_kwargs).to(device)
-    stat_coeff = rom.statHadamardNN(**P.make_statHadamard_kwargs).to(device)
-    colora_coeff = rom.CoLoRA(**P.make_CoLoRA_kwargs).to(device)
+    stat_dod = rom.statDOD(**P.make_statDOD_kwargs()).to(device)
+    stat_coeff = rom.statHadamardNN(**P.make_statHadamard_kwargs()).to(device)
+    colora_coeff = rom.CoLoRA(**P.make_CoLoRA_kwargs()).to(device)
     if (sd_dir / "stat_DOD_Module.pth").exists():
         colora_coeff.load_state_dict(colora_coeff, "stat_DOD_Module.pth")
     if (sd_dir / "stat_CoeffDOD_Module.pth").exists():
