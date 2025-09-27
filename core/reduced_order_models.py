@@ -268,7 +268,8 @@ class innerDODTrainer:
         best_loss_restart = float('inf')
         best_loss = float('inf')
 
-        use_cuda = self.device.startswith('cuda')
+        params = list(self.model.parameters())
+        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 
@@ -497,7 +498,8 @@ class DFNNTrainer:
         best_loss_restart = float('inf')
         best_loss = float('inf')
 
-        use_cuda = self.device.startswith('cuda')
+        params = list(self.model.parameters())
+        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 
@@ -776,7 +778,10 @@ class DOD_DL_ROMTrainer:
         best_loss_restart = float('inf')
         best_loss = float('inf')
 
-        use_cuda = self.device.startswith('cuda')
+        params = list(self.coeff_model.parameters()) + \
+                     list(self.en_model.parameters()) + \
+                     list(self.de_model.parameters())
+        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 
@@ -790,10 +795,6 @@ class DOD_DL_ROMTrainer:
             self.coeff_model.apply(initialize_weights)
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
-
-            params = list(self.coeff_model.parameters()) + \
-                     list(self.en_model.parameters()) + \
-                     list(self.de_model.parameters())
             
             optimizer = optim.Adam(params, lr=self.learning_rate)
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
@@ -931,7 +932,10 @@ class POD_DL_ROMTrainer:
         best_loss_restart = float('inf')
         best_loss = float('inf')
 
-        use_cuda = self.device.startswith('cuda')
+        params = list(self.coeff_model.parameters()) + \
+                     list(self.en_model.parameters()) + \
+                     list(self.de_model.parameters())
+        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 
@@ -945,10 +949,6 @@ class POD_DL_ROMTrainer:
             self.coeff_model.apply(initialize_weights)
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
-
-            params = list(self.coeff_model.parameters()) + \
-                     list(self.en_model.parameters()) + \
-                     list(self.de_model.parameters())
             
             optimizer = optim.Adam(params, lr=self.learning_rate)
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
@@ -1183,8 +1183,9 @@ class statDODTrainer:
         best_model = None
         best_loss_restart = float('inf')
         best_loss = float('inf')
-
-        use_cuda = self.device.startswith('cuda')
+        
+        params = list(self.model.parameters())
+        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 
@@ -1303,8 +1304,9 @@ class statHadamardNNTrainer:
         best_model = None
         best_loss_restart = float('inf')
         best_loss = float('inf')
-
-        use_cuda = self.device.startswith('cuda')
+        
+        params = list(self.model.parameters())
+        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 
@@ -1503,8 +1505,9 @@ class CoLoRATrainer():
         best_model = None
         best_loss_restart = float('inf')
         best_loss = float('inf')
-
-        use_cuda = self.device.startswith('cuda')
+        
+        params = list(self.model.parameters())
+        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 

@@ -6,10 +6,7 @@ when not considered!!
 Note: This example employs 
       N_h = N_A
 
-IMPORTANT: Here, Dirichlet makes no sense, 
-           so we set it to zero.
-
-           The usage of specified N and Nt can break the learning,
+IMPORTANT: The usage of specified N and Nt can break the learning,
            when not considered!!
            (Ns doesnt break it, but is important for notation)
 ====================================
@@ -196,11 +193,6 @@ def main():
     u_t_0_np = u_t_0.to_numpy().astype(np.float32)
     u_0 = stat_fom.solve(stat_parameter_space.sample_uniformly(1)[0])
     u_0_np = u_0.to_numpy().astype(np.float32)
-
-    # Set to zero to keep functionality (minimal overhead, since this is only enforced through the
-    # FetchTrainAndValid class and the forwards)
-    u_t_0_np = np.zeros_like(fom.solve(parameter_space.sample_uniformly(1)[0]).to_numpy(), dtype=np.float32)
-    u_0_np   = np.zeros_like(stat_fom.solve(stat_parameter_space.sample_uniformly(1)[0]).to_numpy(), dtype=np.float32)
 
     tdir = training_data_path(example_name)
 

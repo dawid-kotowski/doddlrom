@@ -3,10 +3,7 @@ Data Gathering Script for example 02.
 The usage of N and Nt can break the learning,
 when not considered!!
 ====================================
-IMPORTANT: Here, Dirichlet makes no sense, 
-           so we set it to zero.
-
-           The usage of specified N and Nt can break the learning,
+IMPORTANT: The usage of specified N and Nt can break the learning,
            when not considered!!
            (Ns doesnt break it, but is important for notation)
 ====================================
@@ -155,20 +152,11 @@ def main():
     stat_mu = np.array([p['mu'] for p in training_set], dtype=np.float32)
     stat_nu = np.array([p['nu'] for p in training_set], dtype=np.float32)
 
-    # Create an empty list to hold the training data
-    solution_set = fom.solution_space.empty()         
-    stat_solution_set = stat_fom.solution_space.empty()
-
     # Enforce Dirichlet shift
     u_t_0 = fom.solve(parameter_space.sample_uniformly(1)[0])
     u_t_0_np = u_t_0.to_numpy().astype(np.float32)
     u_0 = stat_fom.solve(stat_parameter_space.sample_uniformly(1)[0])
     u_0_np = u_0.to_numpy().astype(np.float32)
-
-    # Set to zero to keep functionality (minimal overhead, since this is only enforced through the
-    # FetchTrainAndValid class and the forwards)
-    u_t_0_np = np.zeros_like(fom.solve(parameter_space.sample_uniformly(1)[0]).to_numpy(), dtype=np.float32)
-    u_0_np   = np.zeros_like(stat_fom.solve(stat_parameter_space.sample_uniformly(1)[0]).to_numpy(), dtype=np.float32)
 
     tdir = training_data_path(example_name)
 

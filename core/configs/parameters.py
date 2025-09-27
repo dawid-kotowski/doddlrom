@@ -401,117 +401,92 @@ EX02_PRESETS: Dict[str, Dict[str, Any]] = {
         "stat_dod_structure": [128, 64],
         "stat_phi_n_structure": [32, 16],
     },
-
-    "test1": {  
+    "test1": {
         "preprocess_dim": 2,
         "dod_structure": [32],
-
         "df_layers": [8],
-
         "dod_dl_df_layers": [8],
         "dod_in_channels": 1,
         "dod_hidden_channels": 4,
         "dod_kernel": 3, "dod_stride": 2, "dod_padding": 1,
         "dod_num_layers": 1,
-
         "pod_df_layers": [8],
         "pod_in_channels": 1,
         "pod_hidden_channels": 4,
         "pod_kernel": 3, "pod_stride": 2, "pod_padding": 1,
-        "pod_num_layers": 3,
-
+        "pod_num_layers": 1,
         "L": 2,
         "stat_dod_structure": [32],
         "stat_phi_n_structure": [8],
     },
-
-    "test2": {  
+    "test2": {
         "preprocess_dim": 3,
         "dod_structure": [64, 32],
-
         "df_layers": [16, 8],
-
         "dod_dl_df_layers": [16, 8],
         "dod_in_channels": 1,
         "dod_hidden_channels": 8,
         "dod_kernel": 3, "dod_stride": 2, "dod_padding": 1,
         "dod_num_layers": 2,
-
         "pod_df_layers": [16, 8],
         "pod_in_channels": 1,
         "pod_hidden_channels": 8,
         "pod_kernel": 3, "pod_stride": 2, "pod_padding": 1,
-        "pod_num_layers": 4,
-
+        "pod_num_layers": 1,
         "L": 3,
         "stat_dod_structure": [64, 32],
         "stat_phi_n_structure": [16, 8],
     },
-
-    "test3": {  
+    "test3": {
         "preprocess_dim": 3,
         "dod_structure": [128, 64],
-
         "df_layers": [32, 16],
-
         "dod_dl_df_layers": [32, 16],
         "dod_in_channels": 1,
         "dod_hidden_channels": 12,
         "dod_kernel": 5, "dod_stride": 2, "dod_padding": 2,
         "dod_num_layers": 2,
-
         "pod_df_layers": [32, 16],
         "pod_in_channels": 1,
         "pod_hidden_channels": 12,
         "pod_kernel": 5, "pod_stride": 2, "pod_padding": 2,
-        "pod_num_layers": 5,
-
+        "pod_num_layers": 1,
         "L": 3,
         "stat_dod_structure": [128, 64],
         "stat_phi_n_structure": [32, 16],
     },
-
-    "test4": { 
+    "test4": {
         "preprocess_dim": 4,
         "dod_structure": [128, 64, 64],
-
         "df_layers": [48, 32, 16],
-
         "dod_dl_df_layers": [48, 32, 16],
         "dod_in_channels": 1,
         "dod_hidden_channels": 16,
         "dod_kernel": 5, "dod_stride": 2, "dod_padding": 2,
         "dod_num_layers": 3,
-
         "pod_df_layers": [48, 32, 16],
         "pod_in_channels": 1,
         "pod_hidden_channels": 16,
         "pod_kernel": 5, "pod_stride": 2, "pod_padding": 2,
-        "pod_num_layers": 5,
-
+        "pod_num_layers": 1,
         "L": 4,
         "stat_dod_structure": [128, 64, 64],
         "stat_phi_n_structure": [48, 32, 16],
     },
-
-    "test5": {  
+    "test5": {
         "preprocess_dim": 4,
         "dod_structure": [256, 128, 64],
-
         "df_layers": [64, 48, 24],
-
         "dod_dl_df_layers": [64, 48, 24],
         "dod_in_channels": 1,
         "dod_hidden_channels": 24,
         "dod_kernel": 5, "dod_stride": 2, "dod_padding": 2,
         "dod_num_layers": 3,
-
         "pod_df_layers": [64, 48, 24],
         "pod_in_channels": 1,
         "pod_hidden_channels": 24,
         "pod_kernel": 5, "pod_stride": 2, "pod_padding": 2,
-        "pod_num_layers": 5,
-
+        "pod_num_layers": 1,
         "L": 4,
         "stat_dod_structure": [256, 128, 64],
         "stat_phi_n_structure": [64, 48, 24],
