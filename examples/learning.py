@@ -62,6 +62,7 @@ def train_doddfnn(P, example_name, trainer_overrides):
     tv = rom.FetchTrainAndValidSet(0.8, example_name, 'N_A_reduced')
     inner = rom.innerDOD(**P.make_innerDOD_kwargs())
     inner.load_state_dict(torch.load(state_dicts_path(example_name) / f'DOD_Module.pth', map_location='cpu'))
+    rom._freeze(inner)
     coeff = rom.DFNN(**P.make_dod_dfnn_DFNN_kwargs())               # (p+q+1 -> N')
     trainer = rom.DFNNTrainer(P.Nt, P.N_A, inner, coeff, tv,
                               trainer_overrides["epochs"], trainer_overrides["restarts"],
@@ -76,6 +77,7 @@ def train_dod_dl_rom(P, example_name, trainer_overrides):
     tv = rom.FetchTrainAndValidSet(0.8, example_name, 'N_A_reduced')
     inner = rom.innerDOD(**P.make_innerDOD_kwargs())
     inner.load_state_dict(torch.load(state_dicts_path(example_name) / f'DOD_Module.pth', map_location='cpu'))
+    rom._freeze(inner)
     enc = rom.Encoder(**P.make_dod_dl_Encoder_kwargs())             # (N' -> n)
     dec = rom.Decoder(**P.make_dod_dl_Decoder_kwargs())             # (n -> N')
     coeff = rom.DFNN(**P.make_dod_dl_DFNN_kwargs())                 # (p+q+1 -> n)
@@ -112,11 +114,13 @@ def train_colora(P, example_name, trainer_overrides):
                                      trainer_overrides["epochs"], trainer_overrides["restarts"],
                                      learning_rate=1e-3, batch_size=128, patience=trainer_overrides["patience"])
     _ = stat_dod_tr.train()
+    rom._freeze(stat_dod)
     stat_coeff = rom.statHadamardNN(**P.make_statHadamard_kwargs()) # (p+q+1 -> N')
     stat_coeff_tr = rom.statHadamardNNTrainer(stat_dod, stat_coeff, P.N, tv_stat,
                                               trainer_overrides["epochs"], trainer_overrides["restarts"],
                                               learning_rate=1e-3, batch_size=128, patience=trainer_overrides["patience"])
     _ = stat_coeff_tr.train()
+    rom._freeze(stat_coeff)
     colora = rom.CoLoRA(**P.make_CoLoRA_kwargs())                   # (p+q+1 -> N_A x Nt)
     colora_tr = rom.CoLoRATrainer(P.Nt, stat_dod, stat_coeff, colora, tv_dyn,
                                   trainer_overrides["epochs"], trainer_overrides["restarts"],

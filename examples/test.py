@@ -74,9 +74,9 @@ def time_one_forward(fn, *args, repeats=5):
         times.append((t1 - t0) * 1000.0)
     return float(np.median(times))
 
-def build_trainers_and_models(P, device, train_valid_set_N_A, train_valid_set_N):
+def build_trainers_and_models(P, train_valid_set_N_A, train_valid_set_N):
     # inner DOD used by DOD+DFNN and DOD-DL-ROM
-    innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs()).to(device)
+    innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs())
     inner_trainer = rom.innerDODTrainer(
         nt=P.Nt, dod_model=innerDOD_model,
         train_valid_set=train_valid_set_N_A,
@@ -84,37 +84,36 @@ def build_trainers_and_models(P, device, train_valid_set_N_A, train_valid_set_N)
         restart=P.generalrestarts,
         learning_rate=1e-3,
         batch_size=128,
-        device=device,
         patience=P.generalpatience,
     )
 
     # DOD+DFNN (DFNN -> N')
-    dfnn_nprime = rom.DFNN(**P.make_dod_dfnn_DFNN_kwargs()).to(device)
+    dfnn_nprime = rom.DFNN(**P.make_dod_dfnn_DFNN_kwargs())
     dfnn_trainer = rom.DFNNTrainer(
         nt=P.Nt, N_A=P.N_A, DOD_DL_model=innerDOD_model, coeffnn_model=dfnn_nprime,
         train_valid_set=train_valid_set_N_A, epochs=P.generalepochs, restarts=P.generalrestarts,
-        learning_rate=1e-3, batch_size=128, device=device, patience=P.generalpatience
+        learning_rate=1e-3, batch_size=128, patience=P.generalpatience
     )
 
     # DOD-DL-ROM (DFNN -> n, AE: N'<->n)
-    coeff_n = rom.DFNN(**P.make_dod_dl_DFNN_kwargs()).to(device)
-    enc = rom.Encoder(**P.make_dod_dl_Encoder_kwargs()).to(device)
-    dec = rom.Decoder(**P.make_dod_dl_Decoder_kwargs()).to(device)
+    coeff_n = rom.DFNN(**P.make_dod_dl_DFNN_kwargs())
+    enc = rom.Encoder(**P.make_dod_dl_Encoder_kwargs())
+    dec = rom.Decoder(**P.make_dod_dl_Decoder_kwargs())
     doddl_trainer = rom.DOD_DL_ROMTrainer(
         nt=P.Nt, DOD_DL_model=innerDOD_model, Coeff_DOD_DL_model=coeff_n,
         Encoder_model=enc, Decoder_model=dec, train_valid_set=train_valid_set_N_A,
         error_weight=0.5, epochs=P.generalepochs, restarts=P.generalrestarts,
-        learning_rate=1e-3, batch_size=128, device=device, patience=P.generalpatience
+        learning_rate=1e-3, batch_size=128, patience=P.generalpatience
     )
 
     # POD-DL-ROM (DFNN -> n, AE: N_A<->n)
-    pod_coeff = rom.DFNN(**P.make_pod_DFNN_kwargs()).to(device)
-    pod_enc = rom.Encoder(**P.make_pod_Encoder_kwargs()).to(device)
-    pod_dec = rom.Decoder(**P.make_pod_Decoder_kwargs()).to(device)
+    pod_coeff = rom.DFNN(**P.make_pod_DFNN_kwargs())
+    pod_enc = rom.Encoder(**P.make_pod_Encoder_kwargs())
+    pod_dec = rom.Decoder(**P.make_pod_Decoder_kwargs())
     pod_trainer = rom.POD_DL_ROMTrainer(
         nt=P.Nt, Coeff_model=pod_coeff, Encoder_model=pod_enc, Decoder_model=pod_dec,
         train_valid_set=train_valid_set_N, error_weight=0.5, epochs=P.generalepochs,
-        restarts=P.generalrestarts, learning_rate=1e-3, batch_size=128, device=device,
+        restarts=P.generalrestarts, learning_rate=1e-3, batch_size=128,
         patience=P.generalpatience
     )
 
@@ -178,8 +177,7 @@ def main():
             if args.epochs is not None: P.generalepochs = args.epochs
             if args.restarts is not None: P.generalrestarts = args.restarts
 
-            models, trainers = build_trainers_and_models(P, device, tv_NA, tv_N)
-            fw = rom.forward_wrappers(P, device, models, example_name)
+            models, trainers = build_trainers_and_models(P, tv_NA, tv_N)
 
             # Train per ROM
             val_losses = {}
@@ -189,6 +187,12 @@ def main():
                     rom._freeze(models["DOD+DFNN"]["inner"])
                     rom._freeze(models["DOD-DL-ROM"]["inner"])
 
+            # Freeze all models (setting params to no_grad isnt necessary)
+            for rom_name, model_group in models.items():
+                for m in model_group.values():
+                    m.eval()
+            
+            fw = rom.forward_wrappers(P, device, models, example_name)
 
             # Pick random eval items
             Ns_1 = mu_full.shape[0]

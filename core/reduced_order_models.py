@@ -208,14 +208,14 @@ class innerDODTrainer:
         self.restarts = restart
         self.epochs = epochs
         self.batch_size = batch_size
-        self.model = dod_model.to(device)
-        self.device = device
+        self.device = torch.device(device) 
+        self.model = dod_model.to(self.device)
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        pin = device.startswith('cuda')
+        pin = (self.device.type == 'cuda')
         self.train_loader = DataLoader(DatasetLoader(train_data), 
                                     batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
         self.valid_loader = DataLoader(DatasetLoader(valid_data), 
@@ -240,9 +240,8 @@ class innerDODTrainer:
         B = mu_batch.size(0)
         assert solution_batch.dim() == 3
 
-        # tensor zeros on device (had some autograd problems)
-        temp_proj = torch.tensor(0.0, device=self.device, requires_grad=True)
-        temp_orth = torch.tensor(0.0, device=self.device, requires_grad=True)
+        temp_proj = 0.0
+        temp_orth = 0.0
 
         for i in range(self.nt + 1):
             t_batch = torch.full((B, 1), i/(self.nt + 1), dtype=torch.float32, device=self.device)
@@ -269,7 +268,14 @@ class innerDODTrainer:
         best_loss = float('inf')
 
         params = list(self.model.parameters())
-        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
+
+        tqdm.write(f"AMP: enabled={use_cuda}, any_params_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+         
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 
@@ -450,16 +456,15 @@ class DFNNTrainer:
         self.epochs = epochs
         self.restarts = restarts
         self.batch_size = batch_size
-        self.innerDOD = DOD_DL_model.to(device)
-        self.model = coeffnn_model.to(device)
-        _freeze(self.innerDOD)
-        self.device = device
+        self.device = torch.device(device) 
+        self.innerDOD = DOD_DL_model.to(self.device)
+        self.model = coeffnn_model.to(self.device)
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        pin = device.startswith('cuda')
+        pin = (self.device.type == 'cuda')
         self.train_loader = DataLoader(DatasetLoader(train_data), 
                                     batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
         self.valid_loader = DataLoader(DatasetLoader(valid_data), 
@@ -474,7 +479,7 @@ class DFNNTrainer:
         alpha_true = V^T u:           [B, N']             # target coefficients
         """
         B = mu_batch.size(0)
-        temp_error = torch.tensor(0.0, device=self.device, requires_grad=True)
+        temp_error = 0.0
 
         for i in range(self.nt + 1):
             t_batch = torch.full((B, 1), i / (self.nt + 1),
@@ -499,7 +504,14 @@ class DFNNTrainer:
         best_loss = float('inf')
 
         params = list(self.model.parameters())
-        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
+
+        tqdm.write(f"AMP: enabled={use_cuda}, any_param_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+         
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 
@@ -714,18 +726,17 @@ class DOD_DL_ROMTrainer:
         self.epochs = epochs
         self.restarts = restarts
         self.batch_size = batch_size
-        self.innerDOD = DOD_DL_model.to(device)
-        _freeze(self.innerDOD)
-        self.en_model = Encoder_model.to(device)
-        self.de_model = Decoder_model.to(device)
-        self.coeff_model = Coeff_DOD_DL_model.to(device)
-        self.device = device
+        self.device = torch.device(device) 
+        self.innerDOD = DOD_DL_model.to(self.device)
+        self.en_model = Encoder_model.to(self.device)
+        self.de_model = Decoder_model.to(self.device)
+        self.coeff_model = Coeff_DOD_DL_model.to(self.device)
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        pin = device.startswith('cuda')
+        pin = (self.device.type == 'cuda')
         self.train_loader = DataLoader(DatasetLoader(train_data), 
                                     batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
         self.valid_loader = DataLoader(DatasetLoader(valid_data), 
@@ -743,7 +754,7 @@ class DOD_DL_ROMTrainer:
         alpha_true = V^T u:                 [B, N']        # true N' coeffs from data
         """
         B = mu_batch.size(0)
-        temp_error = torch.tensor(0.0, device=self.device, requires_grad=True)
+        temp_error = 0.0
 
         for i in range(self.nt + 1):
             t_batch = torch.full((B, 1), i / (self.nt + 1),
@@ -781,7 +792,14 @@ class DOD_DL_ROMTrainer:
         params = list(self.coeff_model.parameters()) + \
                      list(self.en_model.parameters()) + \
                      list(self.de_model.parameters())
-        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
+
+        tqdm.write(f"AMP: enabled={use_cuda}, any_param_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+         
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 
@@ -891,16 +909,16 @@ class POD_DL_ROMTrainer:
         self.error_weight = error_weight
         self.restarts = restarts
         self.batch_size = batch_size
-        self.en_model = Encoder_model.to(device)
-        self.de_model = Decoder_model.to(device)
-        self.coeff_model = Coeff_model.to(device)
-        self.device = device
+        self.device = torch.device(device) 
+        self.en_model = Encoder_model.to(self.device)
+        self.de_model = Decoder_model.to(self.device)
+        self.coeff_model = Coeff_model.to(self.device)
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        pin = device.startswith('cuda')
+        pin = (self.device.type == 'cuda')
         self.train_loader = DataLoader(DatasetLoader(train_data), 
                                     batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
         self.valid_loader = DataLoader(DatasetLoader(valid_data), 
@@ -908,7 +926,7 @@ class POD_DL_ROMTrainer:
                                     
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
-        temp_error = torch.tensor(0.0, device=self.device, requires_grad=True)
+        temp_error = 0.0
         for i in range(self.nt + 1):
             t_batch = torch.stack(
                 [torch.tensor(i / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
@@ -935,7 +953,14 @@ class POD_DL_ROMTrainer:
         params = list(self.coeff_model.parameters()) + \
                      list(self.en_model.parameters()) + \
                      list(self.de_model.parameters())
-        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
+
+        tqdm.write(f"AMP: enabled={use_cuda}, any_param_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+         
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 
@@ -1151,15 +1176,15 @@ class statDODTrainer:
         self.restarts = restart
         self.epochs = epochs
         self.batch_size = batch_size
-        self.model = nn_model.to(device)
-        self.device = device
+        self.device = torch.device(device) 
+        self.model = nn_model.to(self.device)
         self.N_A = ambient_dim
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        pin = device.startswith('cuda')
+        pin = (self.device.type == 'cuda')
         self.train_loader = DataLoader(DatasetLoader(train_data), 
                                     batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
         self.valid_loader = DataLoader(DatasetLoader(valid_data), 
@@ -1185,7 +1210,14 @@ class statDODTrainer:
         best_loss = float('inf')
         
         params = list(self.model.parameters())
-        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
+
+        tqdm.write(f"AMP: enabled={use_cuda}, any_param_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+         
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 
@@ -1268,17 +1300,17 @@ class statHadamardNNTrainer:
         self.epochs = epochs
         self.restarts = restarts
         self.batch_size = batch_size
-        self.dod = dod_model.to(device)
+        self.device = torch.device(device) 
+        self.dod = dod_model.to(self.device)
         _freeze(self.dod)
-        self.model = coeffnn_model.to(device)
-        self.device = device
+        self.model = coeffnn_model.to(self.device)
         self.N_A = ambient_dim
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        pin = device.startswith('cuda')
+        pin = (self.device.type == 'cuda')
         self.train_loader = DataLoader(DatasetLoader(train_data), 
                                     batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
         self.valid_loader = DataLoader(DatasetLoader(valid_data), 
@@ -1306,7 +1338,14 @@ class statHadamardNNTrainer:
         best_loss = float('inf')
         
         params = list(self.model.parameters())
-        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
+
+        tqdm.write(f"AMP: enabled={use_cuda}, any_param_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+         
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 
@@ -1464,17 +1503,17 @@ class CoLoRATrainer():
         self.epochs = epochs
         self.restarts = restarts
         self.batch_size = batch_size
-        self.DOD_0 = DOD_0_model.to(device)
-        self.model_0 = coeffnn_0_model.to(device)
-        self.model = colora_model.to(device)
+        self.device = torch.device(device) 
+        self.DOD_0 = DOD_0_model.to(self.device)
+        self.model_0 = coeffnn_0_model.to(self.device)
+        self.model = colora_model.to(self.device)
         _freeze(self.DOD_0); _freeze(self.model_0)
-        self.device = device
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        pin = device.startswith('cuda')
+        pin = (self.device.type == 'cuda')
         self.train_loader = DataLoader(DatasetLoader(train_data), 
                                     batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
         self.valid_loader = DataLoader(DatasetLoader(valid_data), 
@@ -1482,7 +1521,7 @@ class CoLoRATrainer():
                                     
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
-        temp_error = torch.tensor(0.0, device=self.device, requires_grad=True)
+        temp_error = 0.0
         for i in range(self.nt + 1):
             t_batch = torch.stack(
                 [torch.tensor(i  / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
@@ -1507,7 +1546,14 @@ class CoLoRATrainer():
         best_loss = float('inf')
         
         params = list(self.model.parameters())
-        use_cuda = torch.cuda.is_available() and any(p.is_cuda for p in params)
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
+
+        tqdm.write(f"AMP: enabled={use_cuda}, any_param_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+
         scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
         max_grad_norm = 1.0
 
