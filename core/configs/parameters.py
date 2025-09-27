@@ -379,7 +379,7 @@ class Ex01Parameters:
 EX02_PRESETS: Dict[str, Dict[str, Any]] = {
     "baseline": {
         "preprocess_dim": 3,
-        "dod_structure": [500, 500],
+        "dod_structure": [64, 64],
 
         "df_layers": [32, 16],
 
@@ -387,15 +387,15 @@ EX02_PRESETS: Dict[str, Dict[str, Any]] = {
         "dod_dl_df_layers": [32, 16],
         "dod_in_channels": 1,
         "dod_hidden_channels": 8,
-        "dod_kernel": 5, "dod_stride": 2, "dod_padding": 2,
-        "dod_num_layers": 2,
+        "dod_kernel": 3, "dod_stride": 2, "dod_padding": 1,
+        "dod_num_layers": 1,
 
         # POD-DL-ROM (AE; see note above re N_A vs N)
         "pod_df_layers": [32, 16],
         "pod_in_channels": 1,
         "pod_hidden_channels": 8,
-        "pod_kernel": 5, "pod_stride": 2, "pod_padding": 2,
-        "pod_num_layers": 4,
+        "pod_kernel": 5, "pod_stride": 2, "pod_padding": 1,
+        "pod_num_layers": 1,
 
         "L": 3,
         "stat_dod_structure": [128, 64],
@@ -524,13 +524,12 @@ EX02_PRESETS: Dict[str, Dict[str, Any]] = {
 class Ex02Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
     # Note: to achieve l2_err=1e-5, N_A must be 478
-    N_A: int = 425
-    N: int = 256
+    N_A: int = 64
+    N: int = 64
     N_prime: int = 16
     n: int = 8
     Nt: int = 10
     Ns: int = 256
-    T: float = 1.
     diameter: float = 0.01
     parameter_mu_dim: int = 3
     parameter_nu_dim: int = 1

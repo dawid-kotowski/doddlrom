@@ -80,18 +80,28 @@ for entry in training_data:
     true_solution.append(u_i)
 
 
-    # Check for normalization procedure
+    #region Check for normalization procedure
     A_NA = np.load(training_data_path(example_name) / f'N_A_ambient_{example_name}.npz')['ambient'].astype(np.float32)
     stats = np.load(training_data_path(example_name) / f'normalization_N_A_reduced_{example_name}.npz')
     sol_min = stats['sol_min'].astype(np.float32)  # [N_A]
     sol_max = stats['sol_max'].astype(np.float32)  # [N_A]
     U = sol.astype(np.float32)                              # [Nt, N_h]
 
-    # Project: Y_t = A^T G u_t  -> [Nt, N_A]
-    proj_U = np.einsum('ih,hj,tj->ti', A_NA.T, G, U, optimize=True)
+    # Project: Y = A^T G u_t  -> [Nt, N_A]
+    Y = np.einsum('ih,hj,tj->ti', A_NA.T, G, U, optimize=True)
+    
+    # Normalize
+    eps = 1e-8
+    Y_norm = (Y - sol_min[None, :]) / (sol_max[None, :] - sol_min[None, :] + eps)  # [Nt, N_A]
 
-    # Lift: û_t = A alpha_t
-    U_hat  = np.einsum('hi,ti->th', A_NA, proj_U, optimize=True)
+    # Denormalize
+    Y_den = rom.denormalize_solution(
+        torch.tensor(Y_norm, dtype=torch.float32, device=device),
+        example_name, reduction_tag='N_A_reduced'
+    ).cpu().numpy()  # [Nt, N_A]
+
+    # Lift: û_t = A Y_den
+    U_hat  = np.einsum('hi,ti->th', A_NA, Y_den, optimize=True)
 
     def _g_sq(X, Gmat):
         v = np.einsum('ti,ij,tj->t', X, Gmat, X, optimize=False)

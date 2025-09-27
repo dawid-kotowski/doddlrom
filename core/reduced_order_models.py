@@ -231,7 +231,7 @@ class innerDODTrainer:
         I = torch.eye(Np, device=V.device, dtype=V.dtype).expand_as(S)
         return ((S - I).pow(2).sum(dim=(-2, -1)) / Np).mean()  
 
-    def loss_function(self, mu_batch, solution_batch, lambda_orth=1e-1):
+    def loss_function(self, mu_batch, solution_batch, lambda_orth=1):
         """
         mu_batch:        [B, geometric_dim]
         solution_batch:  [B, nt+1, N_A]   (solutions already in the ambient space R^{N_A})
