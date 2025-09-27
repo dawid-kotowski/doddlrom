@@ -589,132 +589,203 @@ class DFNNTrainer:
             self.model.load_state_dict(best_model)
         return best_loss
     
+'''
+----------------------------------
+For both following DL-ROM inspired
+Classes, we will need some size 
+helpers
+----------------------------------
+'''
+#region Helpers for Autoencoder
+
+def _as_list(x, L=None, name="param"):
+    if isinstance(x, (list, tuple)):
+        x = list(x)
+        if L is not None and len(x) != L:
+            raise ValueError(f"{name} length {len(x)} must match num_layers={L}.")
+        return x
+    if L is None:
+        return [x]
+    return [x] * L
+
+def _grid_from_dim(D: int):
+    side = int(math.ceil(math.sqrt(D)))
+    return side, side
+
+def _conv2d_out(side, k, s, p):
+    # Conv2d formula from wiki
+    # side: sqrt(input_dim) after one conv layer
+    return (side + 2*p - k) // s + 1
+
+def _schedule_sides(side0, kernels, strides, paddings):
+    """Return [s0, s1, ..., sL] after L convs."""
+    s = side0
+    sizes = [s]
+    for k, srt, pad in zip(kernels, strides, paddings):
+        s = _conv2d_out(s, k, srt, pad)
+        if s <= 0:
+            raise ValueError(f"Conv schedule produced non-positive side {s}. "
+                             f"Check kernel/stride/padding.")
+        sizes.append(s)
+    return sizes  # len L+1
+
+def _output_padding_for_deconv(s_in, s_out, k, s, p):
+    # Conv2d reverse formula
+    # op: returns needed output padding
+    op = s_out - ((s_in - 1) * s - 2 * p + k)
+    if op < 0 or op >= s:
+        raise ValueError(f"output_padding={op} invalid for stride={s} "
+                         f"(sizes {s_in}->{s_out}, k={k}, p={p}).")
+    return int(op)
+
+#endregion
+
 # Define Encoder 
-# takes [B, n] return [B, N' = loop(floor((n + 2p - k) / s) + 1)**2)] 
+# takes [B, n] return [B, N' = 2^k'] or [B, N = 2^k]
 class Encoder(nn.Module):
     def __init__(self, input_dim, in_channels, hidden_channels, latent_dim,
-                num_layers, kernel, stride, padding):
+                 num_layers, kernel, stride, padding):
         super().__init__()
-        self.input_dim = input_dim
-        self.latent_dim = latent_dim
-        self.hidden_channels = hidden_channels
-        self.num_layers = num_layers
-        self.padding = padding
-        self.kernel = kernel
-        self.stride = stride
-        self.encoder_output_shape = self._compute_encoder_shape() 
-        self.grid_size = self._compute_grid(input_dim)
-        H, W = self.grid_size
+        self.input_dim  = int(input_dim)
+        self.latent_dim = int(latent_dim)
+        self.in_channels = int(in_channels)
 
-        # Convolutional layers
-        conv_layers = []
-        current_channels = in_channels
-        for i in range(num_layers):
-            next_channels = hidden_channels
-            conv_layers.append(nn.Conv2d(current_channels, next_channels, kernel_size=kernel,
-                                    stride=stride, padding=padding))
-            conv_layers.append(nn.LeakyReLU(0.1))
-            current_channels = next_channels
-        self.conv = nn.Sequential(*conv_layers)
+        hc = hidden_channels
+        st = stride
+        kr = kernel
+        pd = padding
+        lengths = [len(x) for x in (hc, st, kr, pd) if isinstance(x, (list, tuple))]
+        if lengths:
+            if any(L != lengths[0] for L in lengths):
+                raise ValueError(f"Inconsistent list lengths in AE config: {lengths}")
+            num_layers = lengths[0]
+        self.num_layers = int(num_layers)
 
-        # Linear layers
-        linear_layers = []
-        C, H, W = self.encoder_output_shape
-        current_dim = int(C*H*W)
-        for i in range(self._compute_linear_num() - 1):
-            linear_layers.append(nn.Linear(int(current_dim), int(current_dim // 2)))
-            linear_layers.append(nn.LeakyReLU(0.1))
-            current_dim = current_dim // 2
-        linear_layers.append(nn.Linear(int(current_dim), int(self.latent_dim)))
+        # assert list type
+        self.hidden_channels = _as_list(hidden_channels, self.num_layers, "hidden_channels")
+        self.strides         = _as_list(stride,          self.num_layers, "stride")
+        self.kernels         = _as_list(kernel,          self.num_layers, "kernel")
+        self.paddings        = _as_list(padding,         self.num_layers, "padding")
 
-        self.linear = nn.Sequential(*linear_layers)
+        H0, W0 = _grid_from_dim(self.input_dim)
+        if H0 != W0:
+            raise ValueError("Only square grids supported.")
+        self.grid_size = (H0, W0)
+        self.sides = _schedule_sides(H0, self.kernels, self.strides, self.paddings) 
+        Hb = self.sides[-1]  # last additional layer for projection
 
-    def _compute_grid(self, D):
-        size = math.ceil(math.sqrt(D))
-        return (size, size)
-    
-    def _compute_linear_num(self):
-        C, H, W = self._compute_encoder_shape()
-        num = int(np.floor(C*H*W / self.latent_dim)) - 1
-        return max(1, num)
+        conv = []
+        C_in = self.in_channels
+        for C_out, k, s, p in zip(self.hidden_channels, self.kernels, self.strides, self.paddings):
+            conv += [nn.Conv2d(C_in, C_out, kernel_size=k, stride=s, padding=p),
+                     nn.LeakyReLU(0.1)]
+            C_in = C_out
+        self.conv = nn.Sequential(*conv)
 
-
-    def _compute_encoder_shape(self):
-        D_temp = math.ceil(math.sqrt(self.input_dim))
-        for layer in range(self.num_layers):
-            D_temp = math.floor((D_temp + 2 * self.padding - self.kernel) / self.stride) + 1
-        return (self.hidden_channels, D_temp, D_temp)
+        # assert projected dimension with linear layer
+        Cb = self.hidden_channels[-1]
+        flat_bottleneck = Cb * Hb * Hb
+        lin = []
+        cur = flat_bottleneck
+        while cur > 2 * self.latent_dim:
+            lin += [nn.Linear(cur, cur // 2), nn.LeakyReLU(0.1)]
+            cur = cur // 2
+        lin += [nn.Linear(cur, self.latent_dim)]
+        self.linear = nn.Sequential(*lin)
 
     def forward(self, x1d):
+        """
+        Inputs:
+        u_proj: [B, n]
+        Returns:
+        u : [B, N'] or [B, N] 
+        (if N' and N are multiples of 2)
+        """
         B, D = x1d.shape
-        total_grid = self.grid_size[0] * self.grid_size[1]
-        if D < total_grid:
-            x1d = func.pad(x1d, (0, total_grid - D))
-        elif D > total_grid:
-            raise ValueError("Input dimension exceeds grid capacity.")
-        
-        x2d = x1d.view(B, 1, *self.grid_size)
-        conv_out = self.conv(x2d).view(B, -1)
-        z = self.linear(conv_out) 
+        total = self.grid_size[0] * self.grid_size[1]
+        if D < total:
+            x1d = func.pad(x1d, (0, total - D))
+        elif D > total:
+            raise ValueError(f"Input dim {D} exceeds grid capacity {total}.")
+        x2d = x1d.view(B, self.in_channels, *self.grid_size)
+        z   = self.linear(self.conv(x2d).view(B, -1))
         return z
 
 # Define Decoder 
-# takes [B, N' = loop(floor((n + 2p - k) / s) + 1)**2)] return [B, n]
+# takes [B, N' = 2^k'] or [B, N = 2^k] return [B, n]
 class Decoder(nn.Module):
-    def __init__(self, output_dim, out_channels, hidden_channels, latent_dim, 
+    def __init__(self, output_dim, out_channels, hidden_channels, latent_dim,
                  num_layers, kernel, stride, padding):
         super().__init__()
-        self.output_dim = output_dim
-        self.latent_dim = latent_dim
-        self.out_channels = out_channels
-        self.hidden_channels = hidden_channels
-        self.num_layers = num_layers
-        self.padding = padding
-        self.kernel = kernel
-        self.stride = stride
-        self.encoder_output_shape = self._compute_encoder_shape()
-        C, H, W = self._compute_encoder_shape()
+        self.output_dim  = int(output_dim)
+        self.latent_dim  = int(latent_dim)
+        self.out_channels = int(out_channels)
 
-        # Linear layers
-        linear_layers = []
-        current_dim = self.latent_dim
-        for i in range(self._compute_linear_num() - 1):
-            linear_layers.append(nn.Linear(int(current_dim), int(current_dim * 2)))
-            linear_layers.append(nn.LeakyReLU(0.1))
-            current_dim = current_dim * 2
-        linear_layers.append(nn.Linear(int(current_dim), int(C*H*W)))
-        self.delinear = nn.Sequential(*linear_layers)
+        hc = hidden_channels
+        st = stride
+        kr = kernel
+        pd = padding
+        lengths = [len(x) for x in (hc, st, kr, pd) if isinstance(x, (list, tuple))]
+        if lengths:
+            if any(L != lengths[0] for L in lengths):
+                raise ValueError(f"Inconsistent list lengths in AE config: {lengths}")
+            num_layers = lengths[0]
+        self.num_layers = int(num_layers)
 
-        # Convolutional layers
-        conv_layers = []
-        current_channels = C
-        for i in range(num_layers):
-            next_channels = hidden_channels if i < num_layers - 1 else out_channels
-            conv_layers.append(nn.ConvTranspose2d(current_channels, next_channels, 
-                                             kernel_size=kernel, stride=stride, padding=padding, output_padding=1))
-            if i < num_layers - 1:
-                conv_layers.append(nn.LeakyReLU(0.1))
-            current_channels = next_channels
-        self.deconv = nn.Sequential(*conv_layers)
+        # assert list type
+        self.hidden_channels = _as_list(hidden_channels, self.num_layers, "hidden_channels")
+        self.strides         = _as_list(stride,          self.num_layers, "stride")
+        self.kernels         = _as_list(kernel,          self.num_layers, "kernel")
+        self.paddings        = _as_list(padding,         self.num_layers, "padding")
 
-    def _compute_linear_num(self):
-        C, H, W = self._compute_encoder_shape()
-        num = int(np.floor(C*H*W / self.latent_dim)) - 1
-        return max(1, num)
+        H0, W0 = _grid_from_dim(self.output_dim)
+        if H0 != W0:
+            raise ValueError("Only square grids supported.")
+        self.grid_size = (H0, W0)
+        self.sides = _schedule_sides(H0, self.kernels, self.strides, self.paddings)  # [s0..sL]
+        Hb = self.sides[-1]
+        Cb = self.hidden_channels[-1]
 
-    
-    def _compute_encoder_shape(self):
-        D_temp = math.ceil(math.sqrt(self.output_dim))
-        for layer in range(self.num_layers):
-            D_temp = math.floor((D_temp + 2 * self.padding - self.kernel) / self.stride) + 1
-        return (self.hidden_channels, D_temp, D_temp)
+        # expand from projected dimension
+        flat_bottleneck = Cb * Hb * Hb
+        lin = []
+        cur = self.latent_dim
+        while cur < flat_bottleneck // 2:
+            lin += [nn.Linear(cur, cur * 2), nn.LeakyReLU(0.1)]
+            cur = cur * 2
+        lin += [nn.Linear(cur, flat_bottleneck)]
+        self.delinear = nn.Sequential(*lin)
+
+        deconv = []
+        C_in = Cb
+        L = self.num_layers
+        for i in range(L):
+            s_in  = self.sides[L - i]
+            s_out = self.sides[L - 1 - i]
+            k, s, p = self.kernels[L - 1 - i], self.strides[L - 1 - i], self.paddings[L - 1 - i]
+            op = _output_padding_for_deconv(s_in, s_out, k, s, p)
+            C_out = self.hidden_channels[L - 2 - i] if i < L - 1 else self.out_channels
+            deconv.append(nn.ConvTranspose2d(C_in, C_out, kernel_size=k, stride=s,
+                                             padding=p, output_padding=op))
+            if i < L - 1:
+                deconv.append(nn.LeakyReLU(0.1))
+            C_in = C_out
+        self.deconv = nn.Sequential(*deconv)
 
     def forward(self, z):
+        """
+        Inputs:
+        u : [B, N'] or [B, N] 
+        Returns:
+        u_proj: [B, n]
+        (if N' and N are multiples of 2)
+        """
         B = z.shape[0]
-        x_unflat = self.delinear(z)
-        x_unflat = x_unflat.view(B, *self.encoder_output_shape)
-        x_recon = self.deconv(x_unflat)
-        return x_recon.view(B, -1)[:, :self.output_dim]
+        Hb = self.sides[-1]
+        Cb = self.hidden_channels[-1]
+        x_unflat = self.delinear(z).view(B, Cb, Hb, Hb)
+        x = self.deconv(x_unflat).view(B, -1)
+        return x[:, :self.output_dim]
     
 # Define the Trainer for the DOD-DL-ROM Coefficients
 class DOD_DL_ROMTrainer:

@@ -10,96 +10,88 @@ Key goals
 - Offer switchable presets that only change network layers (problem sizes unchanged)
 - Provide *factory-style* kwargs that match constructors exactly
 
-======================================
-Example Build using Parameter registry
-======================================
-Import
-------
->>> from examples.ex01.parameters import Ex01Parameters
->>> P = Ex01Parameters(profile="baseline")  # or "wide", "tiny", "debug"
--------
-# Build innerDOD
-innerDOD_kwargs = P.make_innerDOD_kwargs()
-inner_dod = innerDOD(**innerDOD_kwargs)
+NEW (flexible AE config)
+------------------------
+For the autoencoders (POD and DOD), the fields
+  - *_hidden_channels
+  - *_kernel
+  - *_stride
+  - *_padding
+may now be **either** a scalar (int) **or** a list[int] of length = num_layers.
+This aligns with the flexible Encoder/Decoder you added: they accept ints or lists
+and broadcast scalars internally.
 
-# Build DOD+DFNN (HadamardNN or DFNN that outputs N')
-dod_dfnn_kwargs = P.make_dod_dfnn_DFNN_kwargs()          # DFNN -> N'
-dod_hadamard_kwargs = P.make_dod_dfnn_Hadamard_kwargs()  # HadamardNN -> N'
-
-# Build DOD-DL-ROM (Coeff DFNN -> n, AE: N' <-> n)
-coeff_kwargs = P.make_dod_dl_DFNN_kwargs()           # DFNN -> n
-enc_kwargs    = P.make_dod_dl_Encoder_kwargs()       # Encoder: N' -> n
-dec_kwargs    = P.make_dod_dl_Decoder_kwargs()       # Decoder: n  -> N'
-
-# Build POD-DL-ROM (Coeff DFNN -> n, AE: N <-> n)
-pod_coeff_kwargs = P.make_pod_DFNN_kwargs()          # DFNN -> n
-pod_enc_kwargs   = P.make_pod_Encoder_kwargs()       # Encoder: N -> n
-pod_dec_kwargs   = P.make_pod_Decoder_kwargs()       # Decoder: n   -> N
-
-# Build stationary + CoLoRA
-stat_dod_kwargs      = P.make_statDOD_kwargs()
-stat_hadamard_kwargs = P.make_statHadamard_kwargs()  # -> n
-colora_kwargs        = P.make_CoLoRA_kwargs()        # (out_dim=N_A)
+Examples (you can put these inside any PRESETS entry):
+    "pod_hidden_channels": [8,16,32],   # channels per conv block
+    "pod_stride": [1,2,2],              # stride per block
+    "pod_kernel": 5,                     # still fine as scalar
+    "pod_padding": 2,                    # scalar or list
+The kwargs emitted by make_*_Encoder/Decoder_kwargs are unchanged.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict, replace
-from pathlib import Path
-from typing import Any, Dict, List
-import json
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Union
+import math
 
+# ---------- Helper type alias for AE hyperparams (scalar or list) -----------
+IntOrList = Union[int, List[int]]
+
+# =============================================================================
+# EXAMPLE 01
+# =============================================================================
 
 EX01_PRESETS: Dict[str, Dict[str, Any]] = {
     "baseline": {
         # DOD only
-        "preprocess_dim": 2,           
-        "dod_structure": [128, 64],     
+        "preprocess_dim": 2,
+        "dod_structure": [128, 64],
 
-        # DOD+DFNN 
-        "df_layers": [16, 8],          
+        # DOD+DFNN
+        "df_layers": [16, 8],
 
-        # DOD-DL-ROM 
-        "dod_dl_df_layers": [16, 8],  
+        # DOD-DL-ROM (AE on N' <-> n)
+        "dod_dl_df_layers": [16, 8],
         "dod_in_channels": 1,
-        "dod_hidden_channels": 1,  
-        "dod_kernel": 3,
-        "dod_stride": 2,
-        "dod_padding": 1,
+        "dod_hidden_channels": 1,  # e.g. [8,16] if dod_num_layers=2
+        "dod_kernel": 3,     
+        "dod_stride": 2,           
+        "dod_padding": 1,        
         "dod_num_layers": 1,
 
-        # POD-DL-ROM 
+        # POD-DL-ROM (AE on N <-> n)
         "pod_df_layers": [16, 8],
         "pod_in_channels": 1,
-        "pod_hidden_channels": 1,
+        "pod_hidden_channels": 1,  # e.g. [8,16,32] with pod_num_layers=3
         "pod_kernel": 3,
-        "pod_stride": 2,
+        "pod_stride": 2, 
         "pod_padding": 1,
         "pod_num_layers": 2,
 
         # Stationary + CoLoRA
-        "L": 3,                 
+        "L": 3,
         "stat_dod_structure": [128, 64],
         "stat_phi_n_structure": [16, 8],
     },
     "test1": {
-        "preprocess_dim": 2,           
+        "preprocess_dim": 2,
         "dod_structure": [32],
         "df_layers": [8],
-        "dod_dl_df_layers": [8],  
+
+        "dod_dl_df_layers": [8],
         "dod_in_channels": 1,
         "dod_hidden_channels": 2,
-        "dod_kernel": 3,
-        "dod_stride": 2,
-        "dod_padding": 1,
+        "dod_kernel": 3, "dod_stride": 2, "dod_padding": 1,
         "dod_num_layers": 1,
+
         "pod_df_layers": [8],
         "pod_in_channels": 1,
-        "pod_hidden_channels": 2, 
-        "pod_kernel": 3,
-        "pod_stride": 2,
-        "pod_padding": 1,
+        "pod_hidden_channels": 2,
+        "pod_kernel": 3, "pod_stride": 2, "pod_padding": 1,
         "pod_num_layers": 1,
-        "L": 2,                 
+
+        "L": 2,
         "stat_dod_structure": [32],
         "stat_phi_n_structure": [8],
     },
@@ -107,16 +99,19 @@ EX01_PRESETS: Dict[str, Dict[str, Any]] = {
         "preprocess_dim": 2,
         "dod_structure": [64, 32],
         "df_layers": [16, 8],
+
         "dod_dl_df_layers": [16, 8],
         "dod_in_channels": 1,
         "dod_hidden_channels": 4,
         "dod_kernel": 3, "dod_stride": 2, "dod_padding": 1,
         "dod_num_layers": 2,
+
         "pod_df_layers": [16, 8],
         "pod_in_channels": 1,
         "pod_hidden_channels": 4,
         "pod_kernel": 3, "pod_stride": 2, "pod_padding": 1,
         "pod_num_layers": 2,
+
         "L": 3,
         "stat_dod_structure": [64, 32],
         "stat_phi_n_structure": [16, 8],
@@ -125,16 +120,19 @@ EX01_PRESETS: Dict[str, Dict[str, Any]] = {
         "preprocess_dim": 2,
         "dod_structure": [128, 64],
         "df_layers": [32, 16],
+
         "dod_dl_df_layers": [32, 16],
         "dod_in_channels": 1,
         "dod_hidden_channels": 8,
         "dod_kernel": 5, "dod_stride": 2, "dod_padding": 2,
         "dod_num_layers": 2,
+
         "pod_df_layers": [32, 16],
         "pod_in_channels": 1,
         "pod_hidden_channels": 8,
         "pod_kernel": 5, "pod_stride": 2, "pod_padding": 2,
         "pod_num_layers": 3,
+
         "L": 3,
         "stat_dod_structure": [128, 64],
         "stat_phi_n_structure": [32, 16],
@@ -143,16 +141,19 @@ EX01_PRESETS: Dict[str, Dict[str, Any]] = {
         "preprocess_dim": 2,
         "dod_structure": [128, 64, 64],
         "df_layers": [32, 32, 16],
+
         "dod_dl_df_layers": [32, 32, 16],
         "dod_in_channels": 1,
         "dod_hidden_channels": 16,
         "dod_kernel": 5, "dod_stride": 2, "dod_padding": 2,
         "dod_num_layers": 3,
+
         "pod_df_layers": [32, 32, 16],
         "pod_in_channels": 1,
         "pod_hidden_channels": 16,
         "pod_kernel": 5, "pod_stride": 2, "pod_padding": 2,
         "pod_num_layers": 3,
+
         "L": 4,
         "stat_dod_structure": [128, 64, 64],
         "stat_phi_n_structure": [32, 16, 16],
@@ -161,33 +162,37 @@ EX01_PRESETS: Dict[str, Dict[str, Any]] = {
         "preprocess_dim": 3,
         "dod_structure": [256, 128, 64],
         "df_layers": [64, 32, 16],
+
         "dod_dl_df_layers": [64, 32, 16],
         "dod_in_channels": 1,
-        "dod_hidden_channels": 24,   
+        "dod_hidden_channels": 24,
         "dod_kernel": 5, "dod_stride": 2, "dod_padding": 2,
         "dod_num_layers": 4,
+
         "pod_df_layers": [64, 32, 16],
         "pod_in_channels": 1,
         "pod_hidden_channels": 24,
         "pod_kernel": 5, "pod_stride": 2, "pod_padding": 2,
         "pod_num_layers": 4,
+
         "L": 4,
         "stat_dod_structure": [256, 128, 64],
         "stat_phi_n_structure": [64, 32, 16],
     },
 }
 
+
 @dataclass
 class Ex01Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
-    N_A: int = 32
-    N: int = 16
-    N_prime: int = 9
+    N_A: int = 64
+    N: int = 32
+    N_prime: int = 16
     n: int = 2
     Nt: int = 30
     Ns: int = 400
-    T: float = 1.
-    diameter: float = 0.03
+    T: float = 1.0
+    diameter: float = 0.01
     parameter_mu_dim: int = 1
     parameter_nu_dim: int = 1
 
@@ -201,19 +206,19 @@ class Ex01Parameters:
     # -------- DOD-DL-ROM (AE on N' <-> n) -----------------------------------
     dod_dl_df_layers: List[int] = field(default_factory=lambda: [32, 16, 8])
     dod_in_channels: int = 1
-    dod_hidden_channels: int = 1
-    dod_kernel: int = 3
-    dod_stride: int = 2
-    dod_padding: int = 1
+    dod_hidden_channels: IntOrList = 1        
+    dod_kernel: IntOrList = 3                 
+    dod_stride: IntOrList = 2                 
+    dod_padding: IntOrList = 1                
     dod_num_layers: int = 1
 
     # -------- POD-DL-ROM (AE on N_A <-> n) ----------------------------------
     pod_df_layers: List[int] = field(default_factory=lambda: [32, 16, 8])
     pod_in_channels: int = 1
-    pod_hidden_channels: int = 1
-    pod_kernel: int = 3
-    pod_stride: int = 2
-    pod_padding: int = 1
+    pod_hidden_channels: IntOrList = 1        
+    pod_kernel: IntOrList = 3                 
+    pod_stride: IntOrList = 2                 
+    pod_padding: IntOrList = 1                
     pod_num_layers: int = 3
 
     # -------- Stationary + CoLoRA ------------------------------------------
@@ -289,24 +294,24 @@ class Ex01Parameters:
         return dict(
             input_dim=self.N_prime,
             in_channels=self.dod_in_channels,
-            hidden_channels=self.dod_hidden_channels,
+            hidden_channels=self.dod_hidden_channels,  # int or list
             latent_dim=self.n,
             num_layers=self.dod_num_layers,
-            kernel=self.dod_kernel,
-            stride=self.dod_stride,
-            padding=self.dod_padding,
+            kernel=self.dod_kernel,                    # int or list
+            stride=self.dod_stride,                    # int or list
+            padding=self.dod_padding,                  # int or list
         )
 
     def make_dod_dl_Decoder_kwargs(self) -> Dict[str, Any]:
         return dict(
             output_dim=self.N_prime,
             out_channels=self.dod_in_channels,
-            hidden_channels=self.dod_hidden_channels,
+            hidden_channels=self.dod_hidden_channels,  # int or list
             latent_dim=self.n,
             num_layers=self.dod_num_layers,
-            kernel=self.dod_kernel,
-            stride=self.dod_stride,
-            padding=self.dod_padding,
+            kernel=self.dod_kernel,                    # int or list
+            stride=self.dod_stride,                    # int or list
+            padding=self.dod_padding,                  # int or list
         )
 
     def make_pod_DFNN_kwargs(self) -> Dict[str, Any]:
@@ -321,24 +326,24 @@ class Ex01Parameters:
         return dict(
             input_dim=self.N,
             in_channels=self.pod_in_channels,
-            hidden_channels=self.pod_hidden_channels,
+            hidden_channels=self.pod_hidden_channels,  # int or list
             latent_dim=self.n,
             num_layers=self.pod_num_layers,
-            kernel=self.pod_kernel,
-            stride=self.pod_stride,
-            padding=self.pod_padding,
+            kernel=self.pod_kernel,                    # int or list
+            stride=self.pod_stride,                    # int or list
+            padding=self.pod_padding,                  # int or list
         )
 
     def make_pod_Decoder_kwargs(self) -> Dict[str, Any]:
         return dict(
             output_dim=self.N,
             out_channels=self.pod_in_channels,
-            hidden_channels=self.pod_hidden_channels,
+            hidden_channels=self.pod_hidden_channels,  # int or list
             latent_dim=self.n,
             num_layers=self.pod_num_layers,
-            kernel=self.pod_kernel,
-            stride=self.pod_stride,
-            padding=self.pod_padding,
+            kernel=self.pod_kernel,                    # int or list
+            stride=self.pod_stride,                    # int or list
+            padding=self.pod_padding,                  # int or list
         )
 
     def make_statDOD_kwargs(self) -> Dict[str, Any]:
@@ -376,21 +381,24 @@ class Ex01Parameters:
         )
 
 
+# =============================================================================
+# EXAMPLE 02
+# =============================================================================
+
 EX02_PRESETS: Dict[str, Dict[str, Any]] = {
     "baseline": {
         "preprocess_dim": 3,
         "dod_structure": [64, 64],
-
         "df_layers": [32, 16],
 
-        # DOD-DL-ROM (AE on N'↔n; 4×4 grid)
+        # DOD-DL-ROM (AE on N'<->n)
         "dod_dl_df_layers": [32, 16],
         "dod_in_channels": 1,
         "dod_hidden_channels": 8,
         "dod_kernel": 3, "dod_stride": 2, "dod_padding": 1,
-        "dod_num_layers": 1,
+        "dod_num_layers": 1,  
 
-        # POD-DL-ROM (AE; see note above re N_A vs N)
+        # POD-DL-ROM
         "pod_df_layers": [32, 16],
         "pod_in_channels": 1,
         "pod_hidden_channels": 8,
@@ -494,11 +502,9 @@ EX02_PRESETS: Dict[str, Dict[str, Any]] = {
 }
 
 
-
 @dataclass
 class Ex02Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
-    # Note: to achieve l2_err=1e-5, N_A must be 478
     N_A: int = 64
     N: int = 64
     N_prime: int = 16
@@ -519,22 +525,31 @@ class Ex02Parameters:
     # -------- DOD-DL-ROM (AE on N' <-> n + DFNN on n <-> p+q+1) -------------
     dod_dl_df_layers: List[int] = field(default_factory=lambda: [32, 16, 8])
     dod_in_channels: int = 1
-    dod_hidden_channels: int = 1
+    dod_hidden_channels: IntOrList = 1
     dod_lin_dim_ae: int = 0
-    dod_kernel: int = 3
-    dod_stride: int = 2
-    dod_padding: int = 1
+    dod_kernel: IntOrList = 3
+    dod_stride: IntOrList = 2
+    dod_padding: IntOrList = 1
     dod_num_layers: int = 1
 
     # -------- POD-DL-ROM (AE on N <-> n + DFNN on n <-> p+q+1) -------------
     pod_df_layers: List[int] = field(default_factory=lambda: [32, 16, 8])
     pod_in_channels: int = 1
-    pod_hidden_channels: int = 1
+    pod_hidden_channels: IntOrList = 1
     pod_lin_dim_ae: int = 0
-    pod_kernel: int = 3
-    pod_stride: int = 2
-    pod_padding: int = 1
+    pod_kernel: IntOrList = 3
+    pod_stride: IntOrList = 2
+    pod_padding: IntOrList = 1
     pod_num_layers: int = 3
+
+    # -------- Meta -----------------------------------------------------------
+    profile: str = "baseline"
+
+    def __post_init__(self) -> None:
+        preset = EX03_PRESETS.get(self.profile, {})
+        for k, v in preset.items():
+            if hasattr(self, k):
+                setattr(self, k, v)
 
     # -------- Stationary + CoLoRA ------------------------------------------
     L: int = 3
@@ -696,34 +711,33 @@ class Ex02Parameters:
         )
 
 
-EX03_PRESETS: Dict[str, Dict[str, Any]] = {
+# =============================================================================
+# EXAMPLE 03
+# =============================================================================
 
+EX03_PRESETS: Dict[str, Dict[str, Any]] = {
     "baseline": {
         "preprocess_dim": 2,
         "dod_structure": [100],
-
         "df_layers": [16, 8],
 
-        # DOD-DL-ROM (AE on N'=9 ↔ n=2; 3x3 grid)
         "dod_dl_df_layers": [16, 8],
         "dod_in_channels": 1,
         "dod_hidden_channels": 1,
         "dod_kernel": 3, "dod_stride": 2, "dod_padding": 1,
-        "dod_num_layers": 2,      # 3→2→1
+        "dod_num_layers": 2,
 
-        # POD-DL-ROM (AE on N=64 ↔ n=2; 8x8 grid)
         "pod_df_layers": [16, 8],
         "pod_in_channels": 1,
         "pod_hidden_channels": 1,
         "pod_kernel": 3, "pod_stride": 2, "pod_padding": 1,
-        "pod_num_layers": 3,      # 8→4→2→1
+        "pod_num_layers": 3,
 
         "L": 3,
         "stat_dod_structure": [64, 32],
         "stat_phi_n_structure": [16, 8],
     },
-
-    "test1": { 
+    "test1": {
         "preprocess_dim": 1,
         "dod_structure": [16],
         "df_layers": [8],
@@ -731,18 +745,17 @@ EX03_PRESETS: Dict[str, Dict[str, Any]] = {
         "dod_in_channels": 1,
         "dod_hidden_channels": 2,
         "dod_kernel": 3, "dod_stride": 2, "dod_padding": 1,
-        "dod_num_layers": 1,      # 3→2
+        "dod_num_layers": 1,
         "pod_df_layers": [8],
         "pod_in_channels": 1,
         "pod_hidden_channels": 2,
         "pod_kernel": 3, "pod_stride": 2, "pod_padding": 1,
-        "pod_num_layers": 2,      # 8→4→2
+        "pod_num_layers": 2,
         "L": 2,
         "stat_dod_structure": [16],
         "stat_phi_n_structure": [8],
     },
-
-    "test2": {  
+    "test2": {
         "preprocess_dim": 2,
         "dod_structure": [32, 16],
         "df_layers": [12, 8],
@@ -750,18 +763,17 @@ EX03_PRESETS: Dict[str, Dict[str, Any]] = {
         "dod_in_channels": 1,
         "dod_hidden_channels": 4,
         "dod_kernel": 3, "dod_stride": 2, "dod_padding": 1,
-        "dod_num_layers": 2,      # 3→2→1
+        "dod_num_layers": 2,
         "pod_df_layers": [12, 8],
         "pod_in_channels": 1,
         "pod_hidden_channels": 4,
         "pod_kernel": 3, "pod_stride": 2, "pod_padding": 1,
-        "pod_num_layers": 3,      # 8→4→2→1
+        "pod_num_layers": 3,
         "L": 3,
         "stat_dod_structure": [32, 16],
         "stat_phi_n_structure": [12, 8],
     },
-
-    "test3": {  
+    "test3": {
         "preprocess_dim": 2,
         "dod_structure": [64, 32],
         "df_layers": [16, 12],
@@ -769,18 +781,17 @@ EX03_PRESETS: Dict[str, Dict[str, Any]] = {
         "dod_in_channels": 1,
         "dod_hidden_channels": 8,
         "dod_kernel": 5, "dod_stride": 2, "dod_padding": 2,
-        "dod_num_layers": 2,      # 3→2→1
+        "dod_num_layers": 2,   
         "pod_df_layers": [16, 12],
         "pod_in_channels": 1,
         "pod_hidden_channels": 8,
         "pod_kernel": 5, "pod_stride": 2, "pod_padding": 2,
-        "pod_num_layers": 3,      # 8→4→2→1
+        "pod_num_layers": 3,  
         "L": 3,
         "stat_dod_structure": [64, 32],
         "stat_phi_n_structure": [16, 12],
     },
-
-    "test4": {  
+    "test4": {
         "preprocess_dim": 2,
         "dod_structure": [96, 64, 32],
         "df_layers": [24, 16, 8],
@@ -788,18 +799,17 @@ EX03_PRESETS: Dict[str, Dict[str, Any]] = {
         "dod_in_channels": 1,
         "dod_hidden_channels": 12,
         "dod_kernel": 5, "dod_stride": 2, "dod_padding": 2,
-        "dod_num_layers": 3,      # 3→2→1→1
+        "dod_num_layers": 3,
         "pod_df_layers": [24, 16, 8],
         "pod_in_channels": 1,
         "pod_hidden_channels": 12,
         "pod_kernel": 5, "pod_stride": 2, "pod_padding": 2,
-        "pod_num_layers": 4,      # 8→4→2→1→1
+        "pod_num_layers": 4,
         "L": 4,
         "stat_dod_structure": [96, 64, 32],
         "stat_phi_n_structure": [24, 16, 8],
     },
-
-    "test5": {  
+    "test5": {
         "preprocess_dim": 3,
         "dod_structure": [128, 96, 48],
         "df_layers": [32, 24, 12],
@@ -825,11 +835,11 @@ class Ex03Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
     N_A: int = 101
     N: int = 64
-    N_prime: int = 9
+    N_prime: int = 16
     n: int = 2
     Nt: int = 30
     Ns: int = 400
-    T: float = 3.
+    T: float = 3.0
     diameter: float = 0.01
     parameter_mu_dim: int = 1
     parameter_nu_dim: int = 1
@@ -844,21 +854,21 @@ class Ex03Parameters:
     # -------- DOD-DL-ROM (AE on N' <-> n + DFNN on n <-> p+q+1) -------------
     dod_dl_df_layers: List[int] = field(default_factory=lambda: [32, 16, 8])
     dod_in_channels: int = 1
-    dod_hidden_channels: int = 1
+    dod_hidden_channels: IntOrList = 1
     dod_lin_dim_ae: int = 0
-    dod_kernel: int = 3
-    dod_stride: int = 2
-    dod_padding: int = 1
+    dod_kernel: IntOrList = 3
+    dod_stride: IntOrList = 2
+    dod_padding: IntOrList = 1
     dod_num_layers: int = 1
 
     # -------- POD-DL-ROM (AE on N <-> n + DFNN on n <-> p+q+1) -------------
     pod_df_layers: List[int] = field(default_factory=lambda: [32, 16, 8])
     pod_in_channels: int = 1
-    pod_hidden_channels: int = 1
+    pod_hidden_channels: IntOrList = 1
     pod_lin_dim_ae: int = 0
-    pod_kernel: int = 3
-    pod_stride: int = 2
-    pod_padding: int = 1
+    pod_kernel: IntOrList = 3
+    pod_stride: IntOrList = 2
+    pod_padding: IntOrList = 1
     pod_num_layers: int = 3
 
     # -------- Stationary + CoLoRA ------------------------------------------
@@ -1019,13 +1029,6 @@ class Ex03Parameters:
             restarts=self.generalrestarts,
             patience=self.generalpatience,
         )
-
-
-
-
-
-
-
 
 
 __all__ = ["Ex01Parameters", "Ex02Parameters", "Ex03Parameters"]
