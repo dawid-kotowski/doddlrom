@@ -135,14 +135,14 @@ def build_trainers_and_models(P, device, train_valid_set_N_A, train_valid_set_N)
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--example', type=str, required=True)
-    parser.add_argument('--profiles', nargs='+', default=['test1, test2, test3, test4, test5'])
+    parser.add_argument('--profiles', nargs='+', default=['test1', 'test2', 'test3', 'test4', 'test5'])
     parser.add_argument('--epochs', type=int, default=None)
     parser.add_argument('--restarts', type=int, default=None)
     parser.add_argument('--eval-samples', type=int, default=5)
     parser.add_argument('--N', type=int, default=None)
     parser.add_argument('--N-prime', type=int, default=None)
     parser.add_argument('--Ns', type=int, default=None)
-    parser.add_argument('--Nts', type=int, default=None)
+    parser.add_argument('--Nt', type=int, default=None)
     args = parser.parse_args()
 
     example_name = args.example
@@ -152,7 +152,7 @@ def main():
     # Data
     tv_NA = rom.FetchTrainAndValidSet(0.8, example_name, 'N_A_reduced')
     tv_N = rom.FetchTrainAndValidSet(0.8, example_name, 'N_reduced')
-    full = np.load(f'examples/{example_name}/training_data/full_order_training_data_{example_name}.npz')
+    full = np.load(training_data_path(example_name) / f'full_order_training_data_{example_name}.npz')
     mu_full, nu_full, sol_full = full['mu'], full['nu'], full['solution']
 
     path_to_G = training_data_path(example_name) / f'gram_matrix_{example_name}.npz'
@@ -164,7 +164,7 @@ def main():
     with open(csv_path, 'a', newline='') as fcsv:
         writer = csv.DictWriter(fcsv, fieldnames=[
             'profile','rom','epochs','restarts','val_loss','params_total','params_nonzero',
-            'forward_ms','abs_L2G','rel_L2G', 'N_s', 'N_t'
+            'forward_ms','abs_L2G','rel_L2G', 'Ns', 'Nt'
         ])
         if first_write: writer.writeheader()
 
@@ -244,8 +244,8 @@ def main():
                     'forward_ms': float(fwd_ms),
                     'abs_L2G': float(np.mean(abs_list)),
                     'rel_L2G': float(np.mean(rel_list)),
-                    'N_s': int(P.Ns),
-                    'N_t': int(P.Nt)
+                    'Ns': int(P.Ns),
+                    'Nt': int(P.Nt)
                 }
                 writer.writerow(row)
                 print(json.dumps(row))

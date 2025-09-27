@@ -223,9 +223,9 @@ class Ex01Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 20
-    generalrestarts: int = 3
-    generalpatience: int = 3
+    generalepochs: int = 1000
+    generalrestarts: int = 5
+    generalpatience: int = 20
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
@@ -379,7 +379,7 @@ class Ex01Parameters:
 EX02_PRESETS: Dict[str, Dict[str, Any]] = {
     "baseline": {
         "preprocess_dim": 3,
-        "dod_structure": [128, 64],
+        "dod_structure": [500, 500],
 
         "df_layers": [32, 16],
 
@@ -524,14 +524,14 @@ EX02_PRESETS: Dict[str, Dict[str, Any]] = {
 class Ex02Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
     # Note: to achieve l2_err=1e-5, N_A must be 478
-    N_A: int = 478
+    N_A: int = 425
     N: int = 256
     N_prime: int = 16
     n: int = 8
     Nt: int = 10
-    Ns: int = 400
+    Ns: int = 256
     T: float = 1.
-    diameter: float = 0.02
+    diameter: float = 0.01
     parameter_mu_dim: int = 3
     parameter_nu_dim: int = 1
 
@@ -569,9 +569,9 @@ class Ex02Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 5000
-    generalrestarts: int = 10
-    generalpatience: int = 50
+    generalepochs: int = 1000
+    generalrestarts: int = 5
+    generalpatience: int = 20
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
@@ -894,9 +894,9 @@ class Ex03Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 5000
+    generalepochs: int = 1000
     generalrestarts: int = 5
-    generalpatience: int = 50
+    generalpatience: int = 20
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"

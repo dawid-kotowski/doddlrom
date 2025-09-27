@@ -240,9 +240,9 @@ class innerDODTrainer:
         B = mu_batch.size(0)
         assert solution_batch.dim() == 3
 
-        # tensor zeros on device
-        temp_proj = torch.tensor(0.0, device=self.device)
-        temp_orth = torch.tensor(0.0, device=self.device)
+        # tensor zeros on device (had some autograd problems)
+        temp_proj = torch.tensor(0.0, device=self.device, requires_grad=True)
+        temp_orth = torch.tensor(0.0, device=self.device, requires_grad=True)
 
         for i in range(self.nt + 1):
             t_batch = torch.full((B, 1), i/(self.nt + 1), dtype=torch.float32, device=self.device)
@@ -252,7 +252,8 @@ class innerDODTrainer:
             u_proj = torch.bmm(V, alpha)                                 # [B, N_A, 1]
 
             error = u - u_proj
-            temp_proj += torch.sum((error ** 2).sum(dim=1))
+            temp_proj = temp_proj + torch.sum((error ** 2).sum(dim=1)) 
+            # NEVER make it += for some grad_tracking reasons ???
 
             if lambda_orth > 0.0:
                 temp_orth = temp_orth + self.orth_penalty(V)
@@ -472,7 +473,7 @@ class DFNNTrainer:
         alpha_true = V^T u:           [B, N']             # target coefficients
         """
         B = mu_batch.size(0)
-        temp_error = 0.0
+        temp_error = torch.tensor(0.0, device=self.device, requires_grad=True)
 
         for i in range(self.nt + 1):
             t_batch = torch.full((B, 1), i / (self.nt + 1),
@@ -740,7 +741,7 @@ class DOD_DL_ROMTrainer:
         alpha_true = V^T u:                 [B, N']        # true N' coeffs from data
         """
         B = mu_batch.size(0)
-        temp_error = 0.0
+        temp_error = torch.tensor(0.0, device=self.device, requires_grad=True)
 
         for i in range(self.nt + 1):
             t_batch = torch.full((B, 1), i / (self.nt + 1),
@@ -906,7 +907,7 @@ class POD_DL_ROMTrainer:
                                     
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
-        temp_error = 0.0
+        temp_error = torch.tensor(0.0, device=self.device, requires_grad=True)
         for i in range(self.nt + 1):
             t_batch = torch.stack(
                 [torch.tensor(i / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
@@ -919,7 +920,7 @@ class POD_DL_ROMTrainer:
 
             dynam_error = solution_slice - decoder_output                          # [B, N_A]
             proj_error = encoder_output - coeff_output                             # [B, n]
-            temp_error += (self.error_weight / 2 * torch.sum((dynam_error ** 2).sum(dim=1))
+            temp_error = temp_error + (self.error_weight / 2 * torch.sum((dynam_error ** 2).sum(dim=1))
                            + (1-self.error_weight) / 2 * torch.sum((proj_error ** 2).sum(dim=1)))
 
         loss = temp_error / (self.nt + 1)
@@ -1479,7 +1480,7 @@ class CoLoRATrainer():
                                     
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
-        temp_error = 0.0
+        temp_error = torch.tensor(0.0, device=self.device, requires_grad=True)
         for i in range(self.nt + 1):
             t_batch = torch.stack(
                 [torch.tensor(i  / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
@@ -1493,7 +1494,7 @@ class CoLoRATrainer():
             u_proj = solution_batch[:, i, :]                                            
 
             error = output - u_proj                                                   # [B, N_A]
-            temp_error += torch.sum((error ** 2).sum(dim=1))
+            temp_error = temp_error + torch.sum((error ** 2).sum(dim=1))
 
         loss = temp_error / (batch_size * (self.nt + 1))
         return loss
@@ -1649,7 +1650,8 @@ def denormalize_solution(sol_norm: torch.Tensor, example_name: str, reduction_ta
     d = np.load(stats_path)
     m = torch.tensor(d['sol_min'], dtype=sol_norm.dtype, device=sol_norm.device)  # [D]
     M = torch.tensor(d['sol_max'], dtype=sol_norm.dtype, device=sol_norm.device)  # [D]
-    scale = (M - m)
+    eps = 1e-8
+    scale = (M - m + eps)
     if sol_norm.ndim == 3:   # [Ns, Nt, D]
         return sol_norm * scale.unsqueeze(0).unsqueeze(0) + m.unsqueeze(0).unsqueeze(0)
     elif sol_norm.ndim == 2: # [Nt, D] or [Ns, D]
