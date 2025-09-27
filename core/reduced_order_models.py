@@ -7,6 +7,8 @@ import math
 import copy
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
+from utils.paths import training_data_path
+
 
 # Initialize weights
 def initialize_weights(m):
@@ -29,24 +31,32 @@ def initialize_weights(m):
         nn.init.ones_(m.weight)
         nn.init.zeros_(m.bias)
 
+def _freeze(m):
+    m.eval()
+    for p in m.parameters():
+        p.requires_grad_(False)
+
 class FetchTrainAndValidSet:
     """
     Loads compact .npz saved as:
-      - mu:       [Ns] float32
-      - nu:       [Ns] float32
-      - solution: [Ns, Nt, D]  (instationary) or [Ns, D] (stationary)
-    Normalizes mu, nu (z-score on TRAIN split) and solution per mode (z-score on TRAIN split).
-    D refers to reduction dimension.
+      - mu:       [Ns] or [Ns, p]  float32
+      - nu:       [Ns] or [Ns, q]  float32
+      - solution: [Ns, Nt, D] (instationary) or [Ns, D] (stationary)
+
+    Applies **min-max** normalization using precomputed stats stored at:
+      examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz
+    with keys: mu_min, mu_max, nu_min, nu_max, sol_min, sol_max.
     """
     def __init__(self, train_to_val_ratio: float, example_name: str, reduction_tag: str):
-        path_npz = f'examples/{example_name}/training_data/{reduction_tag}_training_data_{example_name}.npz'
+        path_npz = training_data_path(example_name) / f'{reduction_tag}_training_data_{example_name}.npz'
         data = np.load(path_npz)
 
         # raw arrays
-        self.mu = data['mu'].astype(np.float32)              # [Ns, p]
-        self.nu = data['nu'].astype(np.float32)              # [Ns, q]
-        self.solution = data['solution'].astype(np.float32)  # [Ns, Nt, D] or [Ns, D]
+        self.mu = data['mu']              # [Ns] or [Ns, p]
+        self.nu = data['nu']              # [Ns] or [Ns, q]
+        self.solution = data['solution']  # [Ns, Nt, D] or [Ns, D]
 
+        # split
         Ns = self.mu.shape[0]
         idx = np.arange(Ns, dtype=np.int32)
         np.random.shuffle(idx)
@@ -54,46 +64,46 @@ class FetchTrainAndValidSet:
         self.train_idx = idx[:n_train]
         self.valid_idx = idx[n_train:]
 
-        mu_tr = self.mu[self.train_idx]
-        nu_tr = self.nu[self.train_idx]
-        sol_tr = self.solution[self.train_idx]
+        # ---- load precomputed normalization stats (no recomputation here) ----
+        stats_path = training_data_path(example_name) / f'normalization_{reduction_tag}_{example_name}.npz'
+        stats = np.load(stats_path)
+
+        mu_min = stats['mu_min']
+        mu_max = stats['mu_max']
+        nu_min = stats['nu_min']
+        nu_max = stats['nu_max']
+        sol_min = stats['sol_min']
+        sol_max = stats['sol_max']
+
+        def _as2d(x: np.ndarray) -> np.ndarray:
+            return x if x.ndim == 2 else x[:, None]
 
         eps = 1e-8
-        if sol_tr.ndim == 3:   # [Ntr, Nt, D]
-            axis = (0, 1)
-        elif sol_tr.ndim == 2: # [Ntr, D]
-            axis = 0
+
+        mu_2d = _as2d(self.mu).astype(np.float32)
+        nu_2d = _as2d(self.nu).astype(np.float32)
+
+        # ensure stats are float32 and shaped [p]/[q]/[D]
+        mu_min = mu_min.astype(np.float32); mu_max = mu_max.astype(np.float32)
+        nu_min = nu_min.astype(np.float32); nu_max = nu_max.astype(np.float32)
+        sol_min = sol_min.astype(np.float32); sol_max = sol_max.astype(np.float32)
+
+        # normalize mu, nu
+        self.mu_n = (mu_2d - mu_min[None, :]) / (mu_max[None, :] - mu_min[None, :] + eps)   # [Ns, p]
+        self.nu_n = (nu_2d - nu_min[None, :]) / (nu_max[None, :] - nu_min[None, :] + eps)   # [Ns, q]
+
+        if self.solution.ndim == 3:
+            # [Ns, Nt, D]
+            self.solution_n = (self.solution - sol_min[None, None, :]) / (sol_max[None, None, :] - sol_min[None, None, :] + eps)
+        elif self.solution.ndim == 2:
+            # [Ns, D]
+            self.solution_n = (self.solution - sol_min[None, :]) / (sol_max[None, :] - sol_min[None, :] + eps)
         else:
-            raise ValueError(f"Unexpected solution ndim: {sol_tr.ndim}")
-
-        mu_tr_2d = mu_tr if mu_tr.ndim == 2 else mu_tr[:, None]
-        nu_tr_2d = nu_tr if nu_tr.ndim == 2 else nu_tr[:, None]
-
-        mu_min = mu_tr_2d.min(axis=0)   # [p]
-        mu_max = mu_tr_2d.max(axis=0)   # [p]
-        nu_min = nu_tr_2d.min(axis=0)   # [q]
-        nu_max = nu_tr_2d.max(axis=0)   # [q]
-
-        sol_min = sol_tr.min(axis=axis) # [D]
-        sol_max = sol_tr.max(axis=axis) # [D]
-
-        stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
-        np.savez_compressed(stats_path,
-            mu_min=mu_min.astype(np.float32), mu_max=mu_max.astype(np.float32),
-            nu_min=nu_min.astype(np.float32), nu_max=nu_max.astype(np.float32),
-            sol_min=sol_min.astype(np.float32), sol_max=sol_max.astype(np.float32)
-        )
-
-        mu_2d = self.mu if self.mu.ndim == 2 else self.mu[:, None]
-        nu_2d = self.nu if self.nu.ndim == 2 else self.nu[:, None]
-
-        self.mu_n = (mu_2d - mu_min) / (mu_max - mu_min + eps)       # [Ns, p]
-        self.nu_n = (nu_2d - nu_min) / (nu_max - nu_min + eps)       # [Ns, q]
-        self.solution_n = (self.solution - sol_min[None, ...]) / (sol_max[None, ...] - sol_min[None, ...] + eps)
+            raise ValueError(f"Unexpected solution ndim: {self.solution.ndim}")
 
     def _tuples(self, idx_array):
         return [(self.mu_n[i], self.nu_n[i], self.solution_n[i]) for i in idx_array]
-    
+
     def __call__(self, set_type: str):
         if set_type == 'train':
             return self._tuples(self.train_idx)
@@ -198,17 +208,18 @@ class innerDODTrainer:
         self.restarts = restart
         self.epochs = epochs
         self.batch_size = batch_size
-        self.model = dod_model.to(device)
-        self.device = device
+        self.device = torch.device(device) 
+        self.model = dod_model.to(self.device)
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
+        pin = (self.device.type == 'cuda')
         self.train_loader = DataLoader(DatasetLoader(train_data), 
-                                       batch_size=self.batch_size, shuffle=True)
+                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
         self.valid_loader = DataLoader(DatasetLoader(valid_data), 
-                                       batch_size=self.batch_size, shuffle=False)
+                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
         
     def orth_penalty(self, V):
         """
@@ -220,39 +231,35 @@ class innerDODTrainer:
         I = torch.eye(Np, device=V.device, dtype=V.dtype).expand_as(S)
         return ((S - I).pow(2).sum(dim=(-2, -1)) / Np).mean()  
 
-    def loss_function(self, mu_batch, solution_batch, lambda_orth=1e-2):
+    def loss_function(self, mu_batch, solution_batch, lambda_orth=1):
         """
         mu_batch:        [B, geometric_dim]
         solution_batch:  [B, nt+1, N_A]   (solutions already in the ambient space R^{N_A})
         Returns scalar loss (Euclidean, G-independent).
         """
         B = mu_batch.size(0)
-        assert solution_batch.dim() == 3, "solution_batch must be [B, nt+1, N_A]"
+        assert solution_batch.dim() == 3
 
         temp_proj = 0.0
         temp_orth = 0.0
 
         for i in range(self.nt + 1):
-            t_batch = torch.full((B, 1), i  / (self.nt + 1),
-                            dtype=torch.float32, device=self.device) # [B, 1]
+            t_batch = torch.full((B, 1), i/(self.nt + 1), dtype=torch.float32, device=self.device)
+            V = self.model(mu_batch, t_batch)                            # [B, N_A, N']
+            u = solution_batch[:, i, :].unsqueeze(-1)                    # [B, N_A, 1]
+            alpha = torch.bmm(V.transpose(1, 2), u)                      # [B, N', 1]
+            u_proj = torch.bmm(V, alpha)                                 # [B, N_A, 1]
 
-            V = self.model(mu_batch, t_batch)                        # [B, N_A, N']
-            u = solution_batch[:, i, :].unsqueeze(-1)                # [B, N_A, 1]
-            alpha = torch.bmm(V.transpose(1, 2), u)                  # [B, N', 1]
-            u_proj = torch.bmm(V, alpha)                             # [B, N_A, 1]
+            error = u - u_proj
+            temp_proj = temp_proj + torch.sum((error ** 2).sum(dim=1)) 
+            # NEVER make it += for some grad_tracking reasons ???
 
-            err = u - u_proj
-            temp_proj = temp_proj + torch.sum(torch.norm(err, dim=1) ** 2)
-
-            # orthonormality penalty
             if lambda_orth > 0.0:
-                pen = self.orth_penalty(V)
-                temp_orth = temp_orth + pen
-            
-        data_loss = temp_proj / (B * (self.nt + 1))
-        orth_loss = (temp_orth / (self.nt + 1))
-        loss = data_loss + lambda_orth * orth_loss
-        return loss
+                temp_orth = temp_orth + self.orth_penalty(V)
+
+        data_loss = temp_proj / (self.nt + 1)
+        orth_loss = temp_orth / (self.nt + 1)
+        return data_loss + lambda_orth * orth_loss 
 
 
     def train(self):
@@ -260,53 +267,90 @@ class innerDODTrainer:
         best_loss_restart = float('inf')
         best_loss = float('inf')
 
+        params = list(self.model.parameters())
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
+
+        tqdm.write(f"AMP: enabled={use_cuda}, any_params_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+         
+        scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
+        max_grad_norm = 1.0
+
         tqdm.write("Model inner_DOD is being trained...")
 
         for restart_idx in tqdm(range(self.restarts), desc="Restarts inner_DOD", leave=False):
+            base = 1337; seed = base + restart_idx
+            torch.manual_seed(seed); np.random.seed(seed)
+            if use_cuda: torch.cuda.manual_seed_all(seed)
+
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
+                                                             factor=0.5, patience=1)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
-                total_loss = 0
+                train_num = 0.; train_den = 0.
 
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
-                    optimizer.zero_grad()
-                    loss = self.loss_function(mu_batch, solution_batch)
-                    loss.backward()
-                    optimizer.step()
-                    total_loss += loss.item()
+                    mu_batch = mu_batch.to(self.device, non_blocking=True)
+                    solution_batch = solution_batch.to(self.device, non_blocking=True)
+                    B = mu_batch.size(0)
+
+                    optimizer.zero_grad(set_to_none=True)
+                    with torch.cuda.amp.autocast(enabled=use_cuda):
+                        loss = self.loss_function(mu_batch, solution_batch)
+                    scaler.scale(loss).backward()
+                    if max_grad_norm is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+
+                    train_num += loss.item()
+                    train_den += B
 
                 self.model.eval()
+                val_num = 0.0; val_den = 0
                 with torch.no_grad():
-                    val_loss = 0
                     for mu_batch, nu_batch, solution_batch in self.valid_loader:
-                        val_loss += self.loss_function(mu_batch, solution_batch).item()
-                    val_loss /= len(self.valid_loader)
+                        mu_batch = mu_batch.to(self.device, non_blocking=True)
+                        nu_batch = nu_batch.to(self.device, non_blocking=True)
+                        solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        batch_loss = self.loss_function(mu_batch, solution_batch) 
+                        val_num += batch_loss.item()
+                        val_den += mu_batch.size(0)
+                val_loss = val_num / max(1, val_den)
+                scheduler.step(val_loss)
 
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
-                    best_model = self.model.state_dict()
+                    best_snapshot = copy.deepcopy(self.model.state_dict())
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
                         break
 
-                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
+                tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
+                        f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
 
 
             if best_loss_restart < best_loss:
-                best_model = self.model.state_dict()
+                best_model = best_snapshot
                 best_loss = best_loss_restart
 
             tqdm.write(f'Current best loss of inner_DOD: {best_loss:.6f}')
 
-        self.model.load_state_dict(best_model)
+        if best_model is not None:
+            self.model.load_state_dict(best_model)
         return best_loss
 
 ''' 
@@ -380,7 +424,7 @@ class HadamardNN(nn.Module):
         phi_1 = self.phi_1_module(mu_t)
         phi_2 = self.phi_2_module(nu_t)
         phi = phi_1 * phi_2
-        phi_sum = torch.sum(phi, dim=1).squeeze()
+        phi_sum = torch.sum(phi, dim=1)
         return phi_sum
 
 # Define optional parameter-to-latent-dynamic Model
@@ -412,17 +456,20 @@ class DFNNTrainer:
         self.epochs = epochs
         self.restarts = restarts
         self.batch_size = batch_size
-        self.innerDOD = DOD_DL_model.to(device)
-        self.model = coeffnn_model.to(device)
-        self.device = device
+        self.device = torch.device(device) 
+        self.innerDOD = DOD_DL_model.to(self.device)
+        self.model = coeffnn_model.to(self.device)
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
-
+        pin = (self.device.type == 'cuda')
+        self.train_loader = DataLoader(DatasetLoader(train_data), 
+                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
+                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
+                                    
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         """
         Dimensionality:
@@ -445,9 +492,9 @@ class DFNNTrainer:
             alpha_true = torch.bmm(V.transpose(1, 2), u).squeeze(-1)                         # [B, N']  = (V^T u)
 
             error = coeff_pred - alpha_true                                                  # [B, N']
-            temp_error = temp_error + torch.sum(torch.norm(error, dim=1) ** 2)               
+            temp_error = temp_error + torch.sum((error ** 2).sum(dim=1))               
 
-        loss = temp_error / (B * (self.nt + 1))
+        loss = temp_error / (self.nt + 1)
         return loss
 
 
@@ -456,53 +503,90 @@ class DFNNTrainer:
         best_loss_restart = float('inf')
         best_loss = float('inf')
 
+        params = list(self.model.parameters())
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
+
+        tqdm.write(f"AMP: enabled={use_cuda}, any_param_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+         
+        scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
+        max_grad_norm = 1.0
+
         tqdm.write("Model DFNN is being trained...")
 
         for restart_idx in tqdm(range(self.restarts), desc="Restarts DFNN", leave=False):
+            base = 1337; seed = base + restart_idx
+            torch.manual_seed(seed); np.random.seed(seed)
+            if use_cuda: torch.cuda.manual_seed_all(seed)
+
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
+                                                             factor=0.5, patience=1)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
-                total_loss = 0
+                train_num = 0.; train_den = 0.
 
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
-                    optimizer.zero_grad()
-                    loss = self.loss_function(mu_batch, nu_batch, solution_batch)
-                    loss.backward()
-                    optimizer.step()
-                    total_loss += loss.item()
+                    mu_batch = mu_batch.to(self.device, non_blocking=True)
+                    nu_batch = nu_batch.to(self.device, non_blocking=True)
+                    solution_batch = solution_batch.to(self.device, non_blocking=True)
+                    B = mu_batch.size(0)
+
+                    optimizer.zero_grad(set_to_none=True)
+                    with torch.cuda.amp.autocast(enabled=use_cuda):
+                        loss = self.loss_function(mu_batch, nu_batch, solution_batch)
+                    scaler.scale(loss).backward()
+                    if max_grad_norm is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+
+                    train_num += loss.item()
+                    train_den += B
 
                 self.model.eval()
+                val_num = 0.0; val_den = 0
                 with torch.no_grad():
-                    val_loss = 0
                     for mu_batch, nu_batch, solution_batch in self.valid_loader:
-                        val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
-                    val_loss /= len(self.valid_loader)
-
+                        mu_batch = mu_batch.to(self.device, non_blocking=True)
+                        nu_batch = nu_batch.to(self.device, non_blocking=True)
+                        solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
+                        val_num += batch_loss.item()
+                        val_den += mu_batch.size(0)
+                val_loss = val_num / max(1, val_den)
+                scheduler.step(val_loss)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
-                    best_model = self.model.state_dict()
+                    best_snapshot = copy.deepcopy(self.model.state_dict())
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
                         break
 
-                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
+                tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
+                        f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
 
 
             if best_loss_restart < best_loss:
-                best_model = self.model.state_dict()
+                best_model = best_snapshot
                 best_loss = best_loss_restart
 
             tqdm.write(f'Current best loss of DFNN: {best_loss:.6f}')
 
-        self.model.load_state_dict(best_model)
+        if best_model is not None:
+            self.model.load_state_dict(best_model)
         return best_loss
     
 # Define Encoder 
@@ -642,19 +726,22 @@ class DOD_DL_ROMTrainer:
         self.epochs = epochs
         self.restarts = restarts
         self.batch_size = batch_size
-        self.innerDOD = DOD_DL_model.to(device)
-        self.en_model = Encoder_model.to(device)
-        self.de_model = Decoder_model.to(device)
-        self.coeff_model = Coeff_DOD_DL_model.to(device)
-        self.device = device
+        self.device = torch.device(device) 
+        self.innerDOD = DOD_DL_model.to(self.device)
+        self.en_model = Encoder_model.to(self.device)
+        self.de_model = Decoder_model.to(self.device)
+        self.coeff_model = Coeff_DOD_DL_model.to(self.device)
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
-
+        pin = (self.device.type == 'cuda')
+        self.train_loader = DataLoader(DatasetLoader(train_data), 
+                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
+                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
+                                    
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         """
         Dimensionality (this variant):
@@ -689,31 +776,47 @@ class DOD_DL_ROMTrainer:
             proj_error  = enc_of_target - coeff_pred                                    # [B, n]
 
             temp_error = temp_error + (
-                self.error_weight * 0.5 * torch.sum(torch.norm(dynam_error, dim=1) ** 2) +
-                (1.0 - self.error_weight) * 0.5 * torch.sum(torch.norm(proj_error,  dim=1) ** 2)
+                self.error_weight * 0.5 * torch.sum((dynam_error ** 2).sum(dim=1)) +
+                (1.0 - self.error_weight) * 0.5 * torch.sum((proj_error ** 2).sum(dim=1))
             )
 
-        loss = temp_error / (B * (self.nt + 1))
+        loss = temp_error / (self.nt + 1)
         return loss
 
-
-
+    
     def train(self):
         best_model = None
-        best_loss = float('inf')
         best_loss_restart = float('inf')
+        best_loss = float('inf')
 
-        tqdm.write("Model DOD DL ROM is being trained...")
+        params = list(self.coeff_model.parameters()) + \
+                     list(self.en_model.parameters()) + \
+                     list(self.de_model.parameters())
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts DOD DL ROM", leave=False):
+        tqdm.write(f"AMP: enabled={use_cuda}, any_param_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+         
+        scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
+        max_grad_norm = 1.0
+
+        tqdm.write("Model DOD-DL-ROM is being trained...")
+
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts DOD-DL-ROM", leave=False):
+            base = 1337; seed = base + restart_idx
+            torch.manual_seed(seed); np.random.seed(seed)
+            if use_cuda: torch.cuda.manual_seed_all(seed)
+
             self.coeff_model.apply(initialize_weights)
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
-
-            params = list(self.coeff_model.parameters()) + \
-                     list(self.en_model.parameters()) + \
-                     list(self.de_model.parameters())
+            
             optimizer = optim.Adam(params, lr=self.learning_rate)
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
+                                                             factor=0.5, patience=1)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -722,27 +825,44 @@ class DOD_DL_ROMTrainer:
                 self.coeff_model.train()
                 self.en_model.train()
                 self.de_model.train()
-                total_loss = 0.0
+                train_num = 0.; train_den = 0.
 
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
-                    optimizer.zero_grad()
-                    loss = self.loss_function(mu_batch, nu_batch, solution_batch)
-                    loss.backward()
-                    optimizer.step()
-                    total_loss += loss.item()
+                    mu_batch = mu_batch.to(self.device, non_blocking=True)
+                    nu_batch = nu_batch.to(self.device, non_blocking=True)
+                    solution_batch = solution_batch.to(self.device, non_blocking=True)
+                    B = mu_batch.size(0)
 
-                self.coeff_model.eval()
+                    optimizer.zero_grad(set_to_none=True)
+                    with torch.cuda.amp.autocast(enabled=use_cuda):
+                        loss = self.loss_function(mu_batch, nu_batch, solution_batch)
+                    scaler.scale(loss).backward()
+                    if max_grad_norm is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(params, max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+
+                    train_num += loss.item()
+                    train_den += B
+
                 self.en_model.eval()
                 self.de_model.eval()
+                self.coeff_model.eval()
+                val_num = 0.0; val_den = 0
                 with torch.no_grad():
-                    val_loss = 0.0
                     for mu_batch, nu_batch, solution_batch in self.valid_loader:
-                        val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
-                    val_loss /= len(self.valid_loader)
-
+                        mu_batch = mu_batch.to(self.device, non_blocking=True)
+                        nu_batch = nu_batch.to(self.device, non_blocking=True)
+                        solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
+                        val_num += batch_loss.item()
+                        val_den += mu_batch.size(0)
+                val_loss = val_num / max(1, val_den)
+                scheduler.step(val_loss)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
-                    best_model = {
+                    best_snapshot = {
                         "encoder": copy.deepcopy(self.en_model.state_dict()),
                         "decoder": copy.deepcopy(self.de_model.state_dict()),
                         "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
@@ -751,26 +871,23 @@ class DOD_DL_ROMTrainer:
                 else:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
                         break
 
-                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
+                tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
+                        f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
+
 
             if best_loss_restart < best_loss:
-                best_model = {
-                    "encoder": copy.deepcopy(self.en_model.state_dict()),
-                    "decoder": copy.deepcopy(self.de_model.state_dict()),
-                    "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
-                }
+                best_model = best_snapshot
                 best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of DOD DL ROM: {best_loss:.6f}')
+            tqdm.write(f'Current best loss of DOD-DL-ROM: {best_loss:.6f}')
 
         if best_model is not None:
-            self.en_model.load_state_dict(best_model["encoder"])
-            self.de_model.load_state_dict(best_model["decoder"])
-            self.coeff_model.load_state_dict(best_model["coeff_model"])
-
+            self.en_model.load_state_dict(best_model['encoder'])
+            self.de_model.load_state_dict(best_model['decoder'])
+            self.coeff_model.load_state_dict(best_model['coeff_model'])
         return best_loss
 
 '''
@@ -781,6 +898,7 @@ as the POD Matrix is already provided. The approximation is then given via
 u(mu, nu, t) = A_P Decoder(Coeff(mu, nu, t))
 -----------------------------------
 '''
+
 # Define the Trainer for the standard POD DL
 class POD_DL_ROMTrainer:
     def __init__(self, nt, Coeff_model, Encoder_model, Decoder_model, train_valid_set, error_weight,
@@ -791,18 +909,21 @@ class POD_DL_ROMTrainer:
         self.error_weight = error_weight
         self.restarts = restarts
         self.batch_size = batch_size
-        self.en_model = Encoder_model.to(device)
-        self.de_model = Decoder_model.to(device)
-        self.coeff_model = Coeff_model.to(device)
-        self.device = device
+        self.device = torch.device(device) 
+        self.en_model = Encoder_model.to(self.device)
+        self.de_model = Decoder_model.to(self.device)
+        self.coeff_model = Coeff_model.to(self.device)
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
-
+        pin = (self.device.type == 'cuda')
+        self.train_loader = DataLoader(DatasetLoader(train_data), 
+                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
+                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
+                                    
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
         temp_error = 0.0
@@ -818,58 +939,91 @@ class POD_DL_ROMTrainer:
 
             dynam_error = solution_slice - decoder_output                          # [B, N_A]
             proj_error = encoder_output - coeff_output                             # [B, n]
-            temp_error += (self.error_weight / 2 * torch.sum(torch.norm(dynam_error, dim=1) ** 2) 
-                           + (1-self.error_weight) / 2 * torch.sum(torch.norm(proj_error, dim=1) ** 2))
+            temp_error = temp_error + (self.error_weight / 2 * torch.sum((dynam_error ** 2).sum(dim=1))
+                           + (1-self.error_weight) / 2 * torch.sum((proj_error ** 2).sum(dim=1)))
 
-        loss = temp_error / (batch_size * (self.nt + 1))
+        loss = temp_error / (self.nt + 1)
         return loss
 
     def train(self):
         best_model = None
-        best_loss = float('inf')
         best_loss_restart = float('inf')
+        best_loss = float('inf')
 
-        tqdm.write("Model POD DL ROM is being trained...")
+        params = list(self.coeff_model.parameters()) + \
+                     list(self.en_model.parameters()) + \
+                     list(self.de_model.parameters())
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
 
+        tqdm.write(f"AMP: enabled={use_cuda}, any_param_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+         
+        scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
+        max_grad_norm = 1.0
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts POD DL ROM", leave=False):
+        tqdm.write("Model POD-DL-ROM is being trained...")
+
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts POD-DL-ROM", leave=False):
+            base = 1337; seed = base + restart_idx
+            torch.manual_seed(seed); np.random.seed(seed)
+            if use_cuda: torch.cuda.manual_seed_all(seed)
+
             self.coeff_model.apply(initialize_weights)
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
             
-            params = list(self.coeff_model.parameters()) + \
-                     list(self.en_model.parameters()) + \
-                     list(self.de_model.parameters())
             optimizer = optim.Adam(params, lr=self.learning_rate)
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
+                                                             factor=0.5, patience=1)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
-            
+
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.coeff_model.train()
                 self.en_model.train()
                 self.de_model.train()
-                total_loss = 0.0
+                train_num = 0.; train_den = 0.
 
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
-                    optimizer.zero_grad()
-                    loss = self.loss_function(mu_batch, nu_batch, solution_batch)
-                    loss.backward()
-                    optimizer.step()
-                    total_loss += loss.item()
-                
-                self.coeff_model.eval()
+                    mu_batch = mu_batch.to(self.device, non_blocking=True)
+                    nu_batch = nu_batch.to(self.device, non_blocking=True)
+                    solution_batch = solution_batch.to(self.device, non_blocking=True)
+                    B = mu_batch.size(0)
+
+                    optimizer.zero_grad(set_to_none=True)
+                    with torch.cuda.amp.autocast(enabled=use_cuda):
+                        loss = self.loss_function(mu_batch, nu_batch, solution_batch)
+                    scaler.scale(loss).backward()
+                    if max_grad_norm is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(params, max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+
+                    train_num += loss.item()
+                    train_den += B
+
                 self.en_model.eval()
                 self.de_model.eval()
+                self.coeff_model.eval()
+                val_num = 0.0; val_den = 0
                 with torch.no_grad():
-                    val_loss = 0.0
                     for mu_batch, nu_batch, solution_batch in self.valid_loader:
-                        val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
-                    val_loss /= len(self.valid_loader)
-            
+                        mu_batch = mu_batch.to(self.device, non_blocking=True)
+                        nu_batch = nu_batch.to(self.device, non_blocking=True)
+                        solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
+                        val_num += batch_loss.item()
+                        val_den += mu_batch.size(0)
+                val_loss = val_num / max(1, val_den)
+                scheduler.step(val_loss)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
-                    best_model = {
+                    best_snapshot = {
                         "encoder": copy.deepcopy(self.en_model.state_dict()),
                         "decoder": copy.deepcopy(self.de_model.state_dict()),
                         "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
@@ -878,29 +1032,25 @@ class POD_DL_ROMTrainer:
                 else:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
                         break
 
+                tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
+                        f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
 
-                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
 
             if best_loss_restart < best_loss:
-                best_model = {
-                        "encoder": copy.deepcopy(self.en_model.state_dict()),
-                        "decoder": copy.deepcopy(self.de_model.state_dict()),
-                        "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
-                    }
+                best_model = best_snapshot
                 best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of POD DL ROM: {best_loss:.6f}')
+            tqdm.write(f'Current best loss of POD-DL-ROM: {best_loss:.6f}')
 
         if best_model is not None:
-            self.en_model.load_state_dict(best_model["encoder"])
-            self.de_model.load_state_dict(best_model["decoder"])
-            self.coeff_model.load_state_dict(best_model["coeff_model"])
-            
+            self.en_model.load_state_dict(best_model['encoder'])
+            self.de_model.load_state_dict(best_model['decoder'])
+            self.coeff_model.load_state_dict(best_model['coeff_model'])
         return best_loss
-
+    
 '''
 -----------------------------------
 Having considered the DOD-algorithm in analogy to the POD-DL-ROM 
@@ -948,10 +1098,21 @@ class statDOD(nn.Module):
         self.root_modules = nn.ModuleList([StatRootModule(seed_dim, root_output_dim, root_layer_sizes) for _ in range(num_roots)])
 
     def forward(self, mu):
-        seed_output = self.seed_module(mu)
-        root_outputs = [root(seed_output) for root in self.root_modules]
-        v_mu_reduced = torch.stack(root_outputs, dim=0).transpose(0, 1)
-        return v_mu_reduced
+            """
+            Inputs:
+            mu: [B, geometric_dim] or [geometric_dim]
+            Returns:
+            V: [B, N_A, N'] if batched, else [N_A, N']
+            """
+            if mu.dim() == 1:
+                mu = mu.unsqueeze(0)                                   # [1, geometric_dim]
+            B = mu.size(0)
+            seed_out = self.seed_module(mu)                            # [B, seed_dim]
+            mu = torch.cat([seed_out], dim=-1)
+
+            root_outputs = [root(mu) for root in self.root_modules]  # N' items of [B, N_A]
+            V = torch.stack(root_outputs, dim=-1)                      # [B, N_A, N']
+            return V if B > 1 else V.squeeze(0)
 
 # Define the stationary Coefficient Finder for the stationary equivalent of the problem
 class StatPhi1Module(nn.Module):
@@ -1004,7 +1165,7 @@ class statHadamardNN(nn.Module):
         phi_1 = self.phi_1_module(mu)
         phi_2 = self.phi_2_module(nu)
         phi = phi_1 * phi_2
-        phi_sum = torch.sum(phi, dim=1).squeeze()
+        phi_sum = torch.sum(phi, dim=1)
         return phi_sum
 
 # Define the trainer for these
@@ -1015,87 +1176,122 @@ class statDODTrainer:
         self.restarts = restart
         self.epochs = epochs
         self.batch_size = batch_size
-        self.model = nn_model.to(device)
-        self.device = device
+        self.device = torch.device(device) 
+        self.model = nn_model.to(self.device)
         self.N_A = ambient_dim
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
-
+        pin = (self.device.type == 'cuda')
+        self.train_loader = DataLoader(DatasetLoader(train_data), 
+                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
+                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
+                                    
 
     def loss_function(self, mu_batch, solution_batch):
-        batch_size = mu_batch.size(0)  # Get the batch size (can be problem, if set is non-divisible)
+        V = self.model(mu_batch)
+        if solution_batch.dim() == 3:
+            solution_batch = solution_batch.squeeze(1)
+        u = solution_batch.unsqueeze(-1)
 
-        output = self.model(mu_batch)
+        alpha = torch.bmm(V.transpose(-2, -1), u)
+        u_proj = torch.bmm(V, alpha)
 
-        # Reshape solution_batch to a 3D tensor with shape [batch_size, N_A, 1]
-        solution_batch = solution_batch.transpose(-2, -1)
-
-        # Perform batch matrix multiplications
-        v_u = torch.bmm(output, solution_batch)
-        u_proj = torch.bmm(output.transpose(1, 2), v_u)
-
-        error = solution_batch - u_proj
-        loss = torch.sum(torch.norm(error, dim=1) ** 2) / batch_size
-
+        error = u - u_proj
+        loss = torch.sum((error ** 2).sum(dim=1)) 
         return loss
 
     def train(self):
         best_model = None
         best_loss_restart = float('inf')
         best_loss = float('inf')
+        
+        params = list(self.model.parameters())
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
 
-        tqdm.write("Model stat DOD is being trained...")
+        tqdm.write(f"AMP: enabled={use_cuda}, any_param_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+         
+        scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
+        max_grad_norm = 1.0
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts stat DOD", leave=False):
+        tqdm.write("Model stationary inner DOD is being trained...")
+
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts stat inner DOD", leave=False):
+            base = 1337; seed = base + restart_idx
+            torch.manual_seed(seed); np.random.seed(seed)
+            if use_cuda: torch.cuda.manual_seed_all(seed)
+
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
+                                                             factor=0.5, patience=1)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
-                total_loss = 0
+                train_num = 0.; train_den = 0.
 
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
-                    optimizer.zero_grad()
-                    loss = self.loss_function(mu_batch, solution_batch)
-                    loss.backward()
-                    optimizer.step()
-                    total_loss += loss.item()
+                    mu_batch = mu_batch.to(self.device, non_blocking=True)
+                    solution_batch = solution_batch.to(self.device, non_blocking=True)
+                    B = mu_batch.size(0)
+
+                    optimizer.zero_grad(set_to_none=True)
+                    with torch.cuda.amp.autocast(enabled=use_cuda):
+                        loss = self.loss_function(mu_batch, solution_batch)
+                    scaler.scale(loss).backward()
+                    if max_grad_norm is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+
+                    train_num += loss.item()
+                    train_den += B
 
                 self.model.eval()
+                val_num = 0.0; val_den = 0
                 with torch.no_grad():
-                    val_loss = 0
                     for mu_batch, nu_batch, solution_batch in self.valid_loader:
-                        val_loss += self.loss_function(mu_batch, solution_batch).item()
-                    val_loss /= len(self.valid_loader)
-
+                        mu_batch = mu_batch.to(self.device, non_blocking=True)
+                        nu_batch = nu_batch.to(self.device, non_blocking=True)
+                        solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        batch_loss = self.loss_function(mu_batch, solution_batch) 
+                        val_num += batch_loss.item()
+                        val_den += mu_batch.size(0)
+                val_loss = val_num / max(1, val_den)
+                scheduler.step(val_loss)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
-                    best_model = self.model.state_dict()
+                    best_snapshot = copy.deepcopy(self.model.state_dict())
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
                         break
 
-                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
+                tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
+                        f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
 
 
             if best_loss_restart < best_loss:
-                best_model = self.model.state_dict()
+                best_model = best_snapshot
                 best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of stat DOD: {best_loss:.6f}')
+            tqdm.write(f'Current best loss of stationary inner DOD: {best_loss:.6f}')
 
-        self.model.load_state_dict(best_model)
+        if best_model is not None:
+            self.model.load_state_dict(best_model)
         return best_loss
 class statHadamardNNTrainer:
     def __init__(self, dod_model, coeffnn_model, ambient_dim, train_valid_set, epochs=1, restarts=1, learning_rate=1e-3,
@@ -1104,31 +1300,35 @@ class statHadamardNNTrainer:
         self.epochs = epochs
         self.restarts = restarts
         self.batch_size = batch_size
-        self.dod = dod_model.to(device)
-        self.model = coeffnn_model.to(device)
-        self.device = device
+        self.device = torch.device(device) 
+        self.dod = dod_model.to(self.device)
+        _freeze(self.dod)
+        self.model = coeffnn_model.to(self.device)
         self.N_A = ambient_dim
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
-
+        pin = (self.device.type == 'cuda')
+        self.train_loader = DataLoader(DatasetLoader(train_data), 
+                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
+                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
+                                    
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
-        batch_size = mu_batch.size(0)
-        coeff_output = self.model(mu_batch, nu_batch)
-        dod_output = self.dod(mu_batch)
+        coeff_output = self.model(mu_batch, nu_batch).unsqueeze(-1)
+        V = self.dod(mu_batch)
 
         # Reshape solution_batch to a 3D tensor with shape [batch_size, N_A, 1]
-        solution_batch = solution_batch.transpose(-2, -1)
+        solution_batch = solution_batch.squeeze(1)
+        u = solution_batch.unsqueeze(-1)
 
         # Perform batch matrix multiplications
-        output = torch.bmm(dod_output, solution_batch).squeeze(2)
+        output = torch.bmm(V.transpose(-2, -1), u)
         error = output - coeff_output
-        loss = torch.sum(torch.norm(error, dim=1) ** 2) / batch_size
+        loss = torch.sum((error ** 2).sum(dim=1))
 
         return loss
 
@@ -1136,54 +1336,91 @@ class statHadamardNNTrainer:
         best_model = None
         best_loss_restart = float('inf')
         best_loss = float('inf')
+        
+        params = list(self.model.parameters())
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
 
-        tqdm.write("Model stat Coeff DOD is being trained...")
+        tqdm.write(f"AMP: enabled={use_cuda}, any_param_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+         
+        scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
+        max_grad_norm = 1.0
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts stat Coeff DOD", leave=False):
+        tqdm.write("Model stat HadamardNN is being trained...")
+
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts stat HadamardNN", leave=False):
+            base = 1337; seed = base + restart_idx
+            torch.manual_seed(seed); np.random.seed(seed)
+            if use_cuda: torch.cuda.manual_seed_all(seed)
+
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
+                                                             factor=0.5, patience=1)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
-                total_loss = 0
+                train_num = 0.; train_den = 0.
 
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
-                    optimizer.zero_grad()
-                    loss = self.loss_function(mu_batch, nu_batch, solution_batch)
-                    loss.backward()
-                    optimizer.step()
-                    total_loss += loss.item()
+                    mu_batch = mu_batch.to(self.device, non_blocking=True)
+                    nu_batch = nu_batch.to(self.device, non_blocking=True)
+                    solution_batch = solution_batch.to(self.device, non_blocking=True)
+                    B = mu_batch.size(0)
+
+                    optimizer.zero_grad(set_to_none=True)
+                    with torch.cuda.amp.autocast(enabled=use_cuda):
+                        loss = self.loss_function(mu_batch, nu_batch, solution_batch)
+                    scaler.scale(loss).backward()
+                    if max_grad_norm is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+
+                    train_num += loss.item()
+                    train_den += B
 
                 self.model.eval()
+                val_num = 0.0; val_den = 0
                 with torch.no_grad():
-                    val_loss = 0
                     for mu_batch, nu_batch, solution_batch in self.valid_loader:
-                        val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
-                    val_loss /= len(self.valid_loader)
-
+                        mu_batch = mu_batch.to(self.device, non_blocking=True)
+                        nu_batch = nu_batch.to(self.device, non_blocking=True)
+                        solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
+                        val_num += batch_loss.item()
+                        val_den += mu_batch.size(0)
+                val_loss = val_num / max(1, val_den)
+                scheduler.step(val_loss)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
-                    best_model = self.model.state_dict()
+                    best_snapshot = copy.deepcopy(self.model.state_dict())
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
                         break
 
-                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
+                tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
+                        f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
 
 
             if best_loss_restart < best_loss:
-                best_model = self.model.state_dict()
+                best_model = best_snapshot
                 best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of stat Coeff DOD: {best_loss:.6f}')
+            tqdm.write(f'Current best loss of stat HadamardNN: {best_loss:.6f}')
 
-        self.model.load_state_dict(best_model)
+        if best_model is not None:
+            self.model.load_state_dict(best_model)
         return best_loss
 
 # Define Hyper Network for time and physical parameter
@@ -1266,18 +1503,22 @@ class CoLoRATrainer():
         self.epochs = epochs
         self.restarts = restarts
         self.batch_size = batch_size
-        self.DOD_0 = DOD_0_model.to(device)
-        self.model_0 = coeffnn_0_model.to(device)
-        self.model = colora_model.to(device)
-        self.device = device
+        self.device = torch.device(device) 
+        self.DOD_0 = DOD_0_model.to(self.device)
+        self.model_0 = coeffnn_0_model.to(self.device)
+        self.model = colora_model.to(self.device)
+        _freeze(self.DOD_0); _freeze(self.model_0)
         self.patience = patience
 
         train_data = train_valid_set('train')
         valid_data = train_valid_set('valid')
 
-        self.train_loader = DataLoader(DatasetLoader(train_data), batch_size=self.batch_size, shuffle=True)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), batch_size=self.batch_size, shuffle=False)
-
+        pin = (self.device.type == 'cuda')
+        self.train_loader = DataLoader(DatasetLoader(train_data), 
+                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
+        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
+                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
+                                    
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
         temp_error = 0.0
@@ -1288,13 +1529,13 @@ class CoLoRATrainer():
             coeff_0_output = self.model_0(mu_batch, nu_batch).unsqueeze(2)
             DOD_0_output = self.DOD_0(mu_batch)                         
 
-            output = self.model(torch.bmm(
-                DOD_0_output.transpose(1, 2), coeff_0_output), nu_batch, t_batch)     # [B, N', N_A]
+            v0 = torch.bmm(DOD_0_output, coeff_0_output)   # [B, N_A]
+            output = self.model(v0, nu_batch, t_batch)       # [B, N_A]
 
             u_proj = solution_batch[:, i, :]                                            
 
             error = output - u_proj                                                   # [B, N_A]
-            temp_error += torch.sum(torch.norm(error, dim=1) ** 2)
+            temp_error = temp_error + torch.sum((error ** 2).sum(dim=1))
 
         loss = temp_error / (batch_size * (self.nt + 1))
         return loss
@@ -1303,54 +1544,91 @@ class CoLoRATrainer():
         best_model = None
         best_loss_restart = float('inf')
         best_loss = float('inf')
+        
+        params = list(self.model.parameters())
+        use_cuda = torch.cuda.is_available() and all(p.is_cuda for p in params)
+        if self.device.type == 'cuda':
+            assert all(p.is_cuda for p in params), \
+                "Expected all parameters on CUDA, but found some on CPU."
+
+        tqdm.write(f"AMP: enabled={use_cuda}, any_param_cuda={any(p.is_cuda for p in params)}, "
+            f"device={self.device}")
+
+        scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
+        max_grad_norm = 1.0
 
         tqdm.write("Model CoLoRA is being trained...")
 
-        for restart_idx in tqdm(range(self.restarts), desc="Restarts CoLoRA DL", leave=False):
+        for restart_idx in tqdm(range(self.restarts), desc="Restarts CoLoRA", leave=False):
+            base = 1337; seed = base + restart_idx
+            torch.manual_seed(seed); np.random.seed(seed)
+            if use_cuda: torch.cuda.manual_seed_all(seed)
+
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
+                                                             factor=0.5, patience=1)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
                 self.model.train()
-                total_loss = 0
+                train_num = 0.; train_den = 0.
 
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
-                    optimizer.zero_grad()
-                    loss = self.loss_function(mu_batch, nu_batch, solution_batch)
-                    loss.backward()
-                    optimizer.step()
-                    total_loss += loss.item()
+                    mu_batch = mu_batch.to(self.device, non_blocking=True)
+                    nu_batch = nu_batch.to(self.device, non_blocking=True)
+                    solution_batch = solution_batch.to(self.device, non_blocking=True)
+                    B = mu_batch.size(0)
+
+                    optimizer.zero_grad(set_to_none=True)
+                    with torch.cuda.amp.autocast(enabled=use_cuda):
+                        loss = self.loss_function(mu_batch, nu_batch, solution_batch)
+                    scaler.scale(loss).backward()
+                    if max_grad_norm is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+
+                    train_num += loss.item()
+                    train_den += B
 
                 self.model.eval()
+                val_num = 0.0; val_den = 0
                 with torch.no_grad():
-                    val_loss = 0
                     for mu_batch, nu_batch, solution_batch in self.valid_loader:
-                        val_loss += self.loss_function(mu_batch, nu_batch, solution_batch).item()
-                    val_loss /= len(self.valid_loader)
-
+                        mu_batch = mu_batch.to(self.device, non_blocking=True)
+                        nu_batch = nu_batch.to(self.device, non_blocking=True)
+                        solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
+                        val_num += batch_loss.item()
+                        val_den += mu_batch.size(0)
+                val_loss = val_num / max(1, val_den)
+                scheduler.step(val_loss)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
-                    best_model = self.model.state_dict()
+                    best_snapshot = copy.deepcopy(self.model.state_dict())
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch + 1} due to no improvement.")
+                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
                         break
 
-                tqdm.write(f"Restart: {restart_idx + 1}, Epoch: {epoch + 1}, Val Loss: {val_loss:.6f}")
+                tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
+                        f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
 
 
             if best_loss_restart < best_loss:
-                best_model = self.model.state_dict()
+                best_model = best_snapshot
                 best_loss = best_loss_restart
 
-            tqdm.write(f'Current best loss of CoLoRA DL: {best_loss:.6f}')
+            tqdm.write(f'Current best loss of CoLoRA: {best_loss:.6f}')
 
-        self.model.load_state_dict(best_model)
+        if best_model is not None:
+            self.model.load_state_dict(best_model)
         return best_loss
 
 '''
@@ -1364,8 +1642,8 @@ def _load_stats_vec(name: str, d: dict, dtype, device):
     arr_min = d[f'{name}_min']
     arr_max = d[f'{name}_max']
     if np.isscalar(arr_min):
-        arr_min = np.array([arr_min], dtype=np.float32)
-        arr_max = np.array([arr_max], dtype=np.float32)
+        arr_min = np.array([arr_min])
+        arr_max = np.array([arr_max])
     tmin = torch.tensor(arr_min, dtype=dtype, device=device)  # [d]
     tmax = torch.tensor(arr_max, dtype=dtype, device=device)  # [d]
     return tmin, tmax
@@ -1375,7 +1653,7 @@ def normalize_mu(mu: torch.Tensor, example_name: str, reduction_tag: str):
     Normalize mu using training-set min/max.
     Accepts shapes [B, p], [p], or scalar tensor -> returns same shape.
     """
-    stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
+    stats_path = training_data_path(example_name)/  f'normalization_{reduction_tag}_{example_name}.npz'
     d = np.load(stats_path)
     # Remember original shape to return shape-consistently
     orig_shape = mu.shape
@@ -1399,7 +1677,7 @@ def normalize_nu(nu: torch.Tensor, example_name: str, reduction_tag: str):
     Normalize nu using training-set min/max.
     Accepts shapes [B, q], [q], or scalar tensor -> returns same shape.
     """
-    stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
+    stats_path = training_data_path(example_name)/  f'normalization_{reduction_tag}_{example_name}.npz'
     d = np.load(stats_path)
     orig_shape = nu.shape
     x = nu
@@ -1417,11 +1695,12 @@ def normalize_nu(nu: torch.Tensor, example_name: str, reduction_tag: str):
     return x
 
 def denormalize_solution(sol_norm: torch.Tensor, example_name: str, reduction_tag: str):
-    stats_path = f'examples/{example_name}/training_data/normalization_{reduction_tag}_{example_name}.npz'
+    stats_path = training_data_path(example_name)/  f'normalization_{reduction_tag}_{example_name}.npz'
     d = np.load(stats_path)
     m = torch.tensor(d['sol_min'], dtype=sol_norm.dtype, device=sol_norm.device)  # [D]
     M = torch.tensor(d['sol_max'], dtype=sol_norm.dtype, device=sol_norm.device)  # [D]
-    scale = (M - m)
+    eps = 1e-8
+    scale = (M - m + eps)
     if sol_norm.ndim == 3:   # [Ns, Nt, D]
         return sol_norm * scale.unsqueeze(0).unsqueeze(0) + m.unsqueeze(0).unsqueeze(0)
     elif sol_norm.ndim == 2: # [Nt, D] or [Ns, D]
@@ -1440,10 +1719,10 @@ def pod_dl_rom_forward(ut0, A_P, POD_DL_model, De_model,
     for j in range(nt_ + 1):
         t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
         mu_i_norm = normalize_mu(mu_i, example_name, reduction_tag)
-        nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)    
+        nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)
         coeff = POD_DL_model(mu_i_norm, nu_i_norm, t).unsqueeze(0)                 # [1, n]
         y_norm = De_model(coeff).squeeze(0)                              # [N] (normalized reduced)
-        y = denormalize_solution(y_norm, example_name, reduction_tag)    # [N]
+        y = denormalize_solution(y_norm, example_name, 'N_reduced')
         u = ut0[j] + torch.matmul(A_P, y)                                   # [N_h]
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
@@ -1453,13 +1732,13 @@ def dod_dfnn_forward(ut0, A, innerDOD_model, DFNN_Nprime_model,
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     preds = []
     for j in range(nt_ + 1):
-        t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
+        t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)  
         mu_i_norm = normalize_mu(mu_i, example_name, reduction_tag)
-        nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)    
+        nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)
         V_tilde = innerDOD_model(mu_i_norm, t)                                        # [N_A, N']
         coeff = DFNN_Nprime_model(mu_i_norm, nu_i_norm, t).squeeze(0)                        # [N']
         u_red_norm = torch.matmul(V_tilde, coeff)                                # [N_A]
-        u_red = denormalize_solution(u_red_norm, example_name, reduction_tag)    # [N_A]
+        u_red = denormalize_solution(u_red_norm, example_name, 'N_A_reduced')
         u = ut0[j] + torch.matmul(A, u_red)                                         # [N_h]
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
@@ -1476,27 +1755,28 @@ def dod_dl_rom_forward(ut0, A, innerDOD_model, DOD_DL_model, De_model,
         V_tilde = innerDOD_model(mu_i_norm, t)                                      # [N_A, N']
         coeff_n = DOD_DL_model(mu_i_norm, nu_i_norm, t)                                  # [1, n]
         beta = De_model(coeff_n).squeeze(0)                                    # [N'] 
-        u_red_norm = torch.matmul(V_tilde, beta)                               # [N_A] (normalized)
-        u_red = denormalize_solution(u_red_norm, example_name, reduction_tag)  # [N_A]
-        u = ut0[j] + torch.matmul(A, u_red)                                       # [N_h]
+        u_red_norm = torch.matmul(V_tilde, beta)                               # [N_A] 
+        u_red = denormalize_solution(u_red_norm, example_name, 'N_A_reduced')
+        u = ut0[j] + torch.matmul(A, u_red)                                      # [N_h]
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
 
-def colora_forward(ut0, u0, stat_G_t, A, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, 
-                   mu_i, nu_i, nt_, example_name: str, reduction_tag: str='N_A_reduced'):
+def colora_forward(ut0, u0, stat_G_t, stat_A, A_P, stat_DOD_model, stat_Coeff_model, CoLoRA_DL_model, 
+                   mu_i, nu_i, nt_, example_name: str, reduction_tag: str='N_reduced'):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     preds = []
     for j in range(nt_ + 1):
         t = torch.tensor(j / (nt_ + 1), dtype=torch.float32, device=device).view(1,1)
         mu_i_norm = normalize_mu(mu_i, example_name, reduction_tag)
         nu_i_norm = normalize_nu(nu_i, example_name, reduction_tag)    
-        coeff0 = stat_Coeff_model(mu_i_norm, nu_i_norm)                             # [N']
-        V0 = stat_DOD_model(mu_i_norm).squeeze(0)                                   # [N_A, N']
-        red_shift = torch.matmul(torch.matmul(A.T, stat_G_t), u0)
-        v_0 = red_shift + torch.matmul(V0.T, coeff0)                                     # [N_A]
-        u_norm = CoLoRA_DL_model(v_0.unsqueeze(0), nu_i_norm, t).squeeze(0)            # [N_A] (normalized reduced)
-        u = denormalize_solution(u_norm, example_name, reduction_tag)     # [N_A]
-        u = ut0[j] + torch.matmul(A, u)                                      # lift
+        coeff0 = stat_Coeff_model(mu_i_norm, nu_i_norm).squeeze(0)                             # [N']
+        V0 = stat_DOD_model(mu_i_norm)                                             # [N_A, N']
+        red_shift = torch.matmul(torch.matmul(stat_A.T, stat_G_t), u0)
+        v_0_norm = torch.matmul(V0, coeff0)                                     # [N_A]
+        v_0 = red_shift + denormalize_solution(v_0_norm, example_name, 'reduced_stationary')
+        u_red_norm = CoLoRA_DL_model(v_0.unsqueeze(0), nu_i_norm, t).squeeze(0)            # [N_A] 
+        u_red = denormalize_solution(u_red_norm, example_name, 'N_reduced')
+        u = ut0[j] + torch.matmul(A_P, u_red)                                      # lift
         preds.append(u)
     return torch.stack(preds, dim=0).detach().cpu().numpy()
 
@@ -1508,14 +1788,12 @@ Evaluation Helpers
 '''
 
 def forward_wrappers(P, device, models, example_name):
-    A = np.load(f'examples/{example_name}/training_data/N_A_ambient_{example_name}.npz')['ambient'].astype(np.float32)
-    A_P = np.load(f'examples/{example_name}/training_data/N_ambient_{example_name}.npz')['ambient'].astype(np.float32)
+    A = np.load(training_data_path(example_name) / f'N_A_ambient_{example_name}.npz')['ambient']
+    A_P = np.load(training_data_path(example_name) / f'N_ambient_{example_name}.npz')['ambient']
     A_t = torch.tensor(A, dtype=torch.float32, device=device)
     A_P_t = torch.tensor(A_P, dtype=torch.float32, device=device)
-    stat_G = np.load(f'examples/{example_name}/training_data/stationary_gram_matrix_{example_name}.npz')['gram'].astype(np.float32)
-    stat_G_t = torch.tensor(stat_G, dtype=torch.float32, device=device)
-
-    shifts = np.load(f'examples/{example_name}/training_data/dirichlet_shift_{example_name}.npz')
+    
+    shifts = np.load(training_data_path(example_name) / f'dirichlet_shift_{example_name}.npz')
     ut0 = torch.tensor(shifts['ut0'], dtype=torch.float32, device=device)  # [Nt, Nh]
     u0 = torch.tensor(shifts['u0'], dtype=torch.float32, device=device).squeeze(0)  # [Nh]
 
@@ -1533,22 +1811,28 @@ def forward_wrappers(P, device, models, example_name):
                                       models["POD-DL-ROM"]["dec"], mu_i, nu_i, 
                                       P.Nt, example_name, reduction_tag='N_reduced')
 
-    def colora(mu_i, nu_i):
-        return colora_forward(ut0, u0, stat_G_t, A_t, models["CoLoRA"]["inner"], models["CoLoRA"]["inner_coeff"], 
-                              models["CoLoRA"]["coeff"], mu_i, nu_i, P.Nt, 
-                              example_name, reduction_tag='N_A_reduced')
+    is_stationary = (training_data_path(example_name) / f"stationary_ambient_matrix_{example_name}.npz").exists()
+    if is_stationary:
+        stat_A_P = np.load(training_data_path(example_name) / f'stationary_ambient_matrix_{example_name}.npz')['ambient']
+        stat_A_P_t = torch.tensor(stat_A_P, dtype=torch.float32, device=device)
+        stat_G = np.load(training_data_path(example_name) / f'stationary_gram_matrix_{example_name}.npz')['gram']
+        stat_G_t = torch.tensor(stat_G, dtype=torch.float32, device=device)
 
-    return {"DOD+DFNN": dod_dfnn, "DOD-DL-ROM": dod_dl, "POD-DL-ROM": pod_dl, "CoLoRA": colora}
+        def colora(mu_i, nu_i):
+            return colora_forward(ut0, u0, stat_G_t, stat_A_P_t, A_P_t, models["CoLoRA"]["inner"], models["CoLoRA"]["inner_coeff"], 
+                                models["CoLoRA"]["coeff"], mu_i, nu_i, P.Nt, 
+                                example_name, reduction_tag='N_A_reduced')
+
+        return {"DOD+DFNN": dod_dfnn, "DOD-DL-ROM": dod_dl, "POD-DL-ROM": pod_dl, "CoLoRA": colora}
+    else:
+        return {"DOD+DFNN": dod_dfnn, "DOD-DL-ROM": dod_dl, "POD-DL-ROM": pod_dl}
 
 def g_norm_batch(G, U):
-    U64 = np.asarray(U, dtype=np.float64)
-    G64 = np.asarray(G, dtype=np.float64)
-
-    if U64.ndim == 1:
-        val = U64 @ (G64 @ U64)
+    if U.ndim == 1:
+        val = U @ (G @ U)
         return float(np.sqrt(val if val > 0.0 else 0.0))
 
-    vals = np.einsum('ti,ij,tj->t', U64, G64, U64, optimize=True)  
+    vals = np.einsum('ti,ij,tj->t', U, G, U, optimize=True)  
     vals = np.maximum(vals, 0.0)
     return np.sqrt(vals, dtype=np.float64)
 
@@ -1556,21 +1840,22 @@ def evaluate_rom_forward(rom_name, forward_fn, args, ref_sol, G):
     """
     forward_fn(*args) -> [T, N_h]
     Returns:
-      abs_err = ( E_t ||u_ref - u_hat||_G^2 )^{1/2}
+      abs_err = ( \int ||u_ref - u_hat||_G^2 )^{1/2}
       rel_err = ( \int ||u_ref - u_hat||_G^2 )^{1/2} / ( \int ||u_ref||_G^2 )^{1/2}
+      U_hat = forward_fn(*args)
     """
     U_hat = forward_fn(*args)
     Tm = min(ref_sol.shape[0], U_hat.shape[0])
 
-    U_ref = np.asarray(ref_sol[:Tm], dtype=np.float64)  # [T, N_h]
-    U_hat = np.asarray(U_hat[:Tm],  dtype=np.float64)   # [T, N_h]
-    G64   = np.asarray(G,           dtype=np.float64)   # [N_h, N_h]
+    U_ref = np.asarray(ref_sol[:Tm])  # [T, N_h]
+    U_hat = np.asarray(U_hat[:Tm])   # [T, N_h]
+    G   = np.asarray(G)   # [N_h, N_h]
 
     D = U_ref - U_hat  # [T, N_h]
 
     # squared G-norm per time step
     def g_sq(X):  
-        vals = np.einsum('ti,ij,tj->t', X, G64, X, optimize=True)
+        vals = np.einsum('ti,ij,tj->t', X, G, X, optimize=True)
         return np.maximum(vals, 0.0)
 
     num_sq = g_sq(D)       
