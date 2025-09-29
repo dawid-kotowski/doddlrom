@@ -228,9 +228,9 @@ class Ex01Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 500
-    generalrestarts: int = 10
-    generalpatience: int = 5
+    generalepochs: int = 2000
+    generalrestarts: int = 3
+    generalpatience: int = 15
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
@@ -558,9 +558,9 @@ class Ex02Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 500
-    generalrestarts: int = 10
-    generalpatience: int = 5
+    generalepochs: int = 2000
+    generalrestarts: int = 3
+    generalpatience: int = 15
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
@@ -718,18 +718,18 @@ class Ex02Parameters:
 EX03_PRESETS: Dict[str, Dict[str, Any]] = {
     "baseline": {
         "preprocess_dim": 2,
-        "dod_structure": [100],
+        "dod_structure": [200, 100],
         "df_layers": [16, 8],
 
         "dod_dl_df_layers": [16, 8],
         "dod_in_channels": 1,
-        "dod_hidden_channels": 1,
+        "dod_hidden_channels": 8,
         "dod_kernel": 3, "dod_stride": 2, "dod_padding": 1,
         "dod_num_layers": 2,
 
         "pod_df_layers": [16, 8],
         "pod_in_channels": 1,
-        "pod_hidden_channels": 1,
+        "pod_hidden_channels": 8,
         "pod_kernel": 3, "pod_stride": 2, "pod_padding": 1,
         "pod_num_layers": 3,
 
@@ -834,9 +834,9 @@ EX03_PRESETS: Dict[str, Dict[str, Any]] = {
 class Ex03Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
     N_A: int = 101
-    N: int = 64
+    N: int = 32
     N_prime: int = 16
-    n: int = 2
+    n: int = 4
     Nt: int = 30
     Ns: int = 400
     T: float = 3.0
@@ -878,9 +878,9 @@ class Ex03Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 500
-    generalrestarts: int = 10
-    generalpatience: int = 5
+    generalepochs: int = 2000
+    generalrestarts: int = 3
+    generalpatience: int = 15
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"

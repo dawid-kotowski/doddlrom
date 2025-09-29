@@ -231,7 +231,7 @@ class innerDODTrainer:
         I = torch.eye(Np, device=V.device, dtype=V.dtype).expand_as(S)
         return ((S - I).pow(2).sum(dim=(-2, -1)) / Np).mean()  
 
-    def loss_function(self, mu_batch, solution_batch, lambda_orth=10):
+    def loss_function(self, mu_batch, solution_batch, lambda_orth=1e-2):
         """
         mu_batch:        [B, geometric_dim]
         solution_batch:  [B, nt+1, N_A]   (solutions already in the ambient space R^{N_A})
@@ -289,7 +289,7 @@ class innerDODTrainer:
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=3)
+                                                             factor=0.8, patience=5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -525,7 +525,7 @@ class DFNNTrainer:
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=3)
+                                                             factor=0.8, patience=5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -887,7 +887,7 @@ class DOD_DL_ROMTrainer:
             
             optimizer = optim.Adam(params, lr=self.learning_rate)
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=3)
+                                                             factor=0.8, patience=5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -1048,7 +1048,7 @@ class POD_DL_ROMTrainer:
             
             optimizer = optim.Adam(params, lr=self.learning_rate)
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=3)
+                                                             factor=0.8, patience=5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -1302,7 +1302,7 @@ class statDODTrainer:
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=3)
+                                                             factor=0.8, patience=5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -1430,7 +1430,7 @@ class statHadamardNNTrainer:
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=3)
+                                                             factor=0.8, patience=5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -1638,7 +1638,7 @@ class CoLoRATrainer():
             self.model.apply(initialize_weights)
             optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=3)
+                                                             factor=0.8, patience=5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
