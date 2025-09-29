@@ -82,8 +82,8 @@ def build_trainers_and_models(P, train_valid_set_N_A, train_valid_set_N):
         train_valid_set=train_valid_set_N_A,
         epochs=P.generalepochs,              
         restart=P.generalrestarts,
-        learning_rate=1e-3,
-        batch_size=128,
+        learning_rate=1e-2,
+        batch_size=32,
         patience=P.generalpatience,
     )
 
@@ -92,7 +92,7 @@ def build_trainers_and_models(P, train_valid_set_N_A, train_valid_set_N):
     dfnn_trainer = rom.DFNNTrainer(
         nt=P.Nt, N_A=P.N_A, DOD_DL_model=innerDOD_model, coeffnn_model=dfnn_nprime,
         train_valid_set=train_valid_set_N_A, epochs=P.generalepochs, restarts=P.generalrestarts,
-        learning_rate=1e-3, batch_size=128, patience=P.generalpatience
+        learning_rate=1e-2, batch_size=32, patience=P.generalpatience
     )
 
     # DOD-DL-ROM (DFNN -> n, AE: N'<->n)
@@ -103,7 +103,7 @@ def build_trainers_and_models(P, train_valid_set_N_A, train_valid_set_N):
         nt=P.Nt, DOD_DL_model=innerDOD_model, Coeff_DOD_DL_model=coeff_n,
         Encoder_model=enc, Decoder_model=dec, train_valid_set=train_valid_set_N_A,
         error_weight=0.5, epochs=P.generalepochs, restarts=P.generalrestarts,
-        learning_rate=1e-3, batch_size=128, patience=P.generalpatience
+        learning_rate=1e-2, batch_size=32, patience=P.generalpatience
     )
 
     # POD-DL-ROM (DFNN -> n, AE: N_A<->n)
@@ -113,7 +113,7 @@ def build_trainers_and_models(P, train_valid_set_N_A, train_valid_set_N):
     pod_trainer = rom.POD_DL_ROMTrainer(
         nt=P.Nt, Coeff_model=pod_coeff, Encoder_model=pod_enc, Decoder_model=pod_dec,
         train_valid_set=train_valid_set_N, error_weight=0.5, epochs=P.generalepochs,
-        restarts=P.generalrestarts, learning_rate=1e-3, batch_size=128,
+        restarts=P.generalrestarts, learning_rate=1e-2, batch_size=32,
         patience=P.generalpatience
     )
 

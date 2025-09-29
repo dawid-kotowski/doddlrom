@@ -52,7 +52,7 @@ def train_innerdod(P, example_name, trainer_overrides):
     model = rom.innerDOD(**P.make_innerDOD_kwargs())                # (N_A -> N')
     trainer = rom.innerDODTrainer(P.Nt, model, tv,
                                   trainer_overrides["epochs"], trainer_overrides["restarts"],
-                                  learning_rate=1e-3, batch_size=128, patience=trainer_overrides["patience"])
+                                  learning_rate=1e-2, batch_size=32, patience=trainer_overrides["patience"])
     best = trainer.train()
     torch.save(model.state_dict(), state_dicts_path(example_name) / f'DOD_Module.pth')
     return best
@@ -66,7 +66,7 @@ def train_doddfnn(P, example_name, trainer_overrides):
     coeff = rom.DFNN(**P.make_dod_dfnn_DFNN_kwargs())               # (p+q+1 -> N')
     trainer = rom.DFNNTrainer(P.Nt, P.N_A, inner, coeff, tv,
                               trainer_overrides["epochs"], trainer_overrides["restarts"],
-                              learning_rate=1e-3, batch_size=128, patience=trainer_overrides["patience"])
+                              learning_rate=1e-2, batch_size=32, patience=trainer_overrides["patience"])
     best = trainer.train()
     state_dict_path = state_dicts_path(example_name) / 'DODFNN_Module.pth'
     torch.save(coeff.state_dict(), state_dict_path)
@@ -83,7 +83,7 @@ def train_dod_dl_rom(P, example_name, trainer_overrides):
     coeff = rom.DFNN(**P.make_dod_dl_DFNN_kwargs())                 # (p+q+1 -> n)
     trainer = rom.DOD_DL_ROMTrainer(P.Nt, inner, coeff, enc, dec, tv,
                                     0.6, trainer_overrides["epochs"], trainer_overrides["restarts"],
-                                    learning_rate=1e-2, batch_size=128, patience=trainer_overrides["patience"])
+                                    learning_rate=1e-2, batch_size=32, patience=trainer_overrides["patience"])
     best = trainer.train()
     state_dict_path = state_dicts_path(example_name) / 'DOD_DL_ROM_Module.pth'
     torch.save({'encoder': enc.state_dict(), 'decoder': dec.state_dict(), 'coeff_model': coeff.state_dict()},
@@ -98,7 +98,7 @@ def train_pod_dl_rom(P, example_name, trainer_overrides):
     coeff = rom.DFNN(**P.make_pod_DFNN_kwargs())                    # (DFNN -> n)
     trainer = rom.POD_DL_ROMTrainer(P.Nt, coeff, enc, dec, tv,
                                     0.6, trainer_overrides["epochs"], trainer_overrides["restarts"],
-                                    learning_rate=1e-2, batch_size=128, patience=trainer_overrides["patience"])
+                                    learning_rate=1e-2, batch_size=32, patience=trainer_overrides["patience"])
     best = trainer.train()
     state_dict_path = state_dicts_path(example_name) / 'POD_DL_ROM_Module.pth'
     torch.save({'encoder': enc.state_dict(), 'decoder': dec.state_dict(), 'coeff_model': coeff.state_dict()},
@@ -112,19 +112,19 @@ def train_colora(P, example_name, trainer_overrides):
     stat_dod = rom.statDOD(**P.make_statDOD_kwargs())               # (N' -> N_A)
     stat_dod_tr = rom.statDODTrainer(stat_dod, P.N, tv_stat,
                                      trainer_overrides["epochs"], trainer_overrides["restarts"],
-                                     learning_rate=1e-3, batch_size=128, patience=trainer_overrides["patience"])
+                                     learning_rate=1e-2, batch_size=32, patience=trainer_overrides["patience"])
     _ = stat_dod_tr.train()
     rom._freeze(stat_dod)
     stat_coeff = rom.statHadamardNN(**P.make_statHadamard_kwargs()) # (p+q+1 -> N')
     stat_coeff_tr = rom.statHadamardNNTrainer(stat_dod, stat_coeff, P.N, tv_stat,
                                               trainer_overrides["epochs"], trainer_overrides["restarts"],
-                                              learning_rate=1e-3, batch_size=128, patience=trainer_overrides["patience"])
+                                              learning_rate=1e-2, batch_size=32, patience=trainer_overrides["patience"])
     _ = stat_coeff_tr.train()
     rom._freeze(stat_coeff)
     colora = rom.CoLoRA(**P.make_CoLoRA_kwargs())                   # (p+q+1 -> N_A x Nt)
     colora_tr = rom.CoLoRATrainer(P.Nt, stat_dod, stat_coeff, colora, tv_dyn,
                                   trainer_overrides["epochs"], trainer_overrides["restarts"],
-                                  learning_rate=1e-3, batch_size=128, patience=trainer_overrides["patience"])
+                                  learning_rate=1e-2, batch_size=32, patience=trainer_overrides["patience"])
     best = colora_tr.train()
     state_dict_path = state_dicts_path(example_name)
     torch.save(stat_dod.state_dict(),   state_dict_path / 'stat_DOD_Module.pth')

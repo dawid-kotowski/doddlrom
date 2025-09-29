@@ -12,11 +12,12 @@ python examples/analysis.py
 import argparse
 import numpy as np
 import pandas as pd
+from utils.paths import benchmarks_path, training_data_path
 import matplotlib.pyplot as plt
 from pathlib import Path
 
 def load_rom_sweep(example_name):
-    path = Path(f"examples/{example_name}/benchmarks/rom_sweep.csv")
+    path = Path( benchmarks_path(example_name) / f"rom_sweep.csv")
     return pd.read_csv(path)
 
 def plot_params_vs_error(df, example_name, outdir):
@@ -70,7 +71,7 @@ def plot_error_vs_samples(df, example_name, outdir):
     plt.figure()
     for model in models:
         sub = df[df['rom'] == model]
-        x = sub['N_s'].values.astype(float)
+        x = sub['Ns'].values.astype(float)
         y = sub['rel_L2G'].values.astype(float)
         plt.loglog(x, y, 'o-', label=model)
     plt.xlabel(r"$N_s$ (samples)")
@@ -83,7 +84,7 @@ def plot_error_vs_samples(df, example_name, outdir):
 
 def plot_knw(example_name, outdir):
     # ---- load ----
-    path = Path(f"examples/{example_name}/training_data/pod_singular_values_{example_name}.npz")
+    path = Path(training_data_path(example_name) / f"pod_singular_values_{example_name}.npz")
     data = np.load(path)
 
     sigma_global = data['sigma_global_NA'].astype(float)  # [N_A]
@@ -148,7 +149,7 @@ def main():
     args = parser.parse_args()
     example_name = args.example
 
-    outdir = Path(f"examples/{example_name}/benchmarks/analysis")
+    outdir = Path(benchmarks_path(example_name) / f"analysis")
     outdir.mkdir(parents=True, exist_ok=True)
 
     df = load_rom_sweep(example_name)

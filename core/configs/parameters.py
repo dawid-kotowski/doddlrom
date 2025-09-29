@@ -228,9 +228,9 @@ class Ex01Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 1000
-    generalrestarts: int = 5
-    generalpatience: int = 20
+    generalepochs: int = 500
+    generalrestarts: int = 10
+    generalpatience: int = 5
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
@@ -388,7 +388,7 @@ class Ex01Parameters:
 EX02_PRESETS: Dict[str, Dict[str, Any]] = {
     "baseline": {
         "preprocess_dim": 3,
-        "dod_structure": [64, 64],
+        "dod_structure": [128, 128],
         "df_layers": [32, 16],
 
         # DOD-DL-ROM (AE on N'<->n)
@@ -406,7 +406,7 @@ EX02_PRESETS: Dict[str, Dict[str, Any]] = {
         "pod_num_layers": 1,
 
         "L": 3,
-        "stat_dod_structure": [128, 64],
+        "stat_dod_structure": [128, 128],
         "stat_phi_n_structure": [32, 16],
     },
     "test1": {
@@ -505,7 +505,7 @@ EX02_PRESETS: Dict[str, Dict[str, Any]] = {
 @dataclass
 class Ex02Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
-    N_A: int = 64
+    N_A: int = 128
     N: int = 64
     N_prime: int = 16
     n: int = 8
@@ -558,9 +558,9 @@ class Ex02Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 1000
-    generalrestarts: int = 5
-    generalpatience: int = 20
+    generalepochs: int = 500
+    generalrestarts: int = 10
+    generalpatience: int = 5
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
@@ -878,9 +878,9 @@ class Ex03Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 1000
-    generalrestarts: int = 5
-    generalpatience: int = 20
+    generalepochs: int = 500
+    generalrestarts: int = 10
+    generalpatience: int = 5
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
