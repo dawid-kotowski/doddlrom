@@ -13,24 +13,16 @@ from utils.paths import training_data_path
 
 # Initialize weights
 def initialize_weights(m):
-    if isinstance(m, nn.Conv2d):
-        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu', a=0.1)
+    if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
+        nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
         if m.bias is not None:
             nn.init.zeros_(m.bias)
-
-    elif isinstance(m, nn.ConvTranspose2d):
-        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu', a=0.1)
-        if m.bias is not None:
-            nn.init.zeros_(m.bias)
-
-    elif isinstance(m, nn.Linear):
-        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu', a=0.1)
-        if m.bias is not None:
-            nn.init.zeros_(m.bias)
-
     elif isinstance(m, (nn.BatchNorm2d, nn.BatchNorm1d)):
-        nn.init.ones_(m.weight)
-        nn.init.zeros_(m.bias)
+        if m.weight is not None:
+            nn.init.ones_(m.weight)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+
 
 def _freeze(m):
     m.eval()
@@ -146,15 +138,16 @@ V: (Theta \times [0, T]) -> (R^(N_h \times N'))
 class SeedModule(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(SeedModule, self).__init__()
-        self.fc = nn.Linear(input_dim, output_dim)
+        first = [nn.Linear(input_dim, output_dim), nn.ELU()]
+        seed = first + [nn.Linear(output_dim, output_dim)]
+        self.fw = nn.Sequential(*seed)
 
     def forward(self, mu):
-        mu = func.leaky_relu(self.fc(mu), 0.1)
-        return mu
+        return self.fw(mu)
 
 # Define Root Modules for innerDOD
 class RootModule(nn.Module):
-    def __init__(self, seed_dim, root_dim, root_layer_sizes, leaky_relu_slope=0.1):
+    def __init__(self, seed_dim, root_dim, root_layer_sizes):
         super(RootModule, self).__init__()
         if root_layer_sizes is None:
             root_layer_sizes = [1]
@@ -163,13 +156,56 @@ class RootModule(nn.Module):
         for i in range(len(root_layer_sizes) - 1):
             self.layers.append(nn.Linear(root_layer_sizes[i], root_layer_sizes[i + 1]))
             if i < len(root_layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.ELU())
         self.layers.append(nn.Linear(root_layer_sizes[len(root_layer_sizes) - 1], root_dim))
 
     def forward(self, mu_t):
         for layer_forward in self.layers:
             mu_t = layer_forward(mu_t)
         return mu_t
+    
+# Define a non-trainable ORTH block
+class Orth(nn.Module):
+    """
+    Project columns to Euclidean-orthonormal via QR, with sign correction.
+    Input:  V_raw [B, N_A, N'] or [N_A, N']
+    Output: V_orth same shape, with V_orth^T V_orth = I_{N'}
+    """
+    def __init__(self, eps: float = 1e-7, use_double_for_numerics: bool = False):
+        super().__init__()
+        self.eps = eps
+        self.use_double = use_double_for_numerics
+
+    @torch.no_grad()
+    def _make_pos_diag_(self, R: torch.Tensor):
+        # Return a diagonal sign matrix S s.t. diag(S) = sign(diag(R)) (treat near-zero as +1)
+        diag = torch.diagonal(R, dim1=-2, dim2=-1)
+        s = torch.sign(diag)
+        s[(s == 0) | torch.isnan(s)] = 1.0
+        return torch.diag_embed(s)
+
+    def forward(self, V):
+        '''
+        Input: [B, N_A, N'] or [N_A, N']
+        Output: [B, N_A, N'] or [N_A, N'] (but euklidian orthonormal columns)
+        '''
+        squeeze = (V.dim() == 2)
+        if squeeze:
+            V = V.unsqueeze(0)
+
+        dtype_orig = V.dtype
+        ctx = torch.cuda.amp.autocast(enabled=False)
+        with ctx:
+            X = V.to(torch.float64 if self.use_double else torch.float32)
+
+            Q, R = torch.linalg.qr(X, mode='reduced')     # Q:[B,N_A,N'], R:[B,N',N']
+
+            S = self._make_pos_diag_(R)
+            Q = Q @ S
+
+            V_orth = Q.to(dtype_orig)
+
+        return V_orth.squeeze(0) if squeeze else V_orth
 
 # Define Complete DOD_DL_ DL Model 
 # returns a tensor of size [N_A, N']
@@ -388,7 +424,7 @@ DOD-DL-ROM   : (Theta \times Theta' \times [0, T]) -> R^N'
 
 # Define Phi_1 module for allocation
 class Phi1Module(nn.Module):
-    def __init__(self, geometric_dim, m_0, n_0, layer_sizes, leaky_relu_slope=0.1):
+    def __init__(self, geometric_dim, m_0, n_0, layer_sizes):
         super(Phi1Module, self).__init__()
         self.m = m_0
         self.n = n_0
@@ -399,7 +435,7 @@ class Phi1Module(nn.Module):
         for i in range(len(layer_sizes) - 1):
             self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.ELU())
         self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n_0 * m_0))
 
     def forward(self, mu_t):
@@ -410,7 +446,7 @@ class Phi1Module(nn.Module):
 
 # Define Phi_2 module for allocation
 class Phi2Module(nn.Module):
-    def __init__(self, physical_dim, m_0, n_0, layer_sizes, leaky_relu_slope=0.1):
+    def __init__(self, physical_dim, m_0, n_0, layer_sizes):
         super(Phi2Module, self).__init__()
         self.m = m_0
         self.n = n_0
@@ -421,7 +457,7 @@ class Phi2Module(nn.Module):
         for i in range(len(layer_sizes) - 1):
             self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.ELU())
         self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n_0 * m_0))
 
     def forward(self, nu_t):
@@ -450,7 +486,7 @@ class HadamardNN(nn.Module):
 # Define optional parameter-to-latent-dynamic Model
 #returns [B, N'] or [B, n]
 class DFNN(nn.Module):
-    def __init__(self, geometric_dim, physical_dim, n, layer_sizes=None, leaky_relu_slope=0.1):
+    def __init__(self, geometric_dim, physical_dim, n, layer_sizes=None):
         super(DFNN, self).__init__()
         if layer_sizes is None:
             layer_sizes = [1]
@@ -459,7 +495,7 @@ class DFNN(nn.Module):
         for i in range(len(layer_sizes) - 1):
             self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.ELU())
         self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n))
     def forward(self, mu, nu, t):
         mu_nu_t = torch.cat((mu, nu, t), dim=1)
@@ -717,7 +753,7 @@ class Encoder(nn.Module):
         C_in = self.in_channels
         for C_out, k, s, p in zip(self.hidden_channels, self.kernels, self.strides, self.paddings):
             conv += [nn.Conv2d(C_in, C_out, kernel_size=k, stride=s, padding=p),
-                     nn.LeakyReLU(0.1)]
+                     nn.ELU()]
             C_in = C_out
         self.conv = nn.Sequential(*conv)
 
@@ -727,7 +763,7 @@ class Encoder(nn.Module):
         lin = []
         cur = flat_bottleneck
         while cur > 2 * self.latent_dim:
-            lin += [nn.Linear(cur, cur // 2), nn.LeakyReLU(0.1)]
+            lin += [nn.Linear(cur, cur // 2), nn.ELU()]
             cur = cur // 2
         lin += [nn.Linear(cur, self.latent_dim)]
         self.linear = nn.Sequential(*lin)
@@ -790,7 +826,7 @@ class Decoder(nn.Module):
         lin = []
         cur = self.latent_dim
         while cur < flat_bottleneck // 2:
-            lin += [nn.Linear(cur, cur * 2), nn.LeakyReLU(0.1)]
+            lin += [nn.Linear(cur, cur * 2), nn.ELU()]
             cur = cur * 2
         lin += [nn.Linear(cur, flat_bottleneck)]
         self.delinear = nn.Sequential(*lin)
@@ -807,7 +843,7 @@ class Decoder(nn.Module):
             deconv.append(nn.ConvTranspose2d(C_in, C_out, kernel_size=k, stride=s,
                                              padding=p, output_padding=op))
             if i < L - 1:
-                deconv.append(nn.LeakyReLU(0.1))
+                deconv.append(nn.ELU())
             C_in = C_out
         self.deconv = nn.Sequential(*deconv)
 
@@ -1203,13 +1239,14 @@ with C_i(X) := W_i X + A_i diag(a_i(nu, t)) B_i X + b_i     for i <= L
 class StatSeedModule(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(StatSeedModule, self).__init__()
-        self.fc = nn.Linear(input_dim, output_dim)
+        first = [nn.Linear(input_dim, output_dim), nn.ELU()]
+        seed = first + [nn.Linear(output_dim, output_dim)]
+        self.fw = nn.Sequential(*seed)
 
-    def forward(self, x):
-        x = func.leaky_relu(self.fc(x), 0.1)
-        return x
+    def forward(self, mu):
+        return self.fw(mu)
 class StatRootModule(nn.Module):
-    def __init__(self, input_dim, output_dim, root_layer_sizes, leaky_relu_slope=0.1):
+    def __init__(self, input_dim, output_dim, root_layer_sizes):
         super(StatRootModule, self).__init__()
         if root_layer_sizes is None:
             root_layer_sizes = [1]
@@ -1218,7 +1255,7 @@ class StatRootModule(nn.Module):
         for i in range(len(root_layer_sizes) - 1):
             self.layers.append(nn.Linear(root_layer_sizes[i], root_layer_sizes[i + 1]))
             if i < len(root_layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.ELU())
         self.layers.append(nn.Linear(root_layer_sizes[len(root_layer_sizes) - 1], output_dim))
 
     def forward(self, x):
@@ -1250,7 +1287,7 @@ class statDOD(nn.Module):
 
 # Define the stationary Coefficient Finder for the stationary equivalent of the problem
 class StatPhi1Module(nn.Module):
-    def __init__(self, parameter1_dim, m_0, n_0, layer_sizes, leaky_relu_slope=0.1):
+    def __init__(self, parameter1_dim, m_0, n_0, layer_sizes):
         super(StatPhi1Module, self).__init__()
         self.m = m_0
         self.n = n_0
@@ -1261,7 +1298,7 @@ class StatPhi1Module(nn.Module):
         for i in range(len(layer_sizes) - 1):
             self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.ELU())
         self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n_0 * m_0))
 
     def forward(self, x):
@@ -1270,7 +1307,7 @@ class StatPhi1Module(nn.Module):
         x = x.view(-1, self.m, self.n)
         return x
 class StatPhi2Module(nn.Module):
-    def __init__(self, parameter2_dim, m_0, n_0, layer_sizes, leaky_relu_slope=0.1):
+    def __init__(self, parameter2_dim, m_0, n_0, layer_sizes):
         super(StatPhi2Module, self).__init__()
         self.m = m_0
         self.n = n_0
@@ -1281,7 +1318,7 @@ class StatPhi2Module(nn.Module):
         for i in range(len(layer_sizes) - 1):
             self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.ELU())
         self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n_0 * m_0))
 
     def forward(self, x):
