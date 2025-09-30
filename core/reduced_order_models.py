@@ -171,48 +171,26 @@ class RootModule(nn.Module):
             mu_t = layer_forward(mu_t)
         return mu_t
     
-# Define a non-trainable ORTH block
+# Define a non-trainable ORTH block (uses Cholesky)
 class Orth(nn.Module):
-    """
-    Project columns to Euclidean-orthonormal via QR, with sign correction.
-    Input:  V_raw [B, N_A, N'] or [N_A, N']
-    Output: V_orth same shape, with V_orth^T V_orth = I_{N'}
-    """
-    def __init__(self, eps: float = 1e-7, use_double_for_numerics: bool = False):
+    def __init__(self, eps: float = 1e-6, use_double_for_numerics: bool = False):
         super().__init__()
         self.eps = eps
         self.use_double = use_double_for_numerics
 
-    @torch.no_grad()
-    def _make_pos_diag_(self, R: torch.Tensor):
-        # Return a diagonal sign matrix S s.t. diag(S) = sign(diag(R)) (treat near-zero as +1)
-        diag = torch.diagonal(R, dim1=-2, dim2=-1)
-        s = torch.sign(diag)
-        s[(s == 0) | torch.isnan(s)] = 1.0
-        return torch.diag_embed(s)
-
     def forward(self, V):
-        '''
-        Input: [B, N_A, N'] or [N_A, N']
-        Output: [B, N_A, N'] or [N_A, N'] (but euklidian orthonormal columns)
-        '''
         squeeze = (V.dim() == 2)
-        if squeeze:
-            V = V.unsqueeze(0)
-
-        dtype_orig = V.dtype
-        ctx = torch.cuda.amp.autocast(enabled=False)
-        with ctx:
-            X = V.to(torch.float64 if self.use_double else torch.float32)
-
-            Q, R = torch.linalg.qr(X, mode='reduced')     # Q:[B,N_A,N'], R:[B,N',N']
-
-            S = self._make_pos_diag_(R)
-            Q = Q @ S
-
-            V_orth = Q.to(dtype_orig)
-
-        return V_orth.squeeze(0) if squeeze else V_orth
+        if squeeze: V = V.unsqueeze(0)
+        with torch.cuda.amp.autocast(enabled=False):
+            X = V.to(torch.float64 if self.use_double else torch.float32)   # [B, N_A, N']
+            G = X.transpose(-2, -1) @ X                                     # [B, N', N']
+            G = G + self.eps * torch.eye(G.size(-1), device=G.device, dtype=G.dtype)
+            R = torch.linalg.cholesky(G)                                    # [B, N', N']
+            # V_orth = V @ inv(R) -> triangular solve
+            V_orth = torch.linalg.solve_triangular(R, 
+                                                   X.transpose(-2, -1), 
+                                                   upper=True).transpose(-2, -1)
+        return (V_orth.to(V.dtype)).squeeze(0) if squeeze else V_orth.to(V.dtype)
 
 # Define Complete DOD_DL_ DL Model 
 # returns a tensor of size [N_A, N']
@@ -242,7 +220,7 @@ class innerDOD(nn.Module):
 
             root_outputs = [root(mu_t) for root in self.root_modules]  # N' items of [B, N_A]
             V = torch.stack(root_outputs, dim=-1)                      # [B, N_A, N']  
-            V = self.orth(V)                                           
+            V = self.orth(V)                                    
             return V if B > 1 else V.squeeze(0)
 
 # Define DOD_DL_-DL training
@@ -282,16 +260,6 @@ class innerDODTrainer:
             prefetch_factor=2
         )
         
-    def orth_penalty(self, V):
-        """
-        V: [B, N_A, N']  (columns should be orthonormal in Euclidean sense)
-        Returns: scalar penalty
-        """
-        Bt, NA, Np = V.shape
-        S = torch.bmm(V.transpose(1, 2), V)                    # [B, N', N']
-        I = torch.eye(Np, device=V.device, dtype=V.dtype).expand_as(S)
-        return ((S - I).pow(2).sum(dim=(-2, -1)) / Np).mean()  
-
     def loss_function(self, mu_batch, solution_batch):
         """
         mu_batch:        [B, geometric_dim]
@@ -1456,10 +1424,9 @@ class statDODTrainer:
                 with torch.no_grad():
                     for mu_batch, nu_batch, solution_batch in self.valid_loader:
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
-                        nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
                         B = mu_batch.size(0)
-                        batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
+                        batch_loss = self.loss_function(mu_batch, solution_batch) 
                         val_num += batch_loss.item() * B
                         val_den += B
                 val_loss = val_num / max(1, val_den)
@@ -1582,7 +1549,6 @@ class statHadamardNNTrainer:
 
                 for mu_batch, nu_batch, solution_batch in self.train_loader:
                     mu_batch = mu_batch.to(self.device, non_blocking=True)
-                    nu_batch = nu_batch.to(self.device, non_blocking=True)
                     solution_batch = solution_batch.to(self.device, non_blocking=True)
                     B = mu_batch.size(0)
 
