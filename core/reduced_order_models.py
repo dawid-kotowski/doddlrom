@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as func
 import torch.optim as optim
+import os
 import numpy as np
 import math
 import copy
@@ -216,10 +217,25 @@ class innerDODTrainer:
         valid_data = train_valid_set('valid')
 
         pin = (self.device.type == 'cuda')
-        self.train_loader = DataLoader(DatasetLoader(train_data), 
-                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
-                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
+        self.train_loader = DataLoader(
+            DatasetLoader(train_data),
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
+        self.valid_loader = DataLoader(
+            DatasetLoader(valid_data),
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
         
     def orth_penalty(self, V):
         """
@@ -255,10 +271,10 @@ class innerDODTrainer:
             # NEVER make it += for some grad_tracking reasons ???
 
             if lambda_orth > 0.0:
-                temp_orth = temp_orth + self.orth_penalty(V)
+                temp_orth = temp_orth + self.orth_penalty(V) * B
 
-        data_loss = temp_proj / (self.nt + 1)
-        orth_loss = temp_orth / (self.nt + 1)
+        data_loss = temp_proj / ((self.nt + 1) * B)
+        orth_loss = temp_orth / ((self.nt + 1) * B)
         return data_loss + lambda_orth * orth_loss 
 
 
@@ -287,9 +303,12 @@ class innerDODTrainer:
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=5)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2, 
+                                                                       eta_min=1e-5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -313,7 +332,7 @@ class innerDODTrainer:
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.model.eval()
@@ -323,11 +342,12 @@ class innerDODTrainer:
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        B = mu_batch.size(0)
                         batch_loss = self.loss_function(mu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
 
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
@@ -465,11 +485,26 @@ class DFNNTrainer:
         valid_data = train_valid_set('valid')
 
         pin = (self.device.type == 'cuda')
-        self.train_loader = DataLoader(DatasetLoader(train_data), 
-                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
-                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
-                                    
+        self.train_loader = DataLoader(
+            DatasetLoader(train_data),
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
+        self.valid_loader = DataLoader(
+            DatasetLoader(valid_data),
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         """
         Dimensionality:
@@ -494,7 +529,7 @@ class DFNNTrainer:
             error = coeff_pred - alpha_true                                                  # [B, N']
             temp_error = temp_error + torch.sum((error ** 2).sum(dim=1))               
 
-        loss = temp_error / (self.nt + 1)
+        loss = temp_error / ((self.nt + 1) * B)
         return loss
 
 
@@ -523,9 +558,12 @@ class DFNNTrainer:
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=5)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2, 
+                                                                       eta_min=1e-5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -550,7 +588,7 @@ class DFNNTrainer:
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.model.eval()
@@ -560,11 +598,12 @@ class DFNNTrainer:
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        B = mu_batch.size(0)
                         batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = copy.deepcopy(self.model.state_dict())
@@ -742,7 +781,7 @@ class Decoder(nn.Module):
         if H0 != W0:
             raise ValueError("Only square grids supported.")
         self.grid_size = (H0, W0)
-        self.sides = _schedule_sides(H0, self.kernels, self.strides, self.paddings)  # [s0..sL]
+        self.sides = _schedule_sides(H0, self.kernels, self.strides, self.paddings)  
         Hb = self.sides[-1]
         Cb = self.hidden_channels[-1]
 
@@ -851,7 +890,7 @@ class DOD_DL_ROMTrainer:
                 (1.0 - self.error_weight) * 0.5 * torch.sum((proj_error ** 2).sum(dim=1))
             )
 
-        loss = temp_error / (self.nt + 1)
+        loss = temp_error / ((self.nt + 1) * B)
         return loss
 
     
@@ -885,9 +924,12 @@ class DOD_DL_ROMTrainer:
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
             
-            optimizer = optim.Adam(params, lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=5)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2, 
+                                                                       eta_min=1e-5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -914,7 +956,7 @@ class DOD_DL_ROMTrainer:
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.en_model.eval()
@@ -926,11 +968,12 @@ class DOD_DL_ROMTrainer:
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        B = mu_batch.size(0)
                         batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = {
@@ -990,17 +1033,33 @@ class POD_DL_ROMTrainer:
         valid_data = train_valid_set('valid')
 
         pin = (self.device.type == 'cuda')
-        self.train_loader = DataLoader(DatasetLoader(train_data), 
-                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
-                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
-                                    
+        self.train_loader = DataLoader(
+            DatasetLoader(train_data),
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
+        self.valid_loader = DataLoader(
+            DatasetLoader(valid_data),
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
     def loss_function(self, mu_batch, nu_batch, solution_batch):
-        batch_size = mu_batch.size(0)
+        B = mu_batch.size(0)
         temp_error = 0.0
         for i in range(self.nt + 1):
             t_batch = torch.stack(
-                [torch.tensor(i / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+                [torch.tensor(i / (self.nt + 1), 
+                              dtype=torch.float32, device=self.device) for _ in range(B)]
             ).unsqueeze(1)
             coeff_output = self.coeff_model(mu_batch, nu_batch, t_batch)           # [B, n]
             decoder_output = self.de_model(coeff_output)                           # [B, N_A]
@@ -1013,7 +1072,7 @@ class POD_DL_ROMTrainer:
             temp_error = temp_error + (self.error_weight / 2 * torch.sum((dynam_error ** 2).sum(dim=1))
                            + (1-self.error_weight) / 2 * torch.sum((proj_error ** 2).sum(dim=1)))
 
-        loss = temp_error / (self.nt + 1)
+        loss = temp_error / ((self.nt + 1) * B)
         return loss
 
     def train(self):
@@ -1046,9 +1105,12 @@ class POD_DL_ROMTrainer:
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
             
-            optimizer = optim.Adam(params, lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=5)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2, 
+                                                                       eta_min=1e-5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -1075,7 +1137,7 @@ class POD_DL_ROMTrainer:
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.en_model.eval()
@@ -1087,11 +1149,12 @@ class POD_DL_ROMTrainer:
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        B = mu_batch.size(0)
                         batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = {
@@ -1256,13 +1319,28 @@ class statDODTrainer:
         valid_data = train_valid_set('valid')
 
         pin = (self.device.type == 'cuda')
-        self.train_loader = DataLoader(DatasetLoader(train_data), 
-                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
-                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
-                                    
+        self.train_loader = DataLoader(
+            DatasetLoader(train_data),
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
+        self.valid_loader = DataLoader(
+            DatasetLoader(valid_data),
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )                         
 
     def loss_function(self, mu_batch, solution_batch):
+        B = mu_batch.size(0)
         V = self.model(mu_batch)
         if solution_batch.dim() == 3:
             solution_batch = solution_batch.squeeze(1)
@@ -1272,7 +1350,7 @@ class statDODTrainer:
         u_proj = torch.bmm(V, alpha)
 
         error = u - u_proj
-        loss = torch.sum((error ** 2).sum(dim=1)) 
+        loss = torch.sum((error ** 2).sum(dim=1)) / B
         return loss
 
     def train(self):
@@ -1300,9 +1378,12 @@ class statDODTrainer:
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=5)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2, 
+                                                                       eta_min=1e-5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -1326,7 +1407,7 @@ class statDODTrainer:
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.model.eval()
@@ -1336,11 +1417,12 @@ class statDODTrainer:
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
-                        batch_loss = self.loss_function(mu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        B = mu_batch.size(0)
+                        batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = copy.deepcopy(self.model.state_dict())
@@ -1382,13 +1464,28 @@ class statHadamardNNTrainer:
         valid_data = train_valid_set('valid')
 
         pin = (self.device.type == 'cuda')
-        self.train_loader = DataLoader(DatasetLoader(train_data), 
-                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
-                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
-                                    
+        self.train_loader = DataLoader(
+            DatasetLoader(train_data),
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
+        self.valid_loader = DataLoader(
+            DatasetLoader(valid_data),
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )                        
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
+        B = mu_batch.size(0)
         coeff_output = self.model(mu_batch, nu_batch).unsqueeze(-1)
         V = self.dod(mu_batch)
 
@@ -1399,7 +1496,7 @@ class statHadamardNNTrainer:
         # Perform batch matrix multiplications
         output = torch.bmm(V.transpose(-2, -1), u)
         error = output - coeff_output
-        loss = torch.sum((error ** 2).sum(dim=1))
+        loss = torch.sum((error ** 2).sum(dim=1)) / B
 
         return loss
 
@@ -1428,9 +1525,12 @@ class statHadamardNNTrainer:
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=5)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2, 
+                                                                       eta_min=1e-5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -1455,7 +1555,7 @@ class statHadamardNNTrainer:
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.model.eval()
@@ -1465,11 +1565,12 @@ class statHadamardNNTrainer:
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        B = mu_batch.size(0)
                         batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = copy.deepcopy(self.model.state_dict())
@@ -1585,11 +1686,26 @@ class CoLoRATrainer():
         valid_data = train_valid_set('valid')
 
         pin = (self.device.type == 'cuda')
-        self.train_loader = DataLoader(DatasetLoader(train_data), 
-                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
-                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
-                                    
+        self.train_loader = DataLoader(
+            DatasetLoader(train_data),
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
+        self.valid_loader = DataLoader(
+            DatasetLoader(valid_data),
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
         temp_error = 0.0
@@ -1636,9 +1752,12 @@ class CoLoRATrainer():
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.8, patience=5)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2, 
+                                                                       eta_min=1e-5)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -1663,7 +1782,7 @@ class CoLoRATrainer():
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.model.eval()
@@ -1673,11 +1792,12 @@ class CoLoRATrainer():
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        B = mu_batch.size(0)
                         batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = copy.deepcopy(self.model.state_dict())

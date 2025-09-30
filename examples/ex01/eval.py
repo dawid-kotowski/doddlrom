@@ -8,7 +8,7 @@ import torch
 
 #region --- Configure this run ------------------------------------------------------
 example_name = 'ex01'
-P = Ex01Parameters(profile="baseline")          # or "wide"/"tiny"/"debug"
+P = Ex01Parameters(profile="baseline")
 P.assert_consistent()
 
 #region --- Set up of FOM for pymor utility------------------------------------------
@@ -78,6 +78,8 @@ for entry in training_data:
 
 
     #region Check for normalization procedure
+
+    # ------------------------- N_A reduced -------------------------------------------
     A_NA = np.load(training_data_path(example_name) / f'N_A_ambient_{example_name}.npz')['ambient'].astype(np.float32)
     stats = np.load(training_data_path(example_name) / f'normalization_N_A_reduced_{example_name}.npz')
     sol_min = stats['sol_min'].astype(np.float32)  # [N_A]
@@ -117,6 +119,39 @@ for entry in training_data:
     #             'A^T G→norm→denorm→A',
     #             f"Abs L² error (G): {abs_err:.3e}")
     # )
+
+    # ------------------------- N reduced -------------------------------------------
+    A_P = np.load(training_data_path(example_name) / f'N_ambient_{example_name}.npz')['ambient'].astype(np.float32)
+    stats = np.load(training_data_path(example_name) / f'normalization_N_reduced_{example_name}.npz')
+    sol_min = stats['sol_min'].astype(np.float32)  # [N]
+    sol_max = stats['sol_max'].astype(np.float32)  # [N]
+    U = sol.astype(np.float32)                              # [Nt, N]
+
+    # Project: Y = A_P^T G u_t  -> [Nt, N]
+    Y = np.einsum('ih,hj,tj->ti', A_P.T, G, U, optimize=True)
+    
+    # Normalize
+    eps = 1e-8
+    Y_norm = (Y - sol_min[None, :]) / (sol_max[None, :] - sol_min[None, :] + eps)  # [Nt, N]
+
+    # Denormalize
+    Y_den = rom.denormalize_solution(
+        torch.tensor(Y_norm, dtype=torch.float32, device=device),
+        example_name, reduction_tag='N_reduced'
+    ).cpu().numpy()  # [Nt, N]
+
+    # Lift: û_t = A_P Y_den
+    U_hat  = np.einsum('hi,ti->th', A_P, Y_den, optimize=True)
+
+    def _g_sq(X, Gmat):
+        v = np.einsum('ti,ij,tj->t', X, Gmat, X, optimize=False)
+        return np.maximum(v, 0.0)
+
+    err_sq = _g_sq(U - U_hat, G)
+    ref_sq = _g_sq(U, G)
+    abs_err = float(np.sqrt(err_sq.mean()))
+    rel_err = float(np.sqrt(err_sq.sum()) / (np.sqrt(ref_sq.sum()) + 1e-24))
+    print(f"[ex03 | A_P^T G → norm → denorm → A_P]  abs={abs_err:.3e}  rel={rel_err:.3e}")
     #endregion! Check
 
     

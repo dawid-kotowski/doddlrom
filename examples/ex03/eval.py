@@ -8,7 +8,7 @@ import torch
 
 #region --- Configure this run ------------------------------------------------------
 example_name = 'ex03'
-P = Ex03Parameters(profile="baseline")          # or "wide"/"tiny"/"debug"
+P = Ex03Parameters(profile="baseline")
 P.assert_consistent()
 
 #region --- Set up of FOM for pymor utility------------------------------------------

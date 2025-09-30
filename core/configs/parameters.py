@@ -54,7 +54,7 @@ EX01_PRESETS: Dict[str, Dict[str, Any]] = {
         # DOD-DL-ROM (AE on N' <-> n)
         "dod_dl_df_layers": [16, 8],
         "dod_in_channels": 1,
-        "dod_hidden_channels": 1,  # e.g. [8,16] if dod_num_layers=2
+        "dod_hidden_channels": 8,  
         "dod_kernel": 3,     
         "dod_stride": 2,           
         "dod_padding": 1,        
@@ -63,10 +63,10 @@ EX01_PRESETS: Dict[str, Dict[str, Any]] = {
         # POD-DL-ROM (AE on N <-> n)
         "pod_df_layers": [16, 8],
         "pod_in_channels": 1,
-        "pod_hidden_channels": 1,  # e.g. [8,16,32] with pod_num_layers=3
-        "pod_kernel": 3,
-        "pod_stride": 2, 
-        "pod_padding": 1,
+        "pod_hidden_channels": [8, 16],  
+        "pod_kernel": [3, 3],
+        "pod_stride": [1, 2], 
+        "pod_padding": [1, 1],
         "pod_num_layers": 2,
 
         # Stationary + CoLoRA
@@ -228,9 +228,9 @@ class Ex01Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 2000
-    generalrestarts: int = 3
-    generalpatience: int = 15
+    generalepochs: int = 500
+    generalrestarts: int = 5
+    generalpatience: int = 40
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
@@ -394,16 +394,16 @@ EX02_PRESETS: Dict[str, Dict[str, Any]] = {
         # DOD-DL-ROM (AE on N'<->n)
         "dod_dl_df_layers": [32, 16],
         "dod_in_channels": 1,
-        "dod_hidden_channels": 8,
-        "dod_kernel": 3, "dod_stride": 2, "dod_padding": 1,
-        "dod_num_layers": 1,  
+        "dod_hidden_channels": [8, 16],
+        "dod_kernel": [3, 3], "dod_stride": [1, 2], "dod_padding": [1, 1],
+        "dod_num_layers": 2,  
 
         # POD-DL-ROM
         "pod_df_layers": [32, 16],
         "pod_in_channels": 1,
-        "pod_hidden_channels": 8,
-        "pod_kernel": 5, "pod_stride": 2, "pod_padding": 1,
-        "pod_num_layers": 1,
+        "pod_hidden_channels": [8, 16, 32],
+        "pod_kernel": [5, 5], "pod_stride": [1, 2], "pod_padding": [1, 1],
+        "pod_num_layers": 3,
 
         "L": 3,
         "stat_dod_structure": [128, 128],
@@ -558,9 +558,9 @@ class Ex02Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 2000
-    generalrestarts: int = 3
-    generalpatience: int = 15
+    generalepochs: int = 500
+    generalrestarts: int = 5
+    generalpatience: int = 40
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
@@ -878,9 +878,9 @@ class Ex03Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 2000
-    generalrestarts: int = 3
-    generalpatience: int = 15
+    generalepochs: int = 500
+    generalrestarts: int = 5
+    generalpatience: int = 40
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
