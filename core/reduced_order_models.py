@@ -345,10 +345,11 @@ class innerDODTrainer:
             self.model.apply(initialize_weights)
             optimizer = optim.AdamW(params, 
                                     lr=self.learning_rate, weight_decay=1e-4)
-            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
-                                                                       T_0=100, 
-                                                                       T_mult=2, 
-                                                                       eta_min=1e-5)
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 
+                                                             factor=0.5,
+                                                             patience=3,
+                                                             min_lr=1e-6,
+                                                             verbose=True)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')

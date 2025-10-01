@@ -149,10 +149,10 @@ def main():
     stat_fom, stat_fom_data = discretize_stationary_cg(stationary_problem, diameter=P.diameter)
 
     # Define the parameter space with ranges for 'mu' and 'nu'
-    parameter_space = fom.parameters.space({'nu': (0.01, 0.08), 'mu': (0, 2*np.pi)})
+    parameter_space = fom.parameters.space({'nu': (0.01, 0.08), 'mu': (np.pi + 0.5, 2*np.pi)})
 
     # --- stationary FOM & shift ---
-    stat_parameter_space = stat_fom.parameters.space({'nu': (0.01, 0.08), 'mu': (0, 2*np.pi)})
+    stat_parameter_space = stat_fom.parameters.space({'nu': (0.01, 0.08), 'mu': (np.pi + 0.5, 2*np.pi)})
 
     # Generate training and validation sets
     sample_size_per_param = int(np.ceil(np.sqrt(P.Ns)))

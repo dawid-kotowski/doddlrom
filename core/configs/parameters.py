@@ -189,10 +189,10 @@ class Ex01Parameters:
     N: int = 32
     N_prime: int = 8
     n: int = 2
-    Nt: int = 500
-    Ns: int = 100
+    Nt: int = 30
+    Ns: int = 900
     T: float = 0.009
-    diameter: float = 0.05
+    diameter: float = 0.11
     parameter_mu_dim: int = 1
     parameter_nu_dim: int = 1
 
@@ -402,7 +402,7 @@ EX02_PRESETS: Dict[str, Dict[str, Any]] = {
         "pod_df_layers": [32, 16],
         "pod_in_channels": 1,
         "pod_hidden_channels": [8, 16, 32],
-        "pod_kernel": [5, 5], "pod_stride": [1, 2], "pod_padding": [1, 1],
+        "pod_kernel": [3, 3, 3], "pod_stride": [1, 2, 2], "pod_padding": [1, 1, 1],
         "pod_num_layers": 3,
 
         "L": 3,
