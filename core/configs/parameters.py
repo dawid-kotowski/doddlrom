@@ -49,10 +49,10 @@ EX01_PRESETS: Dict[str, Dict[str, Any]] = {
         "dod_structure": [128, 64],
 
         # DOD+DFNN
-        "df_layers": [16, 8],
+        "df_layers": [16, 8, 4],
 
         # DOD-DL-ROM (AE on N' <-> n)
-        "dod_dl_df_layers": [16, 8],
+        "dod_dl_df_layers": [16, 8, 4],
         "dod_in_channels": 1,
         "dod_hidden_channels": 8,  
         "dod_kernel": 3,     
@@ -61,7 +61,7 @@ EX01_PRESETS: Dict[str, Dict[str, Any]] = {
         "dod_num_layers": 1,
 
         # POD-DL-ROM (AE on N <-> n)
-        "pod_df_layers": [16, 8],
+        "pod_df_layers": [16, 8, 4],
         "pod_in_channels": 1,
         "pod_hidden_channels": [8, 16],  
         "pod_kernel": [3, 3],
@@ -72,7 +72,7 @@ EX01_PRESETS: Dict[str, Dict[str, Any]] = {
         # Stationary + CoLoRA
         "L": 3,
         "stat_dod_structure": [128, 64],
-        "stat_phi_n_structure": [16, 8],
+        "stat_phi_n_structure": [16, 8, 4],
     },
     "test1": {
         "preprocess_dim": 2,
@@ -187,12 +187,12 @@ class Ex01Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
     N_A: int = 64
     N: int = 32
-    N_prime: int = 16
+    N_prime: int = 8
     n: int = 2
-    Nt: int = 30
+    Nt: int = 10
     Ns: int = 400
-    T: float = 1.0
-    diameter: float = 0.01
+    T: float = 3.0
+    diameter: float = 0.05
     parameter_mu_dim: int = 1
     parameter_nu_dim: int = 1
 
