@@ -509,8 +509,8 @@ class Ex02Parameters:
     N: int = 64
     N_prime: int = 16
     n: int = 8
-    Nt: int = 10
-    Ns: int = 256
+    Nt: int = 30
+    Ns: int = 900
     diameter: float = 0.01
     parameter_mu_dim: int = 3
     parameter_nu_dim: int = 1
@@ -838,7 +838,7 @@ class Ex03Parameters:
     N_prime: int = 16
     n: int = 4
     Nt: int = 30
-    Ns: int = 400
+    Ns: int = 900
     T: float = 3.0
     diameter: float = 0.01
     parameter_mu_dim: int = 1
