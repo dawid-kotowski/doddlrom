@@ -38,15 +38,12 @@ def polygon_with_holes_domain():
         t = np.linspace(0, 2*np.pi, M, endpoint=False)
         return [[cx + r*np.cos(tt), cy + r*np.sin(tt)] for tt in t]
 
-    hole1 = circle(0.65, 0.35, 0.12, M=50)
+    hole1 = circle(0.65, 0.35, 0.05, M=50)
     hole2 = circle(0.35, 0.65, 0.10, M=40)
 
-    tol = 1e-12
     def btype(x):
-        if (x[0]-0.35)**2 + (x[1]-0.65)**2 <= (0.12+1e-3)**2: return 'neumann'
-        if (x[0]-0.65)**2 + (x[1]-0.35)**2 <= (0.10+1e-3)**2: return 'neumann'
-        if x[1] < tol:  
-            return 'dirichlet'
+        if (x[0]-0.65)**2 + (x[1]-0.35)**2 <= (0.05+1e-3)**2: return 'dirichlet'
+        if (x[0]-0.35)**2 + (x[1]-0.65)**2 <= (0.10+1e-3)**2: return 'neumann'
         return 'neumann'
 
     return PolygonalDomain(points=outer, boundary_types=btype, holes=[hole1, hole2])
@@ -55,7 +52,7 @@ def polygon_with_holes_domain():
 # Define the advection function dependent on 'mu'
 def advection_function(x, mu):
     m = mu['mu']
-    speed = 10
+    speed = 40
     return np.array([[np.cos(m)*speed, np.sin(m)*speed] for _ in range(x.shape[0])])
 
 # Define the stationary problem
@@ -70,10 +67,11 @@ stationary_problem = StationaryProblem(
         [ProjectionParameterFunctional('nu', 1), 1]
     ),
     dirichlet_data = ExpressionFunction(
-        '(x[1] < 1e-10) * ( ((x[0] > 0.26) * (x[0] < 0.34)) + ((x[0] > 0.66) * (x[0] < 0.74)) )',
+        '3 * ( ((x[0]-0.65)**2 + (x[1]-0.35)**2) <= (0.05 + 1e-3)**2 )',
         2
     ),
     advection=advection_generic_function,
+    reaction=ConstantFunction(1e-1, 2),
     name='wind_ex01'
 )
 

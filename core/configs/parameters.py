@@ -388,26 +388,26 @@ class Ex01Parameters:
 EX02_PRESETS: Dict[str, Dict[str, Any]] = {
     "baseline": {
         "preprocess_dim": 3,
-        "dod_structure": [128, 128],
-        "df_layers": [32, 16],
+        "dod_structure": [256, 128],
+        "df_layers": [32, 16, 8],
 
         # DOD-DL-ROM (AE on N'<->n)
-        "dod_dl_df_layers": [32, 16],
+        "dod_dl_df_layers": [32, 16, 8],
         "dod_in_channels": 1,
         "dod_hidden_channels": [8, 16],
         "dod_kernel": [3, 3], "dod_stride": [1, 2], "dod_padding": [1, 1],
         "dod_num_layers": 2,  
 
         # POD-DL-ROM
-        "pod_df_layers": [32, 16],
+        "pod_df_layers": [32, 16, 8],
         "pod_in_channels": 1,
         "pod_hidden_channels": [8, 16, 32],
         "pod_kernel": [3, 3, 3], "pod_stride": [1, 2, 2], "pod_padding": [1, 1, 1],
         "pod_num_layers": 3,
 
         "L": 3,
-        "stat_dod_structure": [128, 128],
-        "stat_phi_n_structure": [32, 16],
+        "stat_dod_structure": [256, 128],
+        "stat_phi_n_structure": [32, 16, 8],
     },
     "test1": {
         "preprocess_dim": 2,
