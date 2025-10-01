@@ -5,7 +5,7 @@ from core.configs.parameters import Ex03Parameters
 import numpy as np
 import torch
 
-Nsample = 10
+Nsample = 100
 
 # ----------------------- Configure this run ----------------------------
 example_name = 'ex03'

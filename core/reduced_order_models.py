@@ -2120,60 +2120,64 @@ def pod_dl_error_decomposition(
     """
     A_P = np.load(training_data_path(example_name) / f'N_ambient_{example_name}.npz')['ambient'].astype(np.float32)
     train_blob = np.load(training_data_path(example_name) / f'full_order_training_data_{example_name}.npz') 
-    S_train_all = train_blob['solution'].astype(np.float32) 
+    S_train_all = train_blob['solution'].astype(np.float32)
 
     # Unexplained variance on TRAIN via G-orth projection onto A_P
     uv_train = []
-    for U in S_train_all:
-        U_proj = _proj_with_matrix(U, A_P, G)
-        d_sq = _g_sq_timeseries(U - U_proj, G)
+    for U in S_train_all:                                  # U: [T, N_h]
+        U_proj = _proj_with_matrix(U, A_P, G)              # [T, N_h]
+        d_sq = _g_sq_timeseries(U - U_proj, G)             # [T]
         uv_train.append(float(d_sq.mean()))
-    unexplained_var_train = float(np.mean(uv_train))
+    unexplained_var_train = float(np.mean(uv_train))        # scalar
 
-    # Build TEST aggregates, get m and M from ||U||_G per trajectory (min/max over test)
+    # TEST aggregates
     rel_terms_num, rel_terms_den = [], []
     nn_terms = []
     uv_test = []
-    norms_test = []
+    norms_test = []     # <-- snapshot-wise now
 
     for (mu_i, nu_i, U_ref) in samples:
-        U_ref = np.asarray(U_ref, dtype=np.float32)
+        U_ref = np.asarray(U_ref, dtype=np.float32)        # [T, N_h]
         U_pred = np.asarray(fw_pod_fn(
             torch.as_tensor(mu_i, dtype=torch.float32).unsqueeze(0) if np.ndim(mu_i) == 1 else mu_i,
             torch.as_tensor(nu_i, dtype=torch.float32).unsqueeze(0) if np.ndim(nu_i) == 1 else nu_i
-        ), dtype=np.float32)
+        ), dtype=np.float32)                               # [T, N_h]
 
         Tm = min(U_ref.shape[0], U_pred.shape[0])
         U_ref = U_ref[:Tm]; U_pred = U_pred[:Tm]
 
-        # norms & residuals
-        ref_sq = _g_sq_timeseries(U_ref, G)                    # [T]
-        res_sq = _g_sq_timeseries(U_ref - U_pred, G)           # [T]
+        # norms & residuals per time
+        ref_sq = _g_sq_timeseries(U_ref, G)                # [T]
+        res_sq = _g_sq_timeseries(U_ref - U_pred, G)       # [T]
 
         # POD projection of TEST and "NN-only" deviation
-        U_proj = _proj_with_matrix(U_ref, A_P, G)
-        nn_sq  = _g_sq_timeseries(U_pred - U_proj, G)
-
-        # unexplained var on TEST
-        uv_sq  = _g_sq_timeseries(U_ref - U_proj, G)
+        U_proj = _proj_with_matrix(U_ref, A_P, G)          # [T, N_h]
+        nn_sq  = _g_sq_timeseries(U_pred - U_proj, G)      # [T]
+        uv_sq  = _g_sq_timeseries(U_ref - U_proj, G)       # [T]
 
         rel_terms_num.append(float(res_sq.sum()))
         rel_terms_den.append(float(ref_sq.sum()))
         nn_terms.append(float(np.mean(nn_sq)))
         uv_test.append(float(np.mean(uv_sq)))
-        norms_test.append(float(np.sqrt(ref_sq.mean())))   # for m/M
 
+        # snapshot-wise collection for m/M (time sensitive)
+        norms_test.extend([float(np.sqrt(v)) for v in ref_sq])
+
+    # Relative error over all (μ,t)
     total_num = float(np.sum(rel_terms_num))
     total_den = float(np.sum(rel_terms_den))
     E_R = float(np.sqrt(total_num) / (np.sqrt(total_den) + 1e-24))
 
+    # Snapshot-wise m, M
     m = float(np.min(norms_test))
     M = float(np.max(norms_test))
 
-    E_POD      = float((np.mean(uv_test) ** 0.5) / (m + 1e-24))
-    E_POD_inf  = float((np.mean(unexplained_var_train) ** 0.5) / (m + 1e-24))
-    E_S        = float((abs(np.mean(uv_test) - unexplained_var_train) ** 0.5) / (m + 1e-24))
-    E_NN       = float(np.sqrt(np.mean(nn_terms) / (np.mean([d for d in rel_terms_den]) / len(samples) + 1e-24)))
+    # Use TRAIN for *_inf (larger set), TEST for the simple one
+    uv_test_mean = float(np.mean(uv_test))
+    E_POD      = float((uv_test_mean ** 0.5) / (m + 1e-24))                 # TEST
+    E_POD_inf  = float((unexplained_var_train ** 0.5) / (m + 1e-24))        # TRAIN (larger set)
+    E_S        = float((abs(uv_test_mean - unexplained_var_train) ** 0.5) / (m + 1e-24))
+    E_NN       = float(np.sqrt(np.mean(nn_terms) / (np.mean(rel_terms_den) / len(samples) + 1e-24)))
     upper_bnd  = float(E_S + E_POD + E_NN)
     lower_bnd  = float((m / (M + 1e-24)) * E_POD_inf)
 
@@ -2187,6 +2191,7 @@ def pod_dl_error_decomposition(
         "upper_bound": upper_bnd,
         "lower_bound": lower_bnd,
     }
+
 
 def dod_dl_error_decomposition(
     dod_matrix,
