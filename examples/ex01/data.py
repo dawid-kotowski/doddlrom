@@ -97,15 +97,12 @@ def main():
             t = np.linspace(0, 2*np.pi, M, endpoint=False)
             return [[cx + r*np.cos(tt), cy + r*np.sin(tt)] for tt in t]
 
-        hole1 = circle(0.65, 0.35, 0.12, M=50)
+        hole1 = circle(0.65, 0.35, 0.05, M=50)
         hole2 = circle(0.35, 0.65, 0.10, M=40)
 
-        tol = 1e-12
         def btype(x):
-            if (x[0]-0.35)**2 + (x[1]-0.65)**2 <= (0.12+1e-3)**2: return 'neumann'
-            if (x[0]-0.65)**2 + (x[1]-0.35)**2 <= (0.10+1e-3)**2: return 'neumann'
-            if x[1] < tol:  
-                return 'dirichlet'
+            if (x[0]-0.65)**2 + (x[1]-0.35)**2 <= (0.05+1e-3)**2: return 'dirichlet'
+            if (x[0]-0.35)**2 + (x[1]-0.65)**2 <= (0.10+1e-3)**2: return 'neumann'
             return 'neumann'
 
         return PolygonalDomain(points=outer, boundary_types=btype, holes=[hole1, hole2])
@@ -114,7 +111,7 @@ def main():
     # Define the advection function dependent on 'mu'
     def advection_function(x, mu):
         m = mu['mu']
-        speed = 10
+        speed = 40
         return np.array([[np.cos(m)*speed, np.sin(m)*speed] for _ in range(x.shape[0])])
 
     # Define the stationary problem
@@ -129,10 +126,11 @@ def main():
             [ProjectionParameterFunctional('nu', 1), 1]
         ),
         dirichlet_data = ExpressionFunction(
-            '(x[1] < 1e-10) * ( ((x[0] > 0.26) * (x[0] < 0.34)) + ((x[0] > 0.66) * (x[0] < 0.74)) )',
+            '3 * ( ((x[0]-0.65)**2 + (x[1]-0.35)**2) <= (0.05 + 1e-3)**2 )',
             2
         ),
         advection=advection_generic_function,
+        reaction=ConstantFunction(1e-1, 2),
         name='wind_ex01'
     )
 
@@ -151,10 +149,10 @@ def main():
     stat_fom, stat_fom_data = discretize_stationary_cg(stationary_problem, diameter=P.diameter)
 
     # Define the parameter space with ranges for 'mu' and 'nu'
-    parameter_space = fom.parameters.space({'nu': (0.1, 0.5), 'mu': (0.2, 2*np.pi-0.2)})
+    parameter_space = fom.parameters.space({'nu': (0.01, 0.08), 'mu': (0, 2*np.pi)})
 
     # --- stationary FOM & shift ---
-    stat_parameter_space = stat_fom.parameters.space({'nu': (0.1, 0.5), 'mu': (0.2, 2*np.pi-0.2)})
+    stat_parameter_space = stat_fom.parameters.space({'nu': (0.01, 0.08), 'mu': (0, 2*np.pi)})
 
     # Generate training and validation sets
     sample_size_per_param = int(np.ceil(np.sqrt(P.Ns)))
@@ -199,6 +197,7 @@ def main():
         shifted_solutions_pymor.append(shifted_solution)
         shifted_solutions.append(shifted_solution.to_numpy().astype(np.float32))
         solutions.append(solution.to_numpy().astype(np.float32))
+        #fom.visualize(solution)
 
     shifted_solutions = np.stack(shifted_solutions, axis=0)  # [Ns, Nt, Nh]
     solutions = np.stack(solutions, axis=0)                  # [Ns, Nt, Nh]

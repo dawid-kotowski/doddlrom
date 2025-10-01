@@ -24,31 +24,65 @@ training_data = [(mu[i], nu[i], solution[i]) for i in sel]
 
 
 # Define Full Order Model again
-def advection_function(x, mu):
-    mu_value = mu['mu']
-    return np.array([[np.cos(mu_value)*30, np.sin(mu_value)*30] for _ in range(x.shape[0])])
 
+# Set up domain
+def polygon_with_holes_domain():
+    outer = [
+        [0.0, 0.0], [1.00, 0.0],
+        [1.00, 0.20], [0.80, 0.20], [0.80, 0.40], [1.00, 0.40],
+        [1.00, 1.00], [0.0, 1.00], [0.0, 0.20], [0.30, 0.20],
+        [0.30, 0.10], [0.0, 0.10]  
+    ]
+
+    def circle(cx, cy, r, M=40):
+        t = np.linspace(0, 2*np.pi, M, endpoint=False)
+        return [[cx + r*np.cos(tt), cy + r*np.sin(tt)] for tt in t]
+
+    hole1 = circle(0.65, 0.35, 0.12, M=50)
+    hole2 = circle(0.35, 0.65, 0.10, M=40)
+
+    tol = 1e-12
+    def btype(x):
+        if (x[0]-0.35)**2 + (x[1]-0.65)**2 <= (0.12+1e-3)**2: return 'neumann'
+        if (x[0]-0.65)**2 + (x[1]-0.35)**2 <= (0.10+1e-3)**2: return 'neumann'
+        if x[1] < tol:  
+            return 'dirichlet'
+        return 'neumann'
+
+    return PolygonalDomain(points=outer, boundary_types=btype, holes=[hole1, hole2])
+
+
+# Define the advection function dependent on 'mu'
+def advection_function(x, mu):
+    m = mu['mu']
+    speed = 10
+    return np.array([[np.cos(m)*speed, np.sin(m)*speed] for _ in range(x.shape[0])])
+
+# Define the stationary problem
 advection_params = Parameters({'mu': 1})
-advection_generic_function = GenericFunction(advection_function, 
-                                             dim_domain=2, shape_range=(2,), 
-                                             parameters=advection_params)
+advection_generic_function = GenericFunction(advection_function, dim_domain=2, 
+                                            shape_range=(2,), parameters=advection_params)
 stationary_problem = StationaryProblem(
-    domain=RectDomain(),
+    domain=polygon_with_holes_domain(),
     rhs=ExpressionFunction('0', 2),
     diffusion=LincombFunction(
         [ExpressionFunction('1 - x[0]', 2), ExpressionFunction('x[0]', 2)],
         [ProjectionParameterFunctional('nu', 1), 1]
     ),
-    dirichlet_data=ExpressionFunction('(-(x[1] - 0.5)**2 + 0.25) * (x[0] < 1e-10)', 2),
+    dirichlet_data = ExpressionFunction(
+        '(x[1] < 1e-10) * ( ((x[0] > 0.26) * (x[0] < 0.34)) + ((x[0] > 0.66) * (x[0] < 0.74)) )',
+        2
+    ),
     advection=advection_generic_function,
-    name='advection_problem'
+    name='wind_ex01'
 )
 
+# Define the instationary problem
 problem = InstationaryProblem(
-    T=1.,
-    initial_data=ConstantFunction(0, 2),
+    T=P.T,
+    initial_data=ConstantFunction(0., 2),
     stationary_part=stationary_problem,
-    name='advection_problem'
+    name='wind_ex01'
 )
 
 fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt)

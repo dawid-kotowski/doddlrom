@@ -189,9 +189,9 @@ class Ex01Parameters:
     N: int = 32
     N_prime: int = 8
     n: int = 2
-    Nt: int = 10
-    Ns: int = 400
-    T: float = 3.0
+    Nt: int = 500
+    Ns: int = 100
+    T: float = 0.009
     diameter: float = 0.05
     parameter_mu_dim: int = 1
     parameter_nu_dim: int = 1
