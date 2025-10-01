@@ -511,7 +511,7 @@ class Ex02Parameters:
     n: int = 8
     Nt: int = 30
     Ns: int = 900
-    diameter: float = 0.01
+    diameter: float = 0.03
     parameter_mu_dim: int = 3
     parameter_nu_dim: int = 1
 
