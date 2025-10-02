@@ -74,7 +74,7 @@ def plot_error_vs_samples(df, example_name, outdir):
         x = sub['Ns'].values.astype(float)
         y = sub['rel_L2G'].values.astype(float)
         plt.loglog(x, y, 'o-', label=model)
-    plt.xlabel(r"$N_s$ (samples)")
+    plt.xlabel(r"$Ns$ (samples)")
     plt.ylabel(r"$\mathcal{E}_R$ (relative error)")
     plt.title("Error vs. number of samples")
     plt.legend()

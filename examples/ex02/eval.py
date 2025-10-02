@@ -6,6 +6,8 @@ from utils.paths import training_data_path
 import numpy as np
 import torch
 
+Nsample = 2
+
 #region --- Configure this run ------------------------------------------------------
 example_name = 'ex02'
 P = Ex02Parameters(profile="baseline")          
@@ -19,7 +21,7 @@ solution = data['solution']  # shape [Ns, P.Nt, Nh]
 Ns = mu.shape[0]
 idx = np.arange(Ns)
 np.random.shuffle(idx)
-sel = idx[:1]
+sel = idx[:Nsample]
 training_data = [(mu[i], nu[i], solution[i]) for i in sel]  
 
 

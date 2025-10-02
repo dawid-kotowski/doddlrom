@@ -81,11 +81,11 @@ def build_trainers_and_models(P, train_valid_set_N_A, train_valid_set_N, bs):
     inner_trainer = rom.innerDODTrainer(
         nt=P.Nt, dod_model=innerDOD_model,
         train_valid_set=train_valid_set_N_A,
-        epochs=P.generalepochs,              
-        restart=P.generalrestarts,
+        epochs=P.dod_epochs,              
+        restart=P.dod_restarts,
         learning_rate=1e-3,
         batch_size=bs,
-        patience=P.generalpatience,
+        patience=P.dod_patience,
     )
 
     # DOD+DFNN (DFNN -> N')
@@ -177,8 +177,12 @@ def main():
             if args.Ns is not None: P.Ns = args.Ns
             if args.Nt is not None: P.Nt = args.Nt
             P.assert_consistent()
-            if args.epochs is not None: P.generalepochs = args.epochs
-            if args.restarts is not None: P.generalrestarts = args.restarts
+            if args.epochs is not None: 
+                P.generalepochs = args.epochs
+                P.dod_epochs = args.epochs
+            if args.restarts is not None: 
+                P.generalrestarts = args.restarts
+                P.dod_restarts = args.restarts
 
             models, trainers = build_trainers_and_models(P, tv_NA, tv_N, bs)
 

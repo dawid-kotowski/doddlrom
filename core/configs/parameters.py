@@ -232,6 +232,10 @@ class Ex01Parameters:
     generalrestarts: int = 5
     generalpatience: int = 40
 
+    dod_epochs: int = 1000
+    dod_restarts: int = 8
+    dod_patience: int = 40
+
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
 
@@ -378,6 +382,13 @@ class Ex01Parameters:
             epochs=self.generalepochs,
             restarts=self.generalrestarts,
             patience=self.generalpatience,
+        )
+    
+    def dod_trainer_defaults(self) -> Dict[str, Any]:
+        return dict(
+            epochs=self.dod_epochs,
+            restarts=self.dod_restarts,
+            patience=self.dod_patience
         )
 
 
@@ -562,6 +573,10 @@ class Ex02Parameters:
     generalrestarts: int = 5
     generalpatience: int = 40
 
+    dod_epochs: int = 1000
+    dod_restarts: int = 8
+    dod_patience: int = 40
+    
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
 
@@ -709,6 +724,14 @@ class Ex02Parameters:
             restarts=self.generalrestarts,
             patience=self.generalpatience,
         )
+    
+    def dod_trainer_defaults(self) -> Dict[str, Any]:
+        return dict(
+            epochs=self.dod_epochs,
+            restarts=self.dod_restarts,
+            patience=self.dod_patience
+        )
+
 
 
 # =============================================================================
@@ -882,6 +905,10 @@ class Ex03Parameters:
     generalrestarts: int = 5
     generalpatience: int = 40
 
+    dod_epochs: int = 1000
+    dod_restarts: int = 8
+    dod_patience: int = 40
+
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
 
@@ -1028,6 +1055,13 @@ class Ex03Parameters:
             epochs=self.generalepochs,
             restarts=self.generalrestarts,
             patience=self.generalpatience,
+        )
+
+    def dod_trainer_defaults(self) -> Dict[str, Any]:
+        return dict(
+            epochs=self.dod_epochs,
+            restarts=self.dod_restarts,
+            patience=self.dod_patience
         )
 
 

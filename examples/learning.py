@@ -154,10 +154,11 @@ def main():
     if args.Nt is not None: P.Nt = args.Nt
     P.assert_consistent()
     td = P.trainer_defaults()
+    tddod = P.dod_trainer_defaults()
     if args.epochs is not None:   td["epochs"]   = args.epochs
     if args.restarts is not None: td["restarts"] = args.restarts
 
-    best_inner   = train_innerdod(P, args.example, td, bs)
+    best_inner   = train_innerdod(P, args.example, tddod, bs)
     best_doddfnn = train_doddfnn(P, args.example, td, bs)
     best_doddl   = train_dod_dl_rom(P, args.example, td, bs)
     best_poddl   = train_pod_dl_rom(P, args.example, td, bs)
