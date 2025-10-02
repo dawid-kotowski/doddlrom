@@ -228,12 +228,12 @@ class Ex01Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 500
-    generalrestarts: int = 5
+    generalepochs: int = 300
+    generalrestarts: int = 3
     generalpatience: int = 40
 
     dod_epochs: int = 1000
-    dod_restarts: int = 8
+    dod_restarts: int = 2
     dod_patience: int = 40
 
     # -------- Meta -----------------------------------------------------------
@@ -569,14 +569,14 @@ class Ex02Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 500
-    generalrestarts: int = 5
+    generalepochs: int = 300
+    generalrestarts: int = 3
     generalpatience: int = 40
 
     dod_epochs: int = 1000
-    dod_restarts: int = 8
+    dod_restarts: int = 2
     dod_patience: int = 40
-    
+
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
 
@@ -901,12 +901,12 @@ class Ex03Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 500
-    generalrestarts: int = 5
+    generalepochs: int = 300
+    generalrestarts: int = 3
     generalpatience: int = 40
 
     dod_epochs: int = 1000
-    dod_restarts: int = 8
+    dod_restarts: int = 2
     dod_patience: int = 40
 
     # -------- Meta -----------------------------------------------------------
