@@ -3,6 +3,7 @@ from core import reduced_order_models as rom
 from utils.paths import training_data_path, state_dicts_path
 from core.configs.parameters import Ex02Parameters 
 from utils.paths import training_data_path   
+from utils.visualizer import vis_dl_diff, vis_dod_diff, vis_colora
 import numpy as np
 import torch
 
@@ -247,15 +248,9 @@ for entry in training_data:
 
 
     # Visualize
-    fom.visualize((u_i, dod_dfnn_sol_vec, u_i - dod_dfnn_sol_vec),
-                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()}, ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                          'DOD+DFNN', f"Relative L\u00b2 error: mean={dod_dfnn_residual:.3e}"))
-    fom.visualize((u_i, pod_dl_sol_vec, u_i - pod_dl_sol_vec),
-                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                          'POD-DL-ROM', f"Relative L\u00b2 error: mean={pod_dl_residual:.3e}"))
-    fom.visualize((u_i, dod_dl_sol_vec, u_i - dod_dl_sol_vec),
-                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                          'DOD-DL-ROM', f"Relative L\u00b2 error: mean={dod_dl_residual:.3e}"))
-    fom.visualize((u_i, colora_sol_vec, u_i - colora_sol_vec),
-                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                          'CoLoRA-DL-ROM', f"Relative L\u00b2 error: mean={colora_residual:.3e}"))
+    mu_list = mu_i.cpu().numpy().flatten().tolist()
+    nu_list = nu_i.cpu().numpy().flatten().tolist()
+
+    vis_dl_diff(fom, u_i, pod_dl_sol_vec, dod_dl_sol_vec, mu_list, nu_list)
+    vis_dod_diff(fom, u_i, dod_dfnn_sol_vec, dod_dl_sol_vec, mu_list, nu_list)
+    vis_colora(fom, u_i, colora_sol_vec, mu_list, nu_list)

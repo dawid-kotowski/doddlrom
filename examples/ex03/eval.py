@@ -1,5 +1,6 @@
 from pymor.basic import *
 from utils.paths import training_data_path, state_dicts_path
+from utils.visualizer import vis_dl_diff, vis_dod_diff, vis_colora
 from core import reduced_order_models as rom
 from core.configs.parameters import Ex03Parameters  
 import numpy as np
