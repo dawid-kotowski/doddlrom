@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as func
 import torch.optim as optim
 import os
+import csv
 import numpy as np
 import math
 import copy
@@ -2093,16 +2094,11 @@ def _gnorm_sq(u: np.ndarray, G: np.ndarray) -> float:
 def _proj_with_matrix_stat(u: np.ndarray, V: np.ndarray, G: np.ndarray) -> np.ndarray:
     """
     Project u onto span(V) in the G-inner product:
-        P_G = V (V^T G V)^{-1} V^T G
-    Works whether columns of V are G-orthonormal or not.
-    Shapes:
-      u: [N_h], V: [N_h, r], G: [N_h, N_h]
+        P_G = V V^T G
+      u: [N_h], V: [N_h, N'], G: [N_h, N_h]
     """
-    GTu = V.T @ (G @ u)               # [r]
-    B   = V.T @ (G @ V)               # [r, r]
-    # robust solve (r is small)
-    coeff = np.linalg.solve(B, GTu)
-    return V @ coeff                  # [N_h]
+    GTu = V.T @ (G @ u)
+    return V @ GTu
 
 def _ensure_np(x):
     if isinstance(x, torch.Tensor):
@@ -2163,19 +2159,16 @@ def pod_dl_error_decomposition(
         # snapshot-wise collection for m/M (time sensitive)
         norms_test.extend([float(np.sqrt(v)) for v in ref_sq])
 
-    # Relative error over all (μ,t)
     total_num = float(np.sum(rel_terms_num))
     total_den = float(np.sum(rel_terms_den))
     E_R = float(np.sqrt(total_num) / (np.sqrt(total_den) + 1e-24))
 
-    # Snapshot-wise m, M
     m = float(np.min(norms_test))
     M = float(np.max(norms_test))
 
-    # Use TRAIN for *_inf (larger set), TEST for the simple one
     uv_test_mean = float(np.mean(uv_test))
-    E_POD      = float((uv_test_mean ** 0.5) / (m + 1e-24))                 # TEST
-    E_POD_inf  = float((unexplained_var_train ** 0.5) / (m + 1e-24))        # TRAIN (larger set)
+    E_POD      = float((unexplained_var_train ** 0.5) / (m + 1e-24))
+    E_POD_inf  = float((uv_test_mean ** 0.5) / (m + 1e-24)) 
     E_S        = float((abs(uv_test_mean - unexplained_var_train) ** 0.5) / (m + 1e-24))
     E_NN       = float(np.sqrt(np.mean(nn_terms) / (np.mean(rel_terms_den) / len(samples) + 1e-24)))
     upper_bnd  = float(E_S + E_POD + E_NN)
@@ -2197,12 +2190,12 @@ def dod_dl_error_decomposition(
     dod_matrix,
     fw_dod_fn,                          
     samples,
+    N_prime,
     example_name: str,                       
     G: np.ndarray,
-    T_end: float = 1.0,          # set to your actual horizon; if your model expects t in [0,1], set T_end=1.0
+    T_end: float = 1.0,
 ):
     """
-    DOD-DL-ROM decomposition in the POD-style:
       E_R, E_S, E_DOD, E_DOD_inf, E_NN and bounds, averaged over (mu, t).
     """
     base = training_data_path(example_name)
@@ -2227,7 +2220,7 @@ def dod_dl_error_decomposition(
         t_val = 0.0 if Tm <= 1 else (t_idx / (Tm - 1)) * T_end
         return torch.tensor([t_val], dtype=torch.float32, device=device)
 
-    # --- unexplained variance on TRAIN via time-resolved DOD projector
+    # unexplained variance on TRAIN via time-resolved DOD projector 
     uv_train_vals = []
     for mu_np, U in zip(Mu_train, S_train):
         Tm = U.shape[0]
@@ -2242,9 +2235,9 @@ def dod_dl_error_decomposition(
             uv_train_vals.append(_gnorm_sq(u - u_proj, G))
     unexplained_var_train = float(np.mean(uv_train_vals))
 
-    # --- test accumulators
+    # test accumulators 
     num_R, den_R = [], []
-    nn_ratios = []     # per-time relative NN error terms
+    nn_ratios = []     
     uv_test_vals = []
     test_norms = []
 
@@ -2282,14 +2275,27 @@ def dod_dl_error_decomposition(
             uv_test_vals.append(uv_sq)
             test_norms.append(np.sqrt(ref_sq))
 
-    # --- aggregate over (mu, t)
+    # aggregate over (mu, t)
     E_R = float(np.sqrt(np.sum(num_R)) / (np.sqrt(np.sum(den_R)) + 1e-24))
     m   = float(np.min(test_norms))
     M   = float(np.max(test_norms))
 
+    # load in tail sum of singular values for fixed (\mu, t)
+    path = training_data_path(example_name) / f"pod_singular_values_{example_name}.npz"
+    if path.exists():
+        blob = np.load(path, allow_pickle=False)
+        sigma_sup = np.asarray(blob['sigma_mu_t_sup'], dtype=np.float64).reshape(-1)
+        N_A_file = int(sigma_sup.shape[0])
+        if N_prime >= N_A_file:
+            tail_sum = 0.0
+        else:
+            tail_sum = float(np.sum(sigma_sup[N_prime:]))
+    else:
+        raise FileExistsError('Singular values not found.')
+
     uv_test_mean = float(np.mean(uv_test_vals))
-    E_DOD_inf  = float(np.sqrt(unexplained_var_train) / (m + 1e-24))
-    E_DOD      = float(np.sqrt(uv_test_mean) / (m + 1e-24))
+    E_DOD_inf  = float(np.sqrt(tail_sum) / (m + 1e-24))
+    E_DOD      = float(np.sqrt(unexplained_var_train) / (m + 1e-24))
     E_S        = float(np.sqrt(abs(uv_test_mean - unexplained_var_train)) / (m + 1e-24))
     E_NN       = float(np.sqrt(np.mean(nn_ratios)))
     upper_bnd  = float(E_S + E_DOD + E_NN)
@@ -2305,3 +2311,79 @@ def dod_dl_error_decomposition(
         "upper_bound": upper_bnd,
         "lower_bound": lower_bnd,
     }
+
+def append_error_decomp_csv(
+    csv_path: str,
+    example_name: str,
+    model_name: str,
+    metrics: dict,
+    P,
+    test_samples: int,
+    dedup: bool = True
+) -> bool:
+    """
+    Appends a single row with error-decomposition metrics.
+    Returns True if a row was written, False if skipped (due to dedup).
+    """
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+
+    if model_name.lower() == "pod-dl-rom":
+        dim_field = "N"
+        dim_val = int(P.N)
+        specific = {
+            "N": dim_val,
+            "E_POD": f"{metrics['E_POD']:.6e}",
+            "E_POD_inf": f"{metrics['E_POD_inf']:.6e}",
+        }
+        fieldnames = [
+            "example","model","test_samples","N","m","M",
+            "E_R","E_S","E_POD","E_POD_inf","E_NN",
+            "upper_bound","lower_bound"
+        ]
+    else:  # "dod-dl-rom"
+        dim_field = "N_prime"
+        dim_val = int(P.N_prime)
+        specific = {
+            "N_prime": dim_val,
+            "E_DOD": f"{metrics['E_DOD']:.6e}",
+            "E_DOD_inf": f"{metrics['E_DOD_inf']:.6e}",
+        }
+        fieldnames = [
+            "example","model","test_samples","N_prime","m","M",
+            "E_R","E_S","E_DOD","E_DOD_inf","E_NN",
+            "upper_bound","lower_bound"
+        ]
+
+    common = {
+        "example": example_name,
+        "model": model_name,
+        "test_samples": test_samples,
+        "m": f"{metrics['m']:.6e}",
+        "M": f"{metrics['M']:.6e}",
+        "E_R": f"{metrics['E_R']:.6e}",
+        "E_S": f"{metrics['E_S']:.6e}",
+        "E_NN": f"{metrics['E_NN']:.6e}",
+        "upper_bound": f"{metrics['upper_bound']:.6e}",
+        "lower_bound": f"{metrics['lower_bound']:.6e}",
+    }
+    row = {**common, **specific}
+
+    exists = os.path.exists(csv_path)
+    if dedup and exists:
+        with open(csv_path, newline="") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                if (
+                    r.get("example") == example_name
+                    and r.get("model") == model_name
+                    and r.get(dim_field) == str(dim_val)
+                ):
+                    return False 
+
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not exists:
+            writer.writeheader()
+        writer.writerow(row)
+
+    return True

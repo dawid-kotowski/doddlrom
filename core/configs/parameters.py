@@ -400,21 +400,21 @@ EX02_PRESETS: Dict[str, Dict[str, Any]] = {
     "baseline": {
         "preprocess_dim": 3,
         "dod_structure": [256, 128],
-        "df_layers": [32, 16, 8],
+        "df_layers": [16, 8],
 
         # DOD-DL-ROM (AE on N'<->n)
-        "dod_dl_df_layers": [32, 16, 8],
+        "dod_dl_df_layers": [8, 4],
         "dod_in_channels": 1,
-        "dod_hidden_channels": [8, 16],
-        "dod_kernel": [3, 3], "dod_stride": [1, 2], "dod_padding": [1, 1],
-        "dod_num_layers": 2,  
+        "dod_hidden_channels": 8,
+        "dod_kernel": 3, "dod_stride": 2, "dod_padding": 1,
+        "dod_num_layers": 1,  
 
         # POD-DL-ROM
-        "pod_df_layers": [32, 16, 8],
+        "pod_df_layers": [16, 8, 4],
         "pod_in_channels": 1,
-        "pod_hidden_channels": [8, 16, 32],
-        "pod_kernel": [3, 3, 3], "pod_stride": [1, 2, 2], "pod_padding": [1, 1, 1],
-        "pod_num_layers": 3,
+        "pod_hidden_channels": [8, 16],  
+        "pod_kernel": [3, 3], "pod_stride": [1, 2], "pod_padding": [1, 1],
+        "pod_num_layers": 2,
 
         "L": 3,
         "stat_dod_structure": [256, 128],
@@ -518,10 +518,11 @@ class Ex02Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
     N_A: int = 128
     N: int = 64
-    N_prime: int = 16
-    n: int = 8
+    N_prime: int = 8
+    n: int = 2
     Nt: int = 30
     Ns: int = 900
+    T: int = 1.
     diameter: float = 0.03
     parameter_mu_dim: int = 3
     parameter_nu_dim: int = 1
@@ -857,8 +858,8 @@ EX03_PRESETS: Dict[str, Dict[str, Any]] = {
 class Ex03Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
     N_A: int = 101
-    N: int = 32
-    N_prime: int = 16
+    N: int = 4        # already did 32, 16, 8
+    N_prime: int = 2  # already did 16, 8, 4
     n: int = 4
     Nt: int = 30
     Ns: int = 900
@@ -901,12 +902,12 @@ class Ex03Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 300
-    generalrestarts: int = 3
+    generalepochs: int = 200
+    generalrestarts: int = 1
     generalpatience: int = 40
 
-    dod_epochs: int = 1000
-    dod_restarts: int = 2
+    dod_epochs: int = 300
+    dod_restarts: int = 1
     dod_patience: int = 40
 
     # -------- Meta -----------------------------------------------------------

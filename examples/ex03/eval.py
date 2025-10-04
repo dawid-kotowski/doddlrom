@@ -1,12 +1,12 @@
 from pymor.basic import *
-from utils.paths import training_data_path, state_dicts_path
+from utils.paths import training_data_path, state_dicts_path, benchmarks_path
 from utils.visualizer import vis_dl_diff, vis_dod_diff, vis_colora
 from core import reduced_order_models as rom
 from core.configs.parameters import Ex03Parameters  
 import numpy as np
 import torch
 
-Nsample = 100
+Nsample = 20
 
 # ----------------------- Configure this run ----------------------------
 example_name = 'ex03'
@@ -72,7 +72,7 @@ fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 true_solution = fom.solution_space.empty()
 G = np.load(training_data_path(example_name) / f'gram_matrix_{example_name}.npz')['gram'].astype(np.float32)
-mu, nu, sol = training_data[-1]
+mu, nu, sol = training_data[-20]
 
 def to_batch_vec(x):
     x_np = np.asarray(x)
@@ -250,20 +250,31 @@ dod_dfnn_sol_vec = fom.solution_space.from_numpy(dod_dfnn_sol)
 # Visualize
 fom.visualize((u_i, dod_dfnn_sol_vec, u_i - dod_dfnn_sol_vec),
                 legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()}, ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                        'DOD+DFNN', f"Relative L\u00b2 error: mean={dod_dfnn_residual:.3e}"))
+                        'DOD+DFNN', f"Absolute error"))
 fom.visualize((u_i, pod_dl_sol_vec, u_i - pod_dl_sol_vec),
                 legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                        'POD-DL-ROM', f"Relative L\u00b2 error: mean={pod_dl_residual:.3e}"))
+                        'POD-DL-ROM', f"Absolute error"))
 fom.visualize((u_i, dod_dl_sol_vec, u_i - dod_dl_sol_vec),
                 legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                        'DOD-DL-ROM', f"Relative L\u00b2 error: mean={dod_dl_residual:.3e}"))
+                        'DOD-DL-ROM', f"Absolute error"))
 
 # Evaluate Error
 pod_split = rom.pod_dl_error_decomposition(
     fw['POD-DL-ROM'], training_data, example_name, G
 )
-print("[POD-DL | error decomposition]", pod_split)
+print("[POD-DL-ROM | error decomposition]", pod_split)
 dod_split = rom.dod_dl_error_decomposition(
-    innerDOD_model, fw['DOD-DL-ROM'], training_data, example_name, G
+    innerDOD_model, fw['DOD-DL-ROM'], training_data, P.N_prime, example_name, G
 )
-print("[DOD-DL | error decomposition]", dod_split)
+print("[DOD-DL-ROM | error decomposition]", dod_split)
+
+csv_pod = str(benchmarks_path(example_name) / "error_decomp_pod.csv")
+csv_dod = str(benchmarks_path(example_name) / "error_decomp_dod.csv")
+
+wrote_pod = rom.append_error_decomp_csv(
+    csv_pod, example_name, "POD-DL-ROM", pod_split, P, Nsample, dedup=False)
+wrote_dod = rom.append_error_decomp_csv(
+    csv_dod, example_name, "DOD-DL-ROM", dod_split, P, Nsample, dedup=False)
+
+print("[POD-DL-ROM] has wrote to cvs: ", wrote_pod)
+print("[DOD-DL-ROM] has wrote to cvs: ", wrote_dod)

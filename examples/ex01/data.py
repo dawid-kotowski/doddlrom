@@ -149,10 +149,10 @@ def main():
     stat_fom, stat_fom_data = discretize_stationary_cg(stationary_problem, diameter=P.diameter)
 
     # Define the parameter space with ranges for 'mu' and 'nu'
-    parameter_space = fom.parameters.space({'nu': (0.01, 0.08), 'mu': (np.pi + 0.5, 2*np.pi)})
+    parameter_space = fom.parameters.space({'nu': (0.01, 0.3), 'mu': (np.pi + 0.5, 2*np.pi)})
 
     # --- stationary FOM & shift ---
-    stat_parameter_space = stat_fom.parameters.space({'nu': (0.01, 0.08), 'mu': (np.pi + 0.5, 2*np.pi)})
+    stat_parameter_space = stat_fom.parameters.space({'nu': (0.01, 0.3), 'mu': (np.pi + 0.5, 2*np.pi)})
 
     # Generate training and validation sets
     sample_size_per_param = int(np.ceil(np.sqrt(P.Ns)))
@@ -190,6 +190,13 @@ def main():
     solutions = []
     shifted_solutions = []
     shifted_solutions_pymor = fom.solution_space.empty()
+
+    import time
+    
+    t0 = time.perf_counter()
+    solution = fom.solve(training_set[0])
+    t1 = time.perf_counter()
+    print('time for one computation: ', (t1 - t0) * 1000.0)
 
     for mu_nu in training_set:
         solution = fom.solve(mu_nu)  # [Nt, Nh]
@@ -297,7 +304,7 @@ def main():
     # Tunables
     N_mu_samples   = 2
     N_t_samples    = 2
-    N_nu_per_mu_t  = 20
+    N_nu_per_mu_t  = 30
 
     rng = np.random.default_rng(1234)
 
