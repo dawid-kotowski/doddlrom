@@ -49,45 +49,45 @@ Edit the SSH settings at the top of these scripts, then use `send_code.sh` to sy
 ## Model Descriptions
 
 This repository implements several deep learning ROM architectures for parametric time-dependent PDEs.  
-Each model approximates the high-fidelity solution \( u_h(t;\mu,\nu)\in \mathbb{R}^{N_h} \) (with \( \mu \) a geometric parameter, \( \nu \) a physical parameter, and \( t \) time) by a **low-dimensional** representation and reconstruction.
+Each model approximates the high-fidelity solution $ u_h(t;\mu,\nu)\in \mathbb{R}^{N_h} $ (with $ \mu $ a geometric parameter, $ \nu $ a physical parameter, and $ t $ time) by a **low-dimensional** representation and reconstruction.
 
 ### POD-DL-ROM *(Fresca et al., 2020)*
-Uses a Proper Orthogonal Decomposition matrix \( A\in\mathbb{R}^{N_h\times N_A} \) to reduce the full order dimension to \( N_A \ll N_h \).  
-An autoencoder then compresses this POD space to a latent dimension \( n \) (Encoder: \( N_A \to n \), Decoder: \( n \to N_A \)), and a feed-forward network \( \phi_n \) maps \((\mu,\nu,t)\) to the latent coordinates.  
+Uses a Proper Orthogonal Decomposition matrix $ A\in\mathbb{R}^{N_h\times N_A} $ to reduce the full order dimension to $ N_A \ll N_h $.  
+An Autoencoder then compresses this POD space to a latent dimension $ n $ (Encoder: $ N_A \to n $, Decoder: $ n \to N_A $), and a feed-forward network $ \phi_n $ maps $(\mu,\nu,t)$ to the latent coordinates.  
 The resulting approximation is:
 
-\[
+$$
 \hat{u}_h(\mu,\nu,t) \approx A\,(\psi_{N_A}\circ \phi_n)(\mu,\nu,t)
-\]
+$$
 
-where \( \psi_{N_A} \) is the decoder.  
+where $ \psi_{N_A} $ is the decoder.  
 This is essentially the DL-ROM approach of Fresca & Manzoni, combining POD with a deep neural network latent model.
 
 ---
 
 ### DOD-DL-ROM
-Extends the above by learning a **Deep Orthogonal Decomposition** (DOD) basis that varies with \(\mu\) and \(t\).  
-A neural network \( \Phi_{\tilde V} \) produces a time- and parameter-dependent orthonormal basis \( V(\mu,t)\in\mathbb{R}^{N_A\times N'} \) (with \( N' \ll N_A \)).  
-An autoencoder (Encoder: \( N' \to n \), Decoder: \( n \to N' \)) and a latent coefficient network \( \phi_n \) (input \((\mu,\nu,t)\), output \(\mathbb{R}^n\)) are trained in series.  
+Extends the above by learning a **Deep Orthogonal Decomposition** (DOD) basis that varies with $\mu$ and $t$.  
+A neural network $ \Phi_{\tilde V} $ produces a time- and parameter-dependent orthonormal basis $ V(\mu,t)\in\mathbb{R}^{N_A\times N'} $ (with $ N' \ll N_A $).  
+An Autoencoder (Encoder: $ N' \to n $, Decoder: $ n \to N' $) and a latent coefficient network $ \phi_n $ (input $(\mu,\nu,t)$, output $\mathbb{R}^n$) are trained in series.  
 The full-order approximation is:
 
-\[
+$$
 \hat{u}_h(\mu,\nu,t) \approx V(\mu,t)\,\hat{q}_D(\mu,\nu,t),
-\]
+$$
 
-where \( \hat{q}_D = (\psi_{N'}\circ \phi_n)(\mu,\nu,t) \) are the decoded coefficients in the time-varying basis.  
+where $ \hat{q}_D = (\psi_{N'}\circ \phi_n)(\mu,\nu,t) $ are the decoded coefficients in the time-varying basis.  
 This approach learns a **dynamic** reduced basis along with the parametric latent evolution, providing greater expressivity at the cost of a more complex training procedure.
 
 ---
 
 ### DOD+DFNN
 A simpler variant of DOD-DL-ROM that **omits the autoencoder**.  
-It uses the same learned DOD basis \( V(\mu,t) \) of dimension \( N' \), but replaces the autoencoder and latent model with a single deep feedforward network \( \Phi_{N'} \) that maps \((\mu,\nu,t)\) directly to an \( N' \)-dimensional coefficient vector.  
+It uses the same learned DOD basis $ V(\mu,t) $ of dimension $ N' $, but replaces the autoencoder and latent model with a single deep feedforward network $ \Phi_{N'} $ that maps $(\mu,\nu,t)$ directly to an $ N' $-dimensional coefficient vector.  
 The approximation is:
 
-\[
+$$
 \hat{u}_h(\mu,\nu,t) \approx V(\mu,t)\,\Phi_{N'}(\mu,\nu,t)
-\]
+$$
 
 This model (akin to a baseline in the literature) is less expressive than DOD-DL-ROM but easier to train, since it relies on one network to predict coefficients in the adaptive basis (compare, for example, to the approach in Franco *et al.*, 2024).
 
@@ -95,15 +95,15 @@ This model (akin to a baseline in the literature) is less expressive than DOD-DL
 
 ### CoLoRA *(Berman & Peherstorfer, 2024)*
 A hybrid approach that leverages a **stationary solution** as a reference.  
-First, a *stationary* DOD basis \( V_{\text{stat}}(\mu) \) (time-independent) is learned for the steady-state of the system, and a corresponding coefficient network is trained for the stationary solution.  
-Then a specialized CoLoRA network \( \Phi_\alpha \) (a deep feedforward architecture with custom low-rank layers) maps the physical parameters, time, and the pre-computed stationary solution into the solution space.  
+First, a *stationary* DOD basis $ V_{\text{stat}}(\mu) $ (time-independent) is learned for the steady-state of the system, and a corresponding coefficient network is trained for the stationary solution.  
+Then a specialized CoLoRA network $ \Phi_\alpha $ (a deep feedforward architecture with custom low-rank layers) maps the physical parameters, time, and the pre-computed stationary solution into the solution space.  
 In forward inference, this model produces the full state as:
 
-\[
+$$
 \hat{u}_h(\mu,\nu,t) \approx A \,\Phi_\alpha\!\big(\nu,\,t,\,\hat{u}^{\,\text{stat}}_{\mu,\nu}\big),
-\]
+$$
 
-where \( A \) is again a POD basis for the spatial field and \( \hat{u}^{\,\text{stat}}_{\mu,\nu} \) is the pre-reduced stationary solution.  
+where $ A $ is again a POD basis for the spatial field and $ \hat{u}^{\,\text{stat}}_{\mu,\nu} $ is the pre-reduced stationary solution.  
 The CoLoRA-inspired model thus adjusts a low-rank stationary solution to predict the time-evolving solution.  
 *(This architecture is only meaningful when the problem has a well-defined stationary/steady-state component.)*
 
