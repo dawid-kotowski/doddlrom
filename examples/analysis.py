@@ -70,45 +70,97 @@ def plot_params_vs_error(df, example_name, outdir):
         plt.savefig(outdir / f"{model}_params_vs_error.png")
         plt.close()
 
-def plot_shared_params_vs_error(df, example_name, outdir):
-    models = df['rom'].unique()
+def plot_shared_params_vs_error(
+    df: pd.DataFrame,
+    example_name: str,
+    outdir: Path,
+    linestyles: tuple[str, ...] = ("-", "--", "-.", ":"),
+    markers: tuple[str, ...] = ("o", "s", "^", "D", "P", "v", ">", "<", "h", "X"),
+    show_r2: bool = True,
+):
+    """
+    Scatter (points) + log-log fit (lines) per model with matching colors.
+    y = C * x^slope  ⇔  log y = log C + slope * log x
+    """
+    outdir.mkdir(parents=True, exist_ok=True)
+    colors = ["#4E79A7","#F28E2B","#E15759","#76B7B2",
+                "#59A14F","#EDC948","#B07AA1","#FF9DA7","#9C755F","#BAB0AC"]
+
+    models = [m for m in df["rom"].dropna().unique()]
+    if not models:
+        print("[analysis] No 'rom' values found; skipping plot.")
+        return {}
+
     plt.figure()
-    for model in models:
-        sub = df[df['rom'] == model]
-        x = sub['rel_L2G'].values.astype(float)
-        y = sub['params_nonzero'].values.astype(float)
+    slopes: dict[str, float] = {}
 
-        coeffs = np.polyfit(np.log(x), np.log(y), 1)
-        slope, intercept = coeffs
-        fit_line = np.exp(intercept) * x**slope
+    for i, model in enumerate(models):
+        sub = df[df["rom"] == model]
+        x = pd.to_numeric(sub["rel_L2G"], errors="coerce").to_numpy(dtype=float)
+        y = pd.to_numeric(sub["params_nonzero"], errors="coerce").to_numpy(dtype=float)
 
-        plt.loglog(x, y, 'o', label=f"{model}")
-        plt.loglog(x, fit_line, '-', label=f"{model} fit slope={slope:.2f}")
+        mask = (x > 0) & (y > 0) & np.isfinite(x) & np.isfinite(y)
+        x, y = x[mask], y[mask]
+        if x.size < 2:
+            continue
+
+        lx, ly = np.log(x), np.log(y)
+        slope, intercept = np.polyfit(lx, ly, 1)
+        slopes[model] = float(slope)
+        yhat = intercept + slope * lx
+        r2 = 1 - np.sum((ly - yhat) ** 2) / np.sum((ly - ly.mean()) ** 2) if show_r2 and lx.size > 1 else None
+
+        xs = np.geomspace(x.min(), x.max(), 200)
+        ys = np.exp(intercept) * xs ** slope
+
+        c  = colors[i % len(colors)]
+        ls = linestyles[i % len(linestyles)]
+        mk = markers[i % len(markers)]
+
+        plt.loglog(x, y, linestyle="none", marker=mk, markersize=6,
+                   markerfacecolor=c, markeredgecolor=c, alpha=0.85, label=None)
+        label = f"{model} fit slope={slope:.2f}" + (f", $R^2$={r2:.2f}" if r2 is not None else "")
+        plt.loglog(xs, ys, linestyle=ls, color=c, linewidth=2.0, label=label)
 
     plt.xlabel(r"$\mathcal{E}_R$ (relative error)")
     plt.ylabel("# active weights")
     plt.title("Comparison: weights vs. error")
+    plt.grid(True, which="both", linestyle=":", alpha=0.4)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(outdir / "shared_params_vs_error.png")
+    plt.savefig(outdir / "shared_params_vs_error.png", dpi=150)
     plt.close()
+    return slopes
 
-def plot_knw(example_name, outdir, zero_tol=1e-14, head_frac=0.02, tail_frac=0.02):
+def plot_knw(
+    example_name,
+    outdir,
+    zero_tol: float = 1e-14,
+    head_frac: float = 0.02,
+    tail_frac: float = 0.02,
+    linestyles: tuple[str, ...] = ("-", "--"),
+    markers: tuple[str, ...] = ("o", "s"),
+    show_r2: bool = True,
+):
     """
-    Plot tail sums S(n) = sum_{k>n} sigma_k on a semilogy (linear x, log y).
-    Fit S(n) ~ c * n^{-alpha} using log–log regression, but *only* over
-    the non-near-zero region of S to avoid KNW artifacts once tails vanish.
+    Plot tail sums S(n) = sum_{k>n} sigma_k on semilogy (linear x, log y)
+    with the same optical style as your shared_params_vs_error:
+      - scatter points (colored markers)
+      - same-colored fit line with custom linestyle
+      - modern palette
 
-    Parameters
-    ----------
-    zero_tol : float
-        Entries of S(n) <= zero_tol are considered "near zero" and excluded from the fit window.
-    head_frac, tail_frac : float in [0, 0.5)
-        Optional trimming (fractions of the valid fit window) to avoid edge effects.
+    Fits S(n) ~ c * n^{-alpha} on a trimmed, non-near-zero window.
     """
+    from pathlib import Path
+    import numpy as np
+    import matplotlib.pyplot as plt
+
     outdir = Path(outdir); outdir.mkdir(parents=True, exist_ok=True)
     path = Path(training_data_path(example_name) / f"pod_singular_values_{example_name}.npz")
     data = np.load(path)
+
+    colors = ["#4E79A7","#F28E2B","#E15759","#76B7B2",
+                "#59A14F","#EDC948","#B07AA1","#FF9DA7","#9C755F","#BAB0AC"]
 
     sigma_global = np.asarray(data['sigma_global_NA'], dtype=float).reshape(-1)
     sigma_sup = (np.asarray(data['sigma_mu_t_sup'], dtype=float).reshape(-1)
@@ -121,7 +173,6 @@ def plot_knw(example_name, outdir, zero_tol=1e-14, head_frac=0.02, tail_frac=0.0
     N_A = int(sigma_global.shape[0])
     n_vals = np.arange(1, N_A, dtype=int)
 
-    # Tail sums via reverse cumsum: tail[k] = sum_{j>=k} sigma_j
     def tail_sums(sig):
         tail = np.cumsum(sig[::-1])[::-1]
         S = np.zeros_like(n_vals, dtype=float)
@@ -132,100 +183,104 @@ def plot_knw(example_name, outdir, zero_tol=1e-14, head_frac=0.02, tail_frac=0.0
     S_global = tail_sums(sigma_global)
     S_sup    = tail_sums(sigma_sup)
 
-    # Helper: choose fit indices only where S > zero_tol, then trim head/tail a bit
     def choose_fit_indices(S):
         mask = S > zero_tol
         if not np.any(mask):
             return np.array([], dtype=int)
-        last = np.where(mask)[0][-1]
         first = np.where(mask)[0][0]
-        
+        last  = np.where(mask)[0][-1]
         length = last - first + 1
         drop_h = int(max(0, round(head_frac * length)))
         drop_t = int(max(0, round(tail_frac * length)))
-        lo = first + drop_h
-        hi = last - drop_t
-        if lo > hi:
-            lo, hi = first, last
+        lo, hi = first + drop_h, last - drop_t
+        if lo > hi: lo, hi = first, last
         return np.arange(lo, hi + 1, dtype=int)
 
-    # Fit S ~ c * n^{-alpha} via log–log regression, restricted to chosen indices
     def fit_power_law(n, S):
         idx = choose_fit_indices(S)
         if idx.size == 0:
             return None
         x = n[idx].astype(float)
         y = np.maximum(S[idx], zero_tol)
-        slope, intercept = np.polyfit(np.log(x), np.log(y), 1)  # log S = a + b log n
+        lx, ly = np.log(x), np.log(y)
+        slope, intercept = np.polyfit(lx, ly, 1)   # log S = a + b log n
         alpha = -slope
         c = np.exp(intercept)
-        return {"alpha": float(alpha), "c": float(c), "idx": idx}
+        yhat = intercept + slope * lx
+        R2 = 1 - np.sum((ly - yhat)**2)/np.sum((ly - ly.mean())**2) if show_r2 and lx.size > 1 else None
+        return {"alpha": float(alpha), "c": float(c), "idx": idx, "R2": (None if R2 is None else float(R2))}
 
     fit_g = fit_power_law(n_vals, S_global)
     fit_s = fit_power_law(n_vals, S_sup)
 
-    # Build fitted lines only on their respective fit windows
-    Sg_fit = np.full_like(S_global, np.nan, dtype=float)
-    if fit_g is not None:
-        jj = fit_g["idx"]
-        Sg_fit[jj] = fit_g["c"] * (n_vals[jj] ** (-fit_g["alpha"]))
+    def draw_panel(xn, S, fit, title, fname, color, ls, mk, ylabel):
+        plt.figure()
+        mask_sc = S > 0
+        plt.semilogy(xn[mask_sc], S[mask_sc],
+                     linestyle="none", marker=mk, markersize=6,
+                     markerfacecolor=color, markeredgecolor=color, alpha=0.85, label=None)
 
-    Ss_fit = np.full_like(S_sup, np.nan, dtype=float)
-    if fit_s is not None:
-        jj = fit_s["idx"]
-        Ss_fit[jj] = fit_s["c"] * (n_vals[jj] ** (-fit_s["alpha"]))
+        if fit is not None:
+            jj = fit["idx"]
+            S_fit = fit["c"] * (xn[jj] ** (-fit["alpha"]))
+            label = (rf"Fit: $S\approx c\,n^{{-\alpha}}$, "
+                     rf"$\alpha\approx{fit['alpha']:.2f}$" +
+                     (rf", $R^2={fit['R2']:.2f}$" if fit["R2"] is not None else ""))
+            plt.semilogy(xn[jj], S_fit, linestyle=ls, color=color, linewidth=2.0, label=label)
 
-    # ---------- Plots (linear x, log y) ----------
-    # Global
-    plt.figure()
-    plt.semilogy(n_vals, np.maximum(S_global, zero_tol), label='Global tail sum $S(n)$')
-    if fit_g is not None:
-        plt.semilogy(n_vals, np.maximum(Sg_fit, zero_tol), linestyle='--',
-                     label=f'Fit on non-zero region: $S\\approx c n^{{-\\alpha}}$, '
-                           f'$\\alpha\\approx{fit_g["alpha"]:.2f}$')
-    plt.xlabel('n'); plt.ylabel('Tail sum $S(n)$')
-    plt.title('Global singular-values tail')
-    plt.legend(); plt.tight_layout()
-    plt.savefig(outdir / "knw_global.png", dpi=150)
-    plt.close()
+        plt.xlabel('n'); plt.ylabel(ylabel)
+        plt.title(title)
+        plt.grid(True, which="both", linestyle=":", alpha=0.4)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(outdir / fname, dpi=150)
+        plt.close()
 
-    # Supremum
-    plt.figure()
-    plt.semilogy(n_vals, np.maximum(S_sup, zero_tol), label='Sup tail sum $S_{\\sup}(n)$')
-    if fit_s is not None:
-        plt.semilogy(n_vals, np.maximum(Ss_fit, zero_tol), linestyle='--',
-                     label=f'Fit on non-zero region: $S\\approx c n^{{-\\beta}}$, '
-                           f'$\\beta\\approx{fit_s["alpha"]:.2f}$')
-    plt.xlabel('n'); plt.ylabel('$S_{\\sup}(n)$')
-    plt.title('Sup over $(\\mu,t)$ singular-values tail')
-    plt.legend(); plt.tight_layout()
-    plt.savefig(outdir / "knw_sup.png", dpi=150)
-    plt.close()
+    c_g, c_s = colors[0], colors[1]
+    ls_g = linestyles[0 % len(linestyles)]
+    ls_s = linestyles[1 % len(linestyles)]
+    mk_g = markers[0 % len(markers)]
+    mk_s = markers[1 % len(markers)]
+
+    draw_panel(n_vals, S_global, fit_g,
+               title='Global singular-values tail',
+               fname="knw_global.png",
+               color=c_g, ls=ls_g, mk=mk_g,
+               ylabel='Tail sum $S(n)$')
+
+    draw_panel(n_vals, S_sup, fit_s,
+               title='Sup over $(\\mu,t)$ singular-values tail',
+               fname="knw_sup.png",
+               color=c_s, ls=ls_s, mk=mk_s,
+               ylabel='$S_{\\sup}(n)$')
+
 
 def plot_sample_error_curves(
     example_name: str,
     outdir: Path,
     max_lines: int = 6,
     y_top: float = 1.5,
-    x_pad: float = 0.5
+    x_pad: float = 0.5,
+    linestyles: tuple[str, ...] = ("-", "--", "-.", ":"),
+    markers: tuple[str, ...] = ("o", "s", "^", "D", "P", "v", ">", "<", "h", "X")
 ):
     """
-      - sample_error_pod.png   : E_S vs N     (one line per test_samples)
-      - sample_error_dod.png   : E_S vs N'    (one line per test_samples)
-
-    Linear x-axis, integer ticks at the dimensions present.
+      - sample_error_pod.png :  E_S vs N_s, one curve per POD dimension N
+      - sample_error_dod.png :  E_S vs N_s, one curve per DOD dimension N'
+      Styling: matching scatter & line colors, cycled linestyles/markers, dashed ref slope.
     """
     outdir.mkdir(parents=True, exist_ok=True)
 
+    colors = ["#4E79A7","#F28E2B","#E15759","#76B7B2",
+                "#59A14F","#EDC948","#B07AA1","#FF9DA7","#9C755F","#BAB0AC"]
+
     def _fit_fixed_slope_powerlaw(Ns: np.ndarray, Es: np.ndarray, gamma: float):
-        mask = (Ns > 0) & (Es > 0)
+        mask = (Ns > 0) & (Es > 0) & np.isfinite(Ns) & np.isfinite(Es)
         if np.count_nonzero(mask) < 3:
             return None
-        x = np.log(Ns[mask])
-        y = np.log(Es[mask])
+        x = np.log(Ns[mask]); y = np.log(Es[mask])
         logC = float(np.mean(y + gamma * x))
-        C = np.exp(logC)
-        return C
+        return np.exp(logC)
 
     for model in ("pod", "dod"):
         df, path = load_error_decomp_df(example_name, model)
@@ -233,19 +288,21 @@ def plot_sample_error_curves(
             continue
 
         if model == "pod":
-            dim_col = "N"
-            title   = r"POD: sample error $\mathcal{E}_S$ vs $N_s$"
-            fname   = "sample_error_pod.png"
-            xlabel  = r"$N_s$"
-            ref_gamma = 1/4   # POD ~ N_s^{-1/4}
+            dim_col  = "N"
+            title    = r"POD: sample error $\mathcal{E}_S$ vs $N_s$"
+            fname    = "sample_error_pod.png"
+            xlabel   = r"$N_s$"
+            ref_gamma = 1/4           # POD ~ N_s^{-1/4}
             ref_label = r"$N_s^{-1/4}$"
+            dim_label = r"$N$"
         else:
-            dim_col = "N_prime"
-            title   = r"DOD: sample error $\mathcal{E}_S$ vs $N_s$"
-            fname   = "sample_error_dod.png"
-            xlabel  = r"$N_s$"
-            ref_gamma = 1/8   # DOD ~ N_s^{-1/8}
-            ref_label = r"$N_{s_2}^{-1/4}$"
+            dim_col  = "N_prime"
+            title    = r"DOD: sample error $\mathcal{E}_S$ vs $N_s$"
+            fname    = "sample_error_dod.png"
+            xlabel   = r"$N_s$"
+            ref_gamma = 1/8           # DOD ~ N_s^{-1/8}
+            ref_label = r"$N_s^{-1/8}$"
+            dim_label = r"$N'$"
 
         df = df.copy()
         df[dim_col] = pd.to_numeric(df[dim_col], errors="coerce")
@@ -259,34 +316,40 @@ def plot_sample_error_curves(
         )
 
         dims = sorted(agg[dim_col].unique())
-
         if max_lines is not None:
             dims = dims[:max_lines]
 
         all_ns = sorted(agg["test_samples"].unique())
         plt.figure()
 
-        for d in dims:
+        for i, d in enumerate(dims):
             sub = agg[agg[dim_col] == d].sort_values("test_samples")
             if len(sub) == 0:
                 continue
-            plt.plot(sub["test_samples"].values,
-                     sub["E_S"].values,
-                     marker="o", linewidth=2, label=fr"${dim_col}={int(d)}$" if float(d).is_integer() else fr"${dim_col}={d}$")
+            c  = colors[i % len(colors)]
+            ls = linestyles[i % len(linestyles)]
+            mk = markers[i % len(markers)]
+            xs = sub["test_samples"].to_numpy(dtype=float)
+            ys = sub["E_S"].to_numpy(dtype=float)
+
+            plt.plot(xs, ys, linestyle="none", marker=mk, markersize=6,
+                     markerfacecolor=c, markeredgecolor=c, alpha=0.9, label=None)
+            label = fr"{dim_label}={int(d)}" if float(d).is_integer() else fr"{dim_label}={d}"
+            plt.plot(xs, ys, linestyle=ls, color=c, linewidth=2.0, label=label)
 
         Ns_stack, Es_stack = [], []
         for d in dims:
             sub = agg[agg[dim_col] == d]
             Ns_stack.append(sub["test_samples"].to_numpy(dtype=float))
             Es_stack.append(sub["E_S"].to_numpy(dtype=float))
-        if len(Ns_stack):
+        if Ns_stack:
             Ns_stack = np.concatenate(Ns_stack)
             Es_stack = np.concatenate(Es_stack)
             C = _fit_fixed_slope_powerlaw(Ns_stack, Es_stack, ref_gamma)
-            if C is not None:
-                xs = np.array(sorted(set(all_ns)), dtype=float)
-                y_ref = C * (xs ** (-ref_gamma))
-                plt.plot(xs, y_ref, "--", color="black", linewidth=1.8, label=ref_label)
+            if C is not None and len(all_ns):
+                xs_ref = np.array(sorted(set(all_ns)), dtype=float)
+                y_ref  = C * (xs_ref ** (-ref_gamma))
+                plt.plot(xs_ref, y_ref, linestyle="--", color="black", linewidth=1.8, label=ref_label)
             else:
                 print(f"[analysis] Not enough positive points to fit {ref_label} for {model.upper()}.")
 
@@ -308,12 +371,15 @@ def plot_sample_error_curves(
                 ydata = np.asarray(line.get_ydata(), dtype=float)
                 if ydata.size:
                     ymax = max(ymax, float(np.nanmax(ydata)))
+            if ymax > y_top:
+                print(f"[analysis] Warning: {model.upper()} sample-error max {ymax:.2e} exceeds y_top={y_top}; plotting clipped.")
             plt.ylim(0.0, y_top)
 
         plt.tight_layout()
         outpath = outdir / fname
         plt.savefig(outpath, dpi=150)
         plt.close()
+
 
 def _nearest_test_samples(df: pd.DataFrame, target: int) -> int:
     """Pick the available 'test_samples' value closest to target."""

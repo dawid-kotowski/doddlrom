@@ -7,7 +7,7 @@ from utils.paths import training_data_path , benchmarks_path
 import numpy as np
 import torch
 
-Nsample = 3
+Nsample = 1
 
 #region --- Configure this run ------------------------------------------------------
 example_name = 'ex01'

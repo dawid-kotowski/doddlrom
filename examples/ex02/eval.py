@@ -7,7 +7,7 @@ from utils.visualizer import vis_dl_diff, vis_dod_diff, vis_colora
 import numpy as np
 import torch
 
-Nsample = 2
+Nsample = 1
 
 #region --- Configure this run ------------------------------------------------------
 example_name = 'ex02'
