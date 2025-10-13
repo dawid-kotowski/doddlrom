@@ -100,7 +100,7 @@ Then a specialized CoLoRA network $\Phi_\alpha$ (a deep feedforward architecture
 In forward inference, this model produces the full state as:
 
 $$
-\hat{u}_h(\mu,\nu,t) \approx A \,\Phi_\alpha\!\big(\nu,\,t,\,\hat{u}^{\,\text{stat}}_{\mu,\nu}\big),
+\hat{u}_h(\mu,\nu,t) \approx A \Phi_\alpha \big(\nu,\,t,\,\hat{u}^{\,\text{stat}}_{\mu,\nu}\big),
 $$
 
 where $A$ is again a POD basis for the spatial field and $\hat{u}^{\,\text{stat}}_{\mu,\nu}$ is the pre-reduced stationary solution.  
