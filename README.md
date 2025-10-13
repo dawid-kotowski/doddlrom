@@ -1,4 +1,4 @@
-# DODDL-ROM: Deep Orthogonal Decomposition Deep Learning ROMs
+# DOD-DL-ROM: Deep Orthogonal Decomposition Deep Learning ROMs
 
 **Deep Learning-Based Reduced Order Modeling Framework for Parametric PDEs**
 
