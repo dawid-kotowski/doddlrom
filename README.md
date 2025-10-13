@@ -57,7 +57,7 @@ An Autoencoder then compresses this POD space to a latent dimension $n$ (Encoder
 The resulting approximation is:
 
 $$
-\hat{u}_h(\mu,\nu,t) \approx A\,(\psi_{N_A}\circ \phi_n)(\mu,\nu,t)
+\hat{u}_h(\mu,\nu,t) \approx A (\psi_{N_A}\circ \phi_n)(\mu,\nu,t)
 $$
 
 where $\psi_{N_A}$ is the decoder.  
@@ -72,10 +72,16 @@ An Autoencoder (Encoder: $N' \to n$, Decoder: $n \to N'$) and a latent coefficie
 The full-order approximation is:
 
 $$
-\hat{u}_h(\mu,\nu,t) \approx V(\mu,t)\,\hat{q}_D(\mu,\nu,t),
+\hat{u}_h(\mu,\nu,t) \approx V(\mu,t) \hat{q}_D(\mu,\nu,t),
 $$
 
-where $\hat{q}_D = (\psi_{N'} \circ \phi_n)(\mu, \nu, t)$ are the decoded coefficients in the time-varying basis.  
+where 
+
+$$
+\hat{q}_D = (\psi_{N'} \circ \phi_n)(\mu, \nu, t)
+$$ 
+
+are the decoded coefficients in the time-varying basis.  
 This approach learns a **dynamic** reduced basis along with the parametric latent evolution, providing greater expressivity at the cost of a more complex training procedure.
 
 ---
@@ -86,7 +92,7 @@ It uses the same learned DOD basis $V(\mu,t)$ of dimension $N'$, but replaces th
 The approximation is:
 
 $$
-\hat{u}_h(\mu,\nu,t) \approx V(\mu,t)\,\Phi_{N'}(\mu,\nu,t)
+\hat{u}_h(\mu,\nu,t) \approx V(\mu,t) \Phi_{N'}(\mu,\nu,t)
 $$
 
 This model (akin to a baseline in the literature) is less expressive than DOD-DL-ROM but easier to train, since it relies on one network to predict coefficients in the adaptive basis (compare, for example, to the approach in Franco *et al.*, 2024).
