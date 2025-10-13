@@ -75,7 +75,7 @@ $$
 \hat{u}_h(\mu,\nu,t) \approx V(\mu,t)\,\hat{q}_D(\mu,\nu,t),
 $$
 
-where $\hat{q}_D = (\psi_{N'}\circ \phi_n)(\mu,\nu,t)$ are the decoded coefficients in the time-varying basis.  
+where $\hat{q}_D = (\psi_{N'} \circ \phi_n)(\mu, \nu, t)$ are the decoded coefficients in the time-varying basis.  
 This approach learns a **dynamic** reduced basis along with the parametric latent evolution, providing greater expressivity at the cost of a more complex training procedure.
 
 ---
