@@ -12,6 +12,7 @@ python examples/test.py
 --profiles "profiles" 
 --epochs "epochs" 
 --restarts "restarts" 
+--batch-size "batch size"
 --eval-samples "number of samples to test error with"
 --N "reduced dimension for POD-based"
 --N-prime "reduced dimension for DOD-based"
@@ -74,17 +75,17 @@ def time_one_forward(fn, *args, repeats=5):
         times.append((t1 - t0) * 1000.0)
     return float(np.median(times))
 
-def build_trainers_and_models(P, train_valid_set_N_A, train_valid_set_N):
+def build_trainers_and_models(P, train_valid_set_N_A, train_valid_set_N, bs):
     # inner DOD used by DOD+DFNN and DOD-DL-ROM
     innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs())
     inner_trainer = rom.innerDODTrainer(
         nt=P.Nt, dod_model=innerDOD_model,
         train_valid_set=train_valid_set_N_A,
-        epochs=P.generalepochs,              
-        restart=P.generalrestarts,
+        epochs=P.dod_epochs,              
+        restart=P.dod_restarts,
         learning_rate=1e-3,
-        batch_size=128,
-        patience=P.generalpatience,
+        batch_size=bs,
+        patience=P.dod_patience,
     )
 
     # DOD+DFNN (DFNN -> N')
@@ -92,7 +93,7 @@ def build_trainers_and_models(P, train_valid_set_N_A, train_valid_set_N):
     dfnn_trainer = rom.DFNNTrainer(
         nt=P.Nt, N_A=P.N_A, DOD_DL_model=innerDOD_model, coeffnn_model=dfnn_nprime,
         train_valid_set=train_valid_set_N_A, epochs=P.generalepochs, restarts=P.generalrestarts,
-        learning_rate=1e-3, batch_size=128, patience=P.generalpatience
+        learning_rate=3e-3, batch_size=bs, patience=P.generalpatience
     )
 
     # DOD-DL-ROM (DFNN -> n, AE: N'<->n)
@@ -103,7 +104,7 @@ def build_trainers_and_models(P, train_valid_set_N_A, train_valid_set_N):
         nt=P.Nt, DOD_DL_model=innerDOD_model, Coeff_DOD_DL_model=coeff_n,
         Encoder_model=enc, Decoder_model=dec, train_valid_set=train_valid_set_N_A,
         error_weight=0.5, epochs=P.generalepochs, restarts=P.generalrestarts,
-        learning_rate=1e-3, batch_size=128, patience=P.generalpatience
+        learning_rate=1e-3, batch_size=bs, patience=P.generalpatience
     )
 
     # POD-DL-ROM (DFNN -> n, AE: N_A<->n)
@@ -113,7 +114,7 @@ def build_trainers_and_models(P, train_valid_set_N_A, train_valid_set_N):
     pod_trainer = rom.POD_DL_ROMTrainer(
         nt=P.Nt, Coeff_model=pod_coeff, Encoder_model=pod_enc, Decoder_model=pod_dec,
         train_valid_set=train_valid_set_N, error_weight=0.5, epochs=P.generalepochs,
-        restarts=P.generalrestarts, learning_rate=1e-3, batch_size=128,
+        restarts=P.generalrestarts, learning_rate=1e-3, batch_size=bs,
         patience=P.generalpatience
     )
 
@@ -137,6 +138,7 @@ def main():
     parser.add_argument('--profiles', nargs='+', default=['test1', 'test2', 'test3', 'test4', 'test5'])
     parser.add_argument('--epochs', type=int, default=None)
     parser.add_argument('--restarts', type=int, default=None)
+    parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--eval-samples', type=int, default=5)
     parser.add_argument('--N', type=int, default=None)
     parser.add_argument('--N-prime', type=int, default=None)
@@ -153,6 +155,7 @@ def main():
     tv_N = rom.FetchTrainAndValidSet(0.8, example_name, 'N_reduced')
     full = np.load(training_data_path(example_name) / f'full_order_training_data_{example_name}.npz')
     mu_full, nu_full, sol_full = full['mu'], full['nu'], full['solution']
+    bs = args.batch_size
 
     path_to_G = training_data_path(example_name) / f'gram_matrix_{example_name}.npz'
     G = np.load(path_to_G)['gram'].astype(np.float32)
@@ -174,10 +177,14 @@ def main():
             if args.Ns is not None: P.Ns = args.Ns
             if args.Nt is not None: P.Nt = args.Nt
             P.assert_consistent()
-            if args.epochs is not None: P.generalepochs = args.epochs
-            if args.restarts is not None: P.generalrestarts = args.restarts
+            if args.epochs is not None: 
+                P.generalepochs = args.epochs
+                P.dod_epochs = args.epochs
+            if args.restarts is not None: 
+                P.generalrestarts = args.restarts
+                P.dod_restarts = args.restarts
 
-            models, trainers = build_trainers_and_models(P, tv_NA, tv_N)
+            models, trainers = build_trainers_and_models(P, tv_NA, tv_N, bs)
 
             # Train per ROM
             val_losses = {}

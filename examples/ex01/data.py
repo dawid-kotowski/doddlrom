@@ -84,24 +84,53 @@ def main():
     --------------------------
     '''
 
+    # Set up domain
+    def polygon_with_holes_domain():
+        outer = [
+            [0.0, 0.0], [1.00, 0.0],
+            [1.00, 0.20], [0.80, 0.20], [0.80, 0.40], [1.00, 0.40],
+            [1.00, 1.00], [0.0, 1.00], [0.0, 0.20], [0.30, 0.20],
+            [0.30, 0.10], [0.0, 0.10]  
+        ]
+
+        def circle(cx, cy, r, M=40):
+            t = np.linspace(0, 2*np.pi, M, endpoint=False)
+            return [[cx + r*np.cos(tt), cy + r*np.sin(tt)] for tt in t]
+
+        hole1 = circle(0.65, 0.35, 0.05, M=50)
+        hole2 = circle(0.35, 0.65, 0.10, M=40)
+
+        def btype(x):
+            if (x[0]-0.65)**2 + (x[1]-0.35)**2 <= (0.05+1e-3)**2: return 'dirichlet'
+            if (x[0]-0.35)**2 + (x[1]-0.65)**2 <= (0.10+1e-3)**2: return 'neumann'
+            return 'neumann'
+
+        return PolygonalDomain(points=outer, boundary_types=btype, holes=[hole1, hole2])
+
+
     # Define the advection function dependent on 'mu'
     def advection_function(x, mu):
-        mu_value = mu['mu']
-        return np.array([[np.cos(mu_value)*30, np.sin(mu_value)*30] for _ in range(x.shape[0])])
+        m = mu['mu']
+        speed = 40
+        return np.array([[np.cos(m)*speed, np.sin(m)*speed] for _ in range(x.shape[0])])
 
     # Define the stationary problem
     advection_params = Parameters({'mu': 1})
     advection_generic_function = GenericFunction(advection_function, dim_domain=2, 
                                                 shape_range=(2,), parameters=advection_params)
     stationary_problem = StationaryProblem(
-        domain=RectDomain(),
+        domain=polygon_with_holes_domain(),
         rhs=ExpressionFunction('0', 2),
         diffusion=LincombFunction(
             [ExpressionFunction('1 - x[0]', 2), ExpressionFunction('x[0]', 2)],
             [ProjectionParameterFunctional('nu', 1), 1]
         ),
-        dirichlet_data=ExpressionFunction('(-(x[1] - 0.5)**2 + 0.25) * (x[0] < 1e-10)', 2),
+        dirichlet_data = ExpressionFunction(
+            '3 * ( ((x[0]-0.65)**2 + (x[1]-0.35)**2) <= (0.05 + 1e-3)**2 )',
+            2
+        ),
         advection=advection_generic_function,
+        reaction=ConstantFunction(1e-1, 2),
         name='wind_ex01'
     )
 
@@ -120,10 +149,10 @@ def main():
     stat_fom, stat_fom_data = discretize_stationary_cg(stationary_problem, diameter=P.diameter)
 
     # Define the parameter space with ranges for 'mu' and 'nu'
-    parameter_space = fom.parameters.space({'nu': (0.5, 1), 'mu': (0.2, np.pi-0.2)})
+    parameter_space = fom.parameters.space({'nu': (0.01, 0.3), 'mu': (np.pi + 0.5, 2*np.pi)})
 
     # --- stationary FOM & shift ---
-    stat_parameter_space = stat_fom.parameters.space({'nu': (0.5, 1), 'mu': (0.2, np.pi-0.2)})
+    stat_parameter_space = stat_fom.parameters.space({'nu': (0.01, 0.3), 'mu': (np.pi + 0.5, 2*np.pi)})
 
     # Generate training and validation sets
     sample_size_per_param = int(np.ceil(np.sqrt(P.Ns)))
@@ -162,12 +191,20 @@ def main():
     shifted_solutions = []
     shifted_solutions_pymor = fom.solution_space.empty()
 
+    import time
+    
+    t0 = time.perf_counter()
+    solution = fom.solve(training_set[0])
+    t1 = time.perf_counter()
+    print('time for one computation: ', (t1 - t0) * 1000.0)
+
     for mu_nu in training_set:
         solution = fom.solve(mu_nu)  # [Nt, Nh]
         shifted_solution = solution - u_t_0
         shifted_solutions_pymor.append(shifted_solution)
         shifted_solutions.append(shifted_solution.to_numpy().astype(np.float32))
         solutions.append(solution.to_numpy().astype(np.float32))
+        #fom.visualize(solution)
 
     shifted_solutions = np.stack(shifted_solutions, axis=0)  # [Ns, Nt, Nh]
     solutions = np.stack(solutions, axis=0)                  # [Ns, Nt, Nh]
@@ -267,7 +304,7 @@ def main():
     # Tunables
     N_mu_samples   = 2
     N_t_samples    = 2
-    N_nu_per_mu_t  = 20
+    N_nu_per_mu_t  = 30
 
     rng = np.random.default_rng(1234)
 

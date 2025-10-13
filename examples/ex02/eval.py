@@ -3,8 +3,11 @@ from core import reduced_order_models as rom
 from utils.paths import training_data_path, state_dicts_path
 from core.configs.parameters import Ex02Parameters 
 from utils.paths import training_data_path   
+from utils.visualizer import vis_dl_diff, vis_dod_diff, vis_colora
 import numpy as np
 import torch
+
+Nsample = 1
 
 #region --- Configure this run ------------------------------------------------------
 example_name = 'ex02'
@@ -19,7 +22,7 @@ solution = data['solution']  # shape [Ns, P.Nt, Nh]
 Ns = mu.shape[0]
 idx = np.arange(Ns)
 np.random.shuffle(idx)
-sel = idx[:1]
+sel = idx[:Nsample]
 training_data = [(mu[i], nu[i], solution[i]) for i in sel]  
 
 
@@ -81,6 +84,8 @@ for entry in training_data:
 
 
     #region Check for normalization procedure
+
+    # ------------------------- N_A reduced -------------------------------------------
     A_NA = np.load(training_data_path(example_name) / f'N_A_ambient_{example_name}.npz')['ambient'].astype(np.float32)
     stats = np.load(training_data_path(example_name) / f'normalization_N_A_reduced_{example_name}.npz')
     sol_min = stats['sol_min'].astype(np.float32)  # [N_A]
@@ -112,16 +117,48 @@ for entry in training_data:
     abs_err = float(np.sqrt(err_sq.mean()))
     rel_err = float(np.sqrt(err_sq.sum()) / (np.sqrt(ref_sq.sum()) + 1e-24))
     print(f"[ex03 | A^T G → norm → denorm → A]  abs={abs_err:.3e}  rel={rel_err:.3e}")
-
     # Visualize
     # U_hat_vec = fom.solution_space.from_numpy(U_hat)
     # fom.visualize(
     #     (u_i, U_hat_vec, u_i - U_hat_vec),
     #     legend=(f'FOM (μ={mu.tolist()}, ν={nu.tolist()})',
     #             'A^T G→norm→denorm→A',
-    #             f"Rel L² error (G): {rel_err:.3e}")
+    #             f"Abs L² error (G): {abs_err:.3e}")
     # )
-    #! Check
+
+    # ------------------------- N reduced -------------------------------------------
+    A_P = np.load(training_data_path(example_name) / f'N_ambient_{example_name}.npz')['ambient'].astype(np.float32)
+    stats = np.load(training_data_path(example_name) / f'normalization_N_reduced_{example_name}.npz')
+    sol_min = stats['sol_min'].astype(np.float32)  # [N]
+    sol_max = stats['sol_max'].astype(np.float32)  # [N]
+    U = sol.astype(np.float32)                              # [Nt, N]
+
+    # Project: Y = A_P^T G u_t  -> [Nt, N]
+    Y = np.einsum('ih,hj,tj->ti', A_P.T, G, U, optimize=True)
+    
+    # Normalize
+    eps = 1e-8
+    Y_norm = (Y - sol_min[None, :]) / (sol_max[None, :] - sol_min[None, :] + eps)  # [Nt, N]
+
+    # Denormalize
+    Y_den = rom.denormalize_solution(
+        torch.tensor(Y_norm, dtype=torch.float32, device=device),
+        example_name, reduction_tag='N_reduced'
+    ).cpu().numpy()  # [Nt, N]
+
+    # Lift: û_t = A_P Y_den
+    U_hat  = np.einsum('hi,ti->th', A_P, Y_den, optimize=True)
+
+    def _g_sq(X, Gmat):
+        v = np.einsum('ti,ij,tj->t', X, Gmat, X, optimize=False)
+        return np.maximum(v, 0.0)
+
+    err_sq = _g_sq(U - U_hat, G)
+    ref_sq = _g_sq(U, G)
+    abs_err = float(np.sqrt(err_sq.mean()))
+    rel_err = float(np.sqrt(err_sq.sum()) / (np.sqrt(ref_sq.sum()) + 1e-24))
+    print(f"[ex03 | A_P^T G → norm → denorm → A_P]  abs={abs_err:.3e}  rel={rel_err:.3e}")
+    #endregion! Check
 
     
     # ------------------ Load Modules --------------------------------
@@ -211,15 +248,9 @@ for entry in training_data:
 
 
     # Visualize
-    fom.visualize((u_i, dod_dfnn_sol_vec, u_i - dod_dfnn_sol_vec),
-                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()}, ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                          'DOD+DFNN', f"Relative L\u00b2 error: mean={dod_dfnn_residual:.3e}"))
-    fom.visualize((u_i, pod_dl_sol_vec, u_i - pod_dl_sol_vec),
-                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                          'POD-DL-ROM', f"Relative L\u00b2 error: mean={pod_dl_residual:.3e}"))
-    fom.visualize((u_i, dod_dl_sol_vec, u_i - dod_dl_sol_vec),
-                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                          'DOD-DL-ROM', f"Relative L\u00b2 error: mean={dod_dl_residual:.3e}"))
-    fom.visualize((u_i, colora_sol_vec, u_i - colora_sol_vec),
-                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                          'CoLoRA-DL-ROM', f"Relative L\u00b2 error: mean={colora_residual:.3e}"))
+    mu_list = mu_i.cpu().numpy().flatten().tolist()
+    nu_list = nu_i.cpu().numpy().flatten().tolist()
+
+    vis_dl_diff(fom, u_i, pod_dl_sol_vec, dod_dl_sol_vec, mu_list, nu_list)
+    vis_dod_diff(fom, u_i, dod_dfnn_sol_vec, dod_dl_sol_vec, mu_list, nu_list)
+    vis_colora(fom, u_i, colora_sol_vec, mu_list, nu_list)

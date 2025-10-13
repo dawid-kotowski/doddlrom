@@ -273,7 +273,7 @@ def main():
     # Tunables
     N_mu_samples   = 2
     N_t_samples    = 2
-    N_nu_per_mu_t  = 20
+    N_nu_per_mu_t  = 100
 
     rng = np.random.default_rng(1234)
 

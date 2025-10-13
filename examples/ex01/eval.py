@@ -1,14 +1,17 @@
 from pymor.basic import *
 from core import reduced_order_models as rom
 from utils.paths import training_data_path, state_dicts_path
+from utils.visualizer import vis_dl_diff, vis_dod_diff, vis_colora
 from core.configs.parameters import Ex01Parameters
-from utils.paths import training_data_path  
+from utils.paths import training_data_path , benchmarks_path 
 import numpy as np
 import torch
 
+Nsample = 1
+
 #region --- Configure this run ------------------------------------------------------
 example_name = 'ex01'
-P = Ex01Parameters(profile="baseline")          # or "wide"/"tiny"/"debug"
+P = Ex01Parameters(profile="baseline")
 P.assert_consistent()
 
 #region --- Set up of FOM for pymor utility------------------------------------------
@@ -19,36 +22,68 @@ solution = data['solution']  # shape [Ns, P.Nt, Nh]
 Ns = mu.shape[0]
 idx = np.arange(Ns)
 np.random.shuffle(idx)
-sel = idx[:1]
+sel = idx[:Nsample]
 training_data = [(mu[i], nu[i], solution[i]) for i in sel]  
 
 
 # Define Full Order Model again
-def advection_function(x, mu):
-    mu_value = mu['mu']
-    return np.array([[np.cos(mu_value)*30, np.sin(mu_value)*30] for _ in range(x.shape[0])])
 
+# Set up domain
+def polygon_with_holes_domain():
+    outer = [
+        [0.0, 0.0], [1.00, 0.0],
+        [1.00, 0.20], [0.80, 0.20], [0.80, 0.40], [1.00, 0.40],
+        [1.00, 1.00], [0.0, 1.00], [0.0, 0.20], [0.30, 0.20],
+        [0.30, 0.10], [0.0, 0.10]  
+    ]
+
+    def circle(cx, cy, r, M=40):
+        t = np.linspace(0, 2*np.pi, M, endpoint=False)
+        return [[cx + r*np.cos(tt), cy + r*np.sin(tt)] for tt in t]
+
+    hole1 = circle(0.65, 0.35, 0.05, M=50)
+    hole2 = circle(0.35, 0.65, 0.10, M=40)
+
+    def btype(x):
+        if (x[0]-0.65)**2 + (x[1]-0.35)**2 <= (0.05+1e-3)**2: return 'dirichlet'
+        if (x[0]-0.35)**2 + (x[1]-0.65)**2 <= (0.10+1e-3)**2: return 'neumann'
+        return 'neumann'
+
+    return PolygonalDomain(points=outer, boundary_types=btype, holes=[hole1, hole2])
+
+
+# Define the advection function dependent on 'mu'
+def advection_function(x, mu):
+    m = mu['mu']
+    speed = 40
+    return np.array([[np.cos(m)*speed, np.sin(m)*speed] for _ in range(x.shape[0])])
+
+# Define the stationary problem
 advection_params = Parameters({'mu': 1})
-advection_generic_function = GenericFunction(advection_function, 
-                                             dim_domain=2, shape_range=(2,), 
-                                             parameters=advection_params)
+advection_generic_function = GenericFunction(advection_function, dim_domain=2, 
+                                            shape_range=(2,), parameters=advection_params)
 stationary_problem = StationaryProblem(
-    domain=RectDomain(),
+    domain=polygon_with_holes_domain(),
     rhs=ExpressionFunction('0', 2),
     diffusion=LincombFunction(
         [ExpressionFunction('1 - x[0]', 2), ExpressionFunction('x[0]', 2)],
         [ProjectionParameterFunctional('nu', 1), 1]
     ),
-    dirichlet_data=ExpressionFunction('(-(x[1] - 0.5)**2 + 0.25) * (x[0] < 1e-10)', 2),
+    dirichlet_data = ExpressionFunction(
+        '3 * ( ((x[0]-0.65)**2 + (x[1]-0.35)**2) <= (0.05 + 1e-3)**2 )',
+        2
+    ),
     advection=advection_generic_function,
-    name='advection_problem'
+    reaction=ConstantFunction(1e-1, 2),
+    name='wind_ex01'
 )
 
+# Define the instationary problem
 problem = InstationaryProblem(
-    T=1.,
-    initial_data=ConstantFunction(0, 2),
+    T=P.T,
+    initial_data=ConstantFunction(0., 2),
     stationary_part=stationary_problem,
-    name='advection_problem'
+    name='wind_ex01'
 )
 
 fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt)
@@ -78,6 +113,8 @@ for entry in training_data:
 
 
     #region Check for normalization procedure
+
+    # ------------------------- N_A reduced -------------------------------------------
     A_NA = np.load(training_data_path(example_name) / f'N_A_ambient_{example_name}.npz')['ambient'].astype(np.float32)
     stats = np.load(training_data_path(example_name) / f'normalization_N_A_reduced_{example_name}.npz')
     sol_min = stats['sol_min'].astype(np.float32)  # [N_A]
@@ -117,6 +154,39 @@ for entry in training_data:
     #             'A^T G→norm→denorm→A',
     #             f"Abs L² error (G): {abs_err:.3e}")
     # )
+
+    # ------------------------- N reduced -------------------------------------------
+    A_P = np.load(training_data_path(example_name) / f'N_ambient_{example_name}.npz')['ambient'].astype(np.float32)
+    stats = np.load(training_data_path(example_name) / f'normalization_N_reduced_{example_name}.npz')
+    sol_min = stats['sol_min'].astype(np.float32)  # [N]
+    sol_max = stats['sol_max'].astype(np.float32)  # [N]
+    U = sol.astype(np.float32)                              # [Nt, N]
+
+    # Project: Y = A_P^T G u_t  -> [Nt, N]
+    Y = np.einsum('ih,hj,tj->ti', A_P.T, G, U, optimize=True)
+    
+    # Normalize
+    eps = 1e-8
+    Y_norm = (Y - sol_min[None, :]) / (sol_max[None, :] - sol_min[None, :] + eps)  # [Nt, N]
+
+    # Denormalize
+    Y_den = rom.denormalize_solution(
+        torch.tensor(Y_norm, dtype=torch.float32, device=device),
+        example_name, reduction_tag='N_reduced'
+    ).cpu().numpy()  # [Nt, N]
+
+    # Lift: û_t = A_P Y_den
+    U_hat  = np.einsum('hi,ti->th', A_P, Y_den, optimize=True)
+
+    def _g_sq(X, Gmat):
+        v = np.einsum('ti,ij,tj->t', X, Gmat, X, optimize=False)
+        return np.maximum(v, 0.0)
+
+    err_sq = _g_sq(U - U_hat, G)
+    ref_sq = _g_sq(U, G)
+    abs_err = float(np.sqrt(err_sq.mean()))
+    rel_err = float(np.sqrt(err_sq.sum()) / (np.sqrt(ref_sq.sum()) + 1e-24))
+    print(f"[ex03 | A_P^T G → norm → denorm → A_P]  abs={abs_err:.3e}  rel={rel_err:.3e}")
     #endregion! Check
 
     
@@ -209,15 +279,9 @@ for entry in training_data:
 
 
     # Visualize
-    fom.visualize((u_i, dod_dfnn_sol_vec, u_i - dod_dfnn_sol_vec),
-                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()}, ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                          'DOD+DFNN', f"Relative L\u00b2 error: mean={dod_dfnn_residual:.3e}"))
-    fom.visualize((u_i, pod_dl_sol_vec, u_i - pod_dl_sol_vec),
-                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                          'POD-DL-ROM', f"Relative L\u00b2 error: mean={pod_dl_residual:.3e}"))
-    fom.visualize((u_i, dod_dl_sol_vec, u_i - dod_dl_sol_vec),
-                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                          'DOD-DL-ROM', f"Relative L\u00b2 error: mean={dod_dl_residual:.3e}"))
-    fom.visualize((u_i, colora_sol_vec, u_i - colora_sol_vec),
-                  legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                          'CoLoRA-DL-ROM', f"Relative L\u00b2 error: mean={colora_residual:.3e}"))
+    mu_list = mu_i.cpu().numpy().flatten().tolist()
+    nu_list = nu_i.cpu().numpy().flatten().tolist()
+
+    vis_dl_diff(fom, u_i, pod_dl_sol_vec, dod_dl_sol_vec, mu_list, nu_list)
+    vis_dod_diff(fom, u_i, dod_dfnn_sol_vec, dod_dl_sol_vec, mu_list, nu_list)
+    vis_colora(fom, u_i, colora_sol_vec, mu_list, nu_list)

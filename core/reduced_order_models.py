@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as func
 import torch.optim as optim
+import os
+import csv
 import numpy as np
 import math
 import copy
@@ -112,7 +114,6 @@ class FetchTrainAndValidSet:
         else:
             raise ValueError("Type must be 'train' or 'valid'")
 
-
 # Define DatasetLoader
 class DatasetLoader(Dataset):
     def __init__(self, data):
@@ -143,17 +144,18 @@ V: (Theta \times [0, T]) -> (R^(N_h \times N'))
 
 # Define Seed Module for geometric parameter
 class SeedModule(nn.Module):
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, input_dim, output_dim, leaky_slope=0.1):
         super(SeedModule, self).__init__()
-        self.fc = nn.Linear(input_dim, output_dim)
+        first = [nn.Linear(input_dim, output_dim), nn.LeakyReLU(negative_slope=leaky_slope)]
+        seed = first + [nn.Linear(output_dim, output_dim)]
+        self.fw = nn.Sequential(*seed)
 
     def forward(self, mu):
-        mu = func.leaky_relu(self.fc(mu), 0.1)
-        return mu
+        return self.fw(mu)
 
 # Define Root Modules for innerDOD
 class RootModule(nn.Module):
-    def __init__(self, seed_dim, root_dim, root_layer_sizes, leaky_relu_slope=0.1):
+    def __init__(self, seed_dim, root_dim, root_layer_sizes, leaky_slope=0.1):
         super(RootModule, self).__init__()
         if root_layer_sizes is None:
             root_layer_sizes = [1]
@@ -162,19 +164,41 @@ class RootModule(nn.Module):
         for i in range(len(root_layer_sizes) - 1):
             self.layers.append(nn.Linear(root_layer_sizes[i], root_layer_sizes[i + 1]))
             if i < len(root_layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_slope))
         self.layers.append(nn.Linear(root_layer_sizes[len(root_layer_sizes) - 1], root_dim))
 
     def forward(self, mu_t):
         for layer_forward in self.layers:
             mu_t = layer_forward(mu_t)
         return mu_t
+    
+# Define a non-trainable ORTH block (uses Cholesky)
+class Orth(nn.Module):
+    def __init__(self, eps: float = 1e-6, use_double_for_numerics: bool = False):
+        super().__init__()
+        self.eps = eps
+        self.use_double = use_double_for_numerics
+
+    def forward(self, V):
+        squeeze = (V.dim() == 2)
+        if squeeze: V = V.unsqueeze(0)
+        with torch.cuda.amp.autocast(enabled=False):
+            X = V.to(torch.float64 if self.use_double else torch.float32)   # [B, N_A, N']
+            G = X.transpose(-2, -1) @ X                                     # [B, N', N']
+            G = G + self.eps * torch.eye(G.size(-1), device=G.device, dtype=G.dtype)
+            R = torch.linalg.cholesky(G)                                    # [B, N', N']
+            # V_orth = V @ inv(R) -> triangular solve
+            V_orth = torch.linalg.solve_triangular(R, 
+                                                   X.transpose(-2, -1), 
+                                                   upper=True).transpose(-2, -1)
+        return (V_orth.to(V.dtype)).squeeze(0) if squeeze else V_orth.to(V.dtype)
 
 # Define Complete DOD_DL_ DL Model 
 # returns a tensor of size [N_A, N']
 class innerDOD(nn.Module):
     def __init__(self, seed_dim, geometric_dim, root_layer_sizes, N_prime, N_A):
         super(innerDOD, self).__init__()
+        self.orth = Orth(eps=1e-7, use_double_for_numerics=False)
         self.seed_module = SeedModule(geometric_dim, seed_dim)
         self.root_modules = nn.ModuleList(
             [RootModule(seed_dim, N_A, root_layer_sizes) for _ in range(N_prime)])
@@ -196,9 +220,10 @@ class innerDOD(nn.Module):
             mu_t = torch.cat([seed_out, t], dim=-1)
 
             root_outputs = [root(mu_t) for root in self.root_modules]  # N' items of [B, N_A]
-            V = torch.stack(root_outputs, dim=-1)                      # [B, N_A, N']
+            V = torch.stack(root_outputs, dim=-1)                      # [B, N_A, N']  
+            V = self.orth(V)                                    
             return V if B > 1 else V.squeeze(0)
-
+    
 # Define DOD_DL_-DL training
 class innerDODTrainer:
     def __init__(self, nt, dod_model, train_valid_set, epochs=1, restart=1, learning_rate=1e-3,
@@ -216,22 +241,27 @@ class innerDODTrainer:
         valid_data = train_valid_set('valid')
 
         pin = (self.device.type == 'cuda')
-        self.train_loader = DataLoader(DatasetLoader(train_data), 
-                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
-                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
-        
-    def orth_penalty(self, V):
-        """
-        V: [B, N_A, N']  (columns should be orthonormal in Euclidean sense)
-        Returns: scalar penalty
-        """
-        Bt, NA, Np = V.shape
-        S = torch.bmm(V.transpose(1, 2), V)                    # [B, N', N']
-        I = torch.eye(Np, device=V.device, dtype=V.dtype).expand_as(S)
-        return ((S - I).pow(2).sum(dim=(-2, -1)) / Np).mean()  
+        self.train_loader = DataLoader(
+            DatasetLoader(train_data),
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
 
-    def loss_function(self, mu_batch, solution_batch, lambda_orth=1):
+        self.valid_loader = DataLoader(
+            DatasetLoader(valid_data),
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+        
+    def loss_function(self, mu_batch, solution_batch):
         """
         mu_batch:        [B, geometric_dim]
         solution_batch:  [B, nt+1, N_A]   (solutions already in the ambient space R^{N_A})
@@ -241,7 +271,6 @@ class innerDODTrainer:
         assert solution_batch.dim() == 3
 
         temp_proj = 0.0
-        temp_orth = 0.0
 
         for i in range(self.nt + 1):
             t_batch = torch.full((B, 1), i/(self.nt + 1), dtype=torch.float32, device=self.device)
@@ -254,12 +283,8 @@ class innerDODTrainer:
             temp_proj = temp_proj + torch.sum((error ** 2).sum(dim=1)) 
             # NEVER make it += for some grad_tracking reasons ???
 
-            if lambda_orth > 0.0:
-                temp_orth = temp_orth + self.orth_penalty(V)
-
-        data_loss = temp_proj / (self.nt + 1)
-        orth_loss = temp_orth / (self.nt + 1)
-        return data_loss + lambda_orth * orth_loss 
+        loss = temp_proj / ((self.nt + 1) * B)
+        return loss 
 
 
     def train(self):
@@ -287,9 +312,12 @@ class innerDODTrainer:
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.5, patience=1)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2, 
+                                                                       eta_min=1e-7)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -313,7 +341,7 @@ class innerDODTrainer:
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.model.eval()
@@ -323,11 +351,12 @@ class innerDODTrainer:
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        B = mu_batch.size(0)
                         batch_loss = self.loss_function(mu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
 
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
@@ -368,7 +397,7 @@ DOD-DL-ROM   : (Theta \times Theta' \times [0, T]) -> R^N'
 
 # Define Phi_1 module for allocation
 class Phi1Module(nn.Module):
-    def __init__(self, geometric_dim, m_0, n_0, layer_sizes, leaky_relu_slope=0.1):
+    def __init__(self, geometric_dim, m_0, n_0, layer_sizes, leaky_slope=0.1):
         super(Phi1Module, self).__init__()
         self.m = m_0
         self.n = n_0
@@ -379,7 +408,7 @@ class Phi1Module(nn.Module):
         for i in range(len(layer_sizes) - 1):
             self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_slope))
         self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n_0 * m_0))
 
     def forward(self, mu_t):
@@ -390,7 +419,7 @@ class Phi1Module(nn.Module):
 
 # Define Phi_2 module for allocation
 class Phi2Module(nn.Module):
-    def __init__(self, physical_dim, m_0, n_0, layer_sizes, leaky_relu_slope=0.1):
+    def __init__(self, physical_dim, m_0, n_0, layer_sizes, leaky_slope=0.1):
         super(Phi2Module, self).__init__()
         self.m = m_0
         self.n = n_0
@@ -401,7 +430,7 @@ class Phi2Module(nn.Module):
         for i in range(len(layer_sizes) - 1):
             self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_slope))
         self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n_0 * m_0))
 
     def forward(self, nu_t):
@@ -430,7 +459,7 @@ class HadamardNN(nn.Module):
 # Define optional parameter-to-latent-dynamic Model
 #returns [B, N'] or [B, n]
 class DFNN(nn.Module):
-    def __init__(self, geometric_dim, physical_dim, n, layer_sizes=None, leaky_relu_slope=0.1):
+    def __init__(self, geometric_dim, physical_dim, n, layer_sizes=None, leaky_slope=0.1):
         super(DFNN, self).__init__()
         if layer_sizes is None:
             layer_sizes = [1]
@@ -439,7 +468,7 @@ class DFNN(nn.Module):
         for i in range(len(layer_sizes) - 1):
             self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_slope))
         self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n))
     def forward(self, mu, nu, t):
         mu_nu_t = torch.cat((mu, nu, t), dim=1)
@@ -465,11 +494,26 @@ class DFNNTrainer:
         valid_data = train_valid_set('valid')
 
         pin = (self.device.type == 'cuda')
-        self.train_loader = DataLoader(DatasetLoader(train_data), 
-                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
-                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
-                                    
+        self.train_loader = DataLoader(
+            DatasetLoader(train_data),
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
+        self.valid_loader = DataLoader(
+            DatasetLoader(valid_data),
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         """
         Dimensionality:
@@ -494,7 +538,7 @@ class DFNNTrainer:
             error = coeff_pred - alpha_true                                                  # [B, N']
             temp_error = temp_error + torch.sum((error ** 2).sum(dim=1))               
 
-        loss = temp_error / (self.nt + 1)
+        loss = temp_error / ((self.nt + 1) * B)
         return loss
 
 
@@ -523,9 +567,12 @@ class DFNNTrainer:
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.5, patience=1)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2, 
+                                                                       eta_min=1e-7)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -550,7 +597,7 @@ class DFNNTrainer:
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.model.eval()
@@ -560,11 +607,12 @@ class DFNNTrainer:
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        B = mu_batch.size(0)
                         batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = copy.deepcopy(self.model.state_dict())
@@ -589,132 +637,203 @@ class DFNNTrainer:
             self.model.load_state_dict(best_model)
         return best_loss
     
+'''
+----------------------------------
+For both following DL-ROM inspired
+Classes, we will need some size 
+helpers
+----------------------------------
+'''
+#region Helpers for Autoencoder
+
+def _as_list(x, L=None, name="param"):
+    if isinstance(x, (list, tuple)):
+        x = list(x)
+        if L is not None and len(x) != L:
+            raise ValueError(f"{name} length {len(x)} must match num_layers={L}.")
+        return x
+    if L is None:
+        return [x]
+    return [x] * L
+
+def _grid_from_dim(D: int):
+    side = int(math.ceil(math.sqrt(D)))
+    return side, side
+
+def _conv2d_out(side, k, s, p):
+    # Conv2d formula from wiki
+    # side: sqrt(input_dim) after one conv layer
+    return (side + 2*p - k) // s + 1
+
+def _schedule_sides(side0, kernels, strides, paddings):
+    """Return [s0, s1, ..., sL] after L convs."""
+    s = side0
+    sizes = [s]
+    for k, srt, pad in zip(kernels, strides, paddings):
+        s = _conv2d_out(s, k, srt, pad)
+        if s <= 0:
+            raise ValueError(f"Conv schedule produced non-positive side {s}. "
+                             f"Check kernel/stride/padding.")
+        sizes.append(s)
+    return sizes  # len L+1
+
+def _output_padding_for_deconv(s_in, s_out, k, s, p):
+    # Conv2d reverse formula
+    # op: returns needed output padding
+    op = s_out - ((s_in - 1) * s - 2 * p + k)
+    if op < 0 or op >= s:
+        raise ValueError(f"output_padding={op} invalid for stride={s} "
+                         f"(sizes {s_in}->{s_out}, k={k}, p={p}).")
+    return int(op)
+
+#endregion
+
 # Define Encoder 
-# takes [B, n] return [B, N' = loop(floor((n + 2p - k) / s) + 1)**2)] 
+# takes [B, n] return [B, N' = 2^k'] or [B, N = 2^k]
 class Encoder(nn.Module):
     def __init__(self, input_dim, in_channels, hidden_channels, latent_dim,
-                num_layers, kernel, stride, padding):
+                 num_layers, kernel, stride, padding, leaky_slope=0.1):
         super().__init__()
-        self.input_dim = input_dim
-        self.latent_dim = latent_dim
-        self.hidden_channels = hidden_channels
-        self.num_layers = num_layers
-        self.padding = padding
-        self.kernel = kernel
-        self.stride = stride
-        self.encoder_output_shape = self._compute_encoder_shape() 
-        self.grid_size = self._compute_grid(input_dim)
-        H, W = self.grid_size
+        self.input_dim  = int(input_dim)
+        self.latent_dim = int(latent_dim)
+        self.in_channels = int(in_channels)
 
-        # Convolutional layers
-        conv_layers = []
-        current_channels = in_channels
-        for i in range(num_layers):
-            next_channels = hidden_channels
-            conv_layers.append(nn.Conv2d(current_channels, next_channels, kernel_size=kernel,
-                                    stride=stride, padding=padding))
-            conv_layers.append(nn.LeakyReLU(0.1))
-            current_channels = next_channels
-        self.conv = nn.Sequential(*conv_layers)
+        hc = hidden_channels
+        st = stride
+        kr = kernel
+        pd = padding
+        lengths = [len(x) for x in (hc, st, kr, pd) if isinstance(x, (list, tuple))]
+        if lengths:
+            if any(L != lengths[0] for L in lengths):
+                raise ValueError(f"Inconsistent list lengths in AE config: {lengths}")
+            num_layers = lengths[0]
+        self.num_layers = int(num_layers)
 
-        # Linear layers
-        linear_layers = []
-        C, H, W = self.encoder_output_shape
-        current_dim = int(C*H*W)
-        for i in range(self._compute_linear_num() - 1):
-            linear_layers.append(nn.Linear(int(current_dim), int(current_dim // 2)))
-            linear_layers.append(nn.LeakyReLU(0.1))
-            current_dim = current_dim // 2
-        linear_layers.append(nn.Linear(int(current_dim), int(self.latent_dim)))
+        # assert list type
+        self.hidden_channels = _as_list(hidden_channels, self.num_layers, "hidden_channels")
+        self.strides         = _as_list(stride,          self.num_layers, "stride")
+        self.kernels         = _as_list(kernel,          self.num_layers, "kernel")
+        self.paddings        = _as_list(padding,         self.num_layers, "padding")
 
-        self.linear = nn.Sequential(*linear_layers)
+        H0, W0 = _grid_from_dim(self.input_dim)
+        if H0 != W0:
+            raise ValueError("Only square grids supported.")
+        self.grid_size = (H0, W0)
+        self.sides = _schedule_sides(H0, self.kernels, self.strides, self.paddings) 
+        Hb = self.sides[-1]  # last additional layer for projection
 
-    def _compute_grid(self, D):
-        size = math.ceil(math.sqrt(D))
-        return (size, size)
-    
-    def _compute_linear_num(self):
-        C, H, W = self._compute_encoder_shape()
-        num = int(np.floor(C*H*W / self.latent_dim)) - 1
-        return max(1, num)
+        conv = []
+        C_in = self.in_channels
+        for C_out, k, s, p in zip(self.hidden_channels, self.kernels, self.strides, self.paddings):
+            conv += [nn.Conv2d(C_in, C_out, kernel_size=k, stride=s, padding=p),
+                     nn.LeakyReLU(negative_slope=leaky_slope)]
+            C_in = C_out
+        self.conv = nn.Sequential(*conv)
 
-
-    def _compute_encoder_shape(self):
-        D_temp = math.ceil(math.sqrt(self.input_dim))
-        for layer in range(self.num_layers):
-            D_temp = math.floor((D_temp + 2 * self.padding - self.kernel) / self.stride) + 1
-        return (self.hidden_channels, D_temp, D_temp)
+        # assert projected dimension with linear layer
+        Cb = self.hidden_channels[-1]
+        flat_bottleneck = Cb * Hb * Hb
+        lin = []
+        cur = flat_bottleneck
+        while cur > 2 * self.latent_dim:
+            lin += [nn.Linear(cur, cur // 2), nn.LeakyReLU(negative_slope=leaky_slope)]
+            cur = cur // 2
+        lin += [nn.Linear(cur, self.latent_dim)]
+        self.linear = nn.Sequential(*lin)
 
     def forward(self, x1d):
+        """
+        Inputs:
+        u_proj: [B, n]
+        Returns:
+        u : [B, N'] or [B, N] 
+        (if N' and N are multiples of 2)
+        """
         B, D = x1d.shape
-        total_grid = self.grid_size[0] * self.grid_size[1]
-        if D < total_grid:
-            x1d = func.pad(x1d, (0, total_grid - D))
-        elif D > total_grid:
-            raise ValueError("Input dimension exceeds grid capacity.")
-        
-        x2d = x1d.view(B, 1, *self.grid_size)
-        conv_out = self.conv(x2d).view(B, -1)
-        z = self.linear(conv_out) 
+        total = self.grid_size[0] * self.grid_size[1]
+        if D < total:
+            x1d = func.pad(x1d, (0, total - D))
+        elif D > total:
+            raise ValueError(f"Input dim {D} exceeds grid capacity {total}.")
+        x2d = x1d.view(B, self.in_channels, *self.grid_size)
+        z   = self.linear(self.conv(x2d).view(B, -1))
         return z
 
 # Define Decoder 
-# takes [B, N' = loop(floor((n + 2p - k) / s) + 1)**2)] return [B, n]
+# takes [B, N' = 2^k'] or [B, N = 2^k] return [B, n]
 class Decoder(nn.Module):
-    def __init__(self, output_dim, out_channels, hidden_channels, latent_dim, 
-                 num_layers, kernel, stride, padding):
+    def __init__(self, output_dim, out_channels, hidden_channels, latent_dim,
+                 num_layers, kernel, stride, padding, leaky_slope=0.1):
         super().__init__()
-        self.output_dim = output_dim
-        self.latent_dim = latent_dim
-        self.out_channels = out_channels
-        self.hidden_channels = hidden_channels
-        self.num_layers = num_layers
-        self.padding = padding
-        self.kernel = kernel
-        self.stride = stride
-        self.encoder_output_shape = self._compute_encoder_shape()
-        C, H, W = self._compute_encoder_shape()
+        self.output_dim  = int(output_dim)
+        self.latent_dim  = int(latent_dim)
+        self.out_channels = int(out_channels)
 
-        # Linear layers
-        linear_layers = []
-        current_dim = self.latent_dim
-        for i in range(self._compute_linear_num() - 1):
-            linear_layers.append(nn.Linear(int(current_dim), int(current_dim * 2)))
-            linear_layers.append(nn.LeakyReLU(0.1))
-            current_dim = current_dim * 2
-        linear_layers.append(nn.Linear(int(current_dim), int(C*H*W)))
-        self.delinear = nn.Sequential(*linear_layers)
+        hc = hidden_channels
+        st = stride
+        kr = kernel
+        pd = padding
+        lengths = [len(x) for x in (hc, st, kr, pd) if isinstance(x, (list, tuple))]
+        if lengths:
+            if any(L != lengths[0] for L in lengths):
+                raise ValueError(f"Inconsistent list lengths in AE config: {lengths}")
+            num_layers = lengths[0]
+        self.num_layers = int(num_layers)
 
-        # Convolutional layers
-        conv_layers = []
-        current_channels = C
-        for i in range(num_layers):
-            next_channels = hidden_channels if i < num_layers - 1 else out_channels
-            conv_layers.append(nn.ConvTranspose2d(current_channels, next_channels, 
-                                             kernel_size=kernel, stride=stride, padding=padding, output_padding=1))
-            if i < num_layers - 1:
-                conv_layers.append(nn.LeakyReLU(0.1))
-            current_channels = next_channels
-        self.deconv = nn.Sequential(*conv_layers)
+        # assert list type
+        self.hidden_channels = _as_list(hidden_channels, self.num_layers, "hidden_channels")
+        self.strides         = _as_list(stride,          self.num_layers, "stride")
+        self.kernels         = _as_list(kernel,          self.num_layers, "kernel")
+        self.paddings        = _as_list(padding,         self.num_layers, "padding")
 
-    def _compute_linear_num(self):
-        C, H, W = self._compute_encoder_shape()
-        num = int(np.floor(C*H*W / self.latent_dim)) - 1
-        return max(1, num)
+        H0, W0 = _grid_from_dim(self.output_dim)
+        if H0 != W0:
+            raise ValueError("Only square grids supported.")
+        self.grid_size = (H0, W0)
+        self.sides = _schedule_sides(H0, self.kernels, self.strides, self.paddings)  
+        Hb = self.sides[-1]
+        Cb = self.hidden_channels[-1]
 
-    
-    def _compute_encoder_shape(self):
-        D_temp = math.ceil(math.sqrt(self.output_dim))
-        for layer in range(self.num_layers):
-            D_temp = math.floor((D_temp + 2 * self.padding - self.kernel) / self.stride) + 1
-        return (self.hidden_channels, D_temp, D_temp)
+        # expand from projected dimension
+        flat_bottleneck = Cb * Hb * Hb
+        lin = []
+        cur = self.latent_dim
+        while cur < flat_bottleneck // 2:
+            lin += [nn.Linear(cur, cur * 2), nn.LeakyReLU(negative_slope=leaky_slope)]
+            cur = cur * 2
+        lin += [nn.Linear(cur, flat_bottleneck)]
+        self.delinear = nn.Sequential(*lin)
+
+        deconv = []
+        C_in = Cb
+        L = self.num_layers
+        for i in range(L):
+            s_in  = self.sides[L - i]
+            s_out = self.sides[L - 1 - i]
+            k, s, p = self.kernels[L - 1 - i], self.strides[L - 1 - i], self.paddings[L - 1 - i]
+            op = _output_padding_for_deconv(s_in, s_out, k, s, p)
+            C_out = self.hidden_channels[L - 2 - i] if i < L - 1 else self.out_channels
+            deconv.append(nn.ConvTranspose2d(C_in, C_out, kernel_size=k, stride=s,
+                                             padding=p, output_padding=op))
+            if i < L - 1:
+                deconv.append(nn.LeakyReLU(negative_slope=leaky_slope))
+            C_in = C_out
+        self.deconv = nn.Sequential(*deconv)
 
     def forward(self, z):
+        """
+        Inputs:
+        u : [B, N'] or [B, N] 
+        Returns:
+        u_proj: [B, n]
+        (if N' and N are multiples of 2)
+        """
         B = z.shape[0]
-        x_unflat = self.delinear(z)
-        x_unflat = x_unflat.view(B, *self.encoder_output_shape)
-        x_recon = self.deconv(x_unflat)
-        return x_recon.view(B, -1)[:, :self.output_dim]
+        Hb = self.sides[-1]
+        Cb = self.hidden_channels[-1]
+        x_unflat = self.delinear(z).view(B, Cb, Hb, Hb)
+        x = self.deconv(x_unflat).view(B, -1)
+        return x[:, :self.output_dim]
     
 # Define the Trainer for the DOD-DL-ROM Coefficients
 class DOD_DL_ROMTrainer:
@@ -780,7 +899,7 @@ class DOD_DL_ROMTrainer:
                 (1.0 - self.error_weight) * 0.5 * torch.sum((proj_error ** 2).sum(dim=1))
             )
 
-        loss = temp_error / (self.nt + 1)
+        loss = temp_error / ((self.nt + 1) * B)
         return loss
 
     
@@ -814,9 +933,11 @@ class DOD_DL_ROMTrainer:
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
             
-            optimizer = optim.Adam(params, lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.5, patience=1)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -843,7 +964,7 @@ class DOD_DL_ROMTrainer:
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.en_model.eval()
@@ -855,11 +976,12 @@ class DOD_DL_ROMTrainer:
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        B = mu_batch.size(0)
                         batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = {
@@ -919,17 +1041,33 @@ class POD_DL_ROMTrainer:
         valid_data = train_valid_set('valid')
 
         pin = (self.device.type == 'cuda')
-        self.train_loader = DataLoader(DatasetLoader(train_data), 
-                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
-                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
-                                    
+        self.train_loader = DataLoader(
+            DatasetLoader(train_data),
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
+        self.valid_loader = DataLoader(
+            DatasetLoader(valid_data),
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
     def loss_function(self, mu_batch, nu_batch, solution_batch):
-        batch_size = mu_batch.size(0)
+        B = mu_batch.size(0)
         temp_error = 0.0
         for i in range(self.nt + 1):
             t_batch = torch.stack(
-                [torch.tensor(i / (self.nt + 1), dtype=torch.float32, device=self.device) for _ in range(batch_size)]
+                [torch.tensor(i / (self.nt + 1), 
+                              dtype=torch.float32, device=self.device) for _ in range(B)]
             ).unsqueeze(1)
             coeff_output = self.coeff_model(mu_batch, nu_batch, t_batch)           # [B, n]
             decoder_output = self.de_model(coeff_output)                           # [B, N_A]
@@ -942,7 +1080,7 @@ class POD_DL_ROMTrainer:
             temp_error = temp_error + (self.error_weight / 2 * torch.sum((dynam_error ** 2).sum(dim=1))
                            + (1-self.error_weight) / 2 * torch.sum((proj_error ** 2).sum(dim=1)))
 
-        loss = temp_error / (self.nt + 1)
+        loss = temp_error / ((self.nt + 1) * B)
         return loss
 
     def train(self):
@@ -975,9 +1113,12 @@ class POD_DL_ROMTrainer:
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
             
-            optimizer = optim.Adam(params, lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.5, patience=1)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2, 
+                                                                       eta_min=1e-7)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -1004,7 +1145,7 @@ class POD_DL_ROMTrainer:
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.en_model.eval()
@@ -1016,11 +1157,12 @@ class POD_DL_ROMTrainer:
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        B = mu_batch.size(0)
                         batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = {
@@ -1067,15 +1209,16 @@ with C_i(X) := W_i X + A_i diag(a_i(nu, t)) B_i X + b_i     for i <= L
 '''
 # Define the stationary DOD for the stationary equivalent of the problem
 class StatSeedModule(nn.Module):
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, input_dim, output_dim, leaky_slope=0.1):
         super(StatSeedModule, self).__init__()
-        self.fc = nn.Linear(input_dim, output_dim)
+        first = [nn.Linear(input_dim, output_dim), nn.LeakyReLU(negative_slope=leaky_slope)]
+        seed = first + [nn.Linear(output_dim, output_dim)]
+        self.fw = nn.Sequential(*seed)
 
-    def forward(self, x):
-        x = func.leaky_relu(self.fc(x), 0.1)
-        return x
+    def forward(self, mu):
+        return self.fw(mu)
 class StatRootModule(nn.Module):
-    def __init__(self, input_dim, output_dim, root_layer_sizes, leaky_relu_slope=0.1):
+    def __init__(self, input_dim, output_dim, root_layer_sizes, leaky_slope=0.1):
         super(StatRootModule, self).__init__()
         if root_layer_sizes is None:
             root_layer_sizes = [1]
@@ -1084,7 +1227,7 @@ class StatRootModule(nn.Module):
         for i in range(len(root_layer_sizes) - 1):
             self.layers.append(nn.Linear(root_layer_sizes[i], root_layer_sizes[i + 1]))
             if i < len(root_layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_slope))
         self.layers.append(nn.Linear(root_layer_sizes[len(root_layer_sizes) - 1], output_dim))
 
     def forward(self, x):
@@ -1116,7 +1259,7 @@ class statDOD(nn.Module):
 
 # Define the stationary Coefficient Finder for the stationary equivalent of the problem
 class StatPhi1Module(nn.Module):
-    def __init__(self, parameter1_dim, m_0, n_0, layer_sizes, leaky_relu_slope=0.1):
+    def __init__(self, parameter1_dim, m_0, n_0, layer_sizes, leaky_slope=0.1):
         super(StatPhi1Module, self).__init__()
         self.m = m_0
         self.n = n_0
@@ -1127,7 +1270,7 @@ class StatPhi1Module(nn.Module):
         for i in range(len(layer_sizes) - 1):
             self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_slope))
         self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n_0 * m_0))
 
     def forward(self, x):
@@ -1136,7 +1279,7 @@ class StatPhi1Module(nn.Module):
         x = x.view(-1, self.m, self.n)
         return x
 class StatPhi2Module(nn.Module):
-    def __init__(self, parameter2_dim, m_0, n_0, layer_sizes, leaky_relu_slope=0.1):
+    def __init__(self, parameter2_dim, m_0, n_0, layer_sizes, leaky_slope=0.1):
         super(StatPhi2Module, self).__init__()
         self.m = m_0
         self.n = n_0
@@ -1147,7 +1290,7 @@ class StatPhi2Module(nn.Module):
         for i in range(len(layer_sizes) - 1):
             self.layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
             if i < len(layer_sizes) - 1:
-                self.layers.append(nn.LeakyReLU(negative_slope=leaky_relu_slope))
+                self.layers.append(nn.LeakyReLU(negative_slope=leaky_slope))
         self.layers.append(nn.Linear(layer_sizes[len(layer_sizes) - 1], n_0 * m_0))
 
     def forward(self, x):
@@ -1185,13 +1328,28 @@ class statDODTrainer:
         valid_data = train_valid_set('valid')
 
         pin = (self.device.type == 'cuda')
-        self.train_loader = DataLoader(DatasetLoader(train_data), 
-                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
-                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
-                                    
+        self.train_loader = DataLoader(
+            DatasetLoader(train_data),
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
+        self.valid_loader = DataLoader(
+            DatasetLoader(valid_data),
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )                         
 
     def loss_function(self, mu_batch, solution_batch):
+        B = mu_batch.size(0)
         V = self.model(mu_batch)
         if solution_batch.dim() == 3:
             solution_batch = solution_batch.squeeze(1)
@@ -1201,7 +1359,7 @@ class statDODTrainer:
         u_proj = torch.bmm(V, alpha)
 
         error = u - u_proj
-        loss = torch.sum((error ** 2).sum(dim=1)) 
+        loss = torch.sum((error ** 2).sum(dim=1)) / B
         return loss
 
     def train(self):
@@ -1229,9 +1387,12 @@ class statDODTrainer:
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.5, patience=1)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2, 
+                                                                       eta_min=1e-7)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -1255,7 +1416,7 @@ class statDODTrainer:
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.model.eval()
@@ -1265,11 +1426,12 @@ class statDODTrainer:
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        B = mu_batch.size(0)
                         batch_loss = self.loss_function(mu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = copy.deepcopy(self.model.state_dict())
@@ -1311,13 +1473,28 @@ class statHadamardNNTrainer:
         valid_data = train_valid_set('valid')
 
         pin = (self.device.type == 'cuda')
-        self.train_loader = DataLoader(DatasetLoader(train_data), 
-                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
-                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
-                                    
+        self.train_loader = DataLoader(
+            DatasetLoader(train_data),
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
+        self.valid_loader = DataLoader(
+            DatasetLoader(valid_data),
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )                        
 
     def loss_function(self, mu_batch, nu_batch, solution_batch):
+        B = mu_batch.size(0)
         coeff_output = self.model(mu_batch, nu_batch).unsqueeze(-1)
         V = self.dod(mu_batch)
 
@@ -1328,7 +1505,7 @@ class statHadamardNNTrainer:
         # Perform batch matrix multiplications
         output = torch.bmm(V.transpose(-2, -1), u)
         error = output - coeff_output
-        loss = torch.sum((error ** 2).sum(dim=1))
+        loss = torch.sum((error ** 2).sum(dim=1)) / B
 
         return loss
 
@@ -1357,9 +1534,12 @@ class statHadamardNNTrainer:
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.5, patience=1)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2, 
+                                                                       eta_min=1e-7)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -1384,7 +1564,7 @@ class statHadamardNNTrainer:
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.model.eval()
@@ -1394,11 +1574,12 @@ class statHadamardNNTrainer:
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        B = mu_batch.size(0)
                         batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = copy.deepcopy(self.model.state_dict())
@@ -1514,11 +1695,26 @@ class CoLoRATrainer():
         valid_data = train_valid_set('valid')
 
         pin = (self.device.type == 'cuda')
-        self.train_loader = DataLoader(DatasetLoader(train_data), 
-                                    batch_size=self.batch_size, shuffle=True,  pin_memory=pin)
-        self.valid_loader = DataLoader(DatasetLoader(valid_data), 
-                                    batch_size=self.batch_size, shuffle=False, pin_memory=pin)
-                                    
+        self.train_loader = DataLoader(
+            DatasetLoader(train_data),
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
+        self.valid_loader = DataLoader(
+            DatasetLoader(valid_data),
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=pin,
+            num_workers=min(8, os.cpu_count() // 2),
+            persistent_workers=True,
+            prefetch_factor=2
+        )
+
     def loss_function(self, mu_batch, nu_batch, solution_batch):
         batch_size = mu_batch.size(0)
         temp_error = 0.0
@@ -1565,9 +1761,12 @@ class CoLoRATrainer():
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", 
-                                                             factor=0.5, patience=1)
+            optimizer = optim.AdamW(params, 
+                                    lr=self.learning_rate, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
+                                                                       T_0=100, 
+                                                                       T_mult=2, 
+                                                                       eta_min=1e-7)
 
             epochs_no_improve = 0
             best_loss_restart = float('inf')
@@ -1592,7 +1791,7 @@ class CoLoRATrainer():
                     scaler.step(optimizer)
                     scaler.update()
 
-                    train_num += loss.item()
+                    train_num += loss.item() * B
                     train_den += B
 
                 self.model.eval()
@@ -1602,11 +1801,12 @@ class CoLoRATrainer():
                         mu_batch = mu_batch.to(self.device, non_blocking=True)
                         nu_batch = nu_batch.to(self.device, non_blocking=True)
                         solution_batch = solution_batch.to(self.device, non_blocking=True)
+                        B = mu_batch.size(0)
                         batch_loss = self.loss_function(mu_batch, nu_batch, solution_batch) 
-                        val_num += batch_loss.item()
-                        val_den += mu_batch.size(0)
+                        val_num += batch_loss.item() * B
+                        val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(val_loss)
+                scheduler.step(epoch)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = copy.deepcopy(self.model.state_dict())
@@ -1865,3 +2065,325 @@ def evaluate_rom_forward(rom_name, forward_fn, args, ref_sol, G):
     rel_err = float(np.sqrt(num_sq.sum()) / (np.sqrt(den_sq.sum()) + 1e-24))
 
     return abs_err, rel_err, U_hat.astype(ref_sol.dtype, copy=False)
+
+def _g_sq_timeseries(U, G):
+    """Return per-time-step squared G-norms for U[t, :]"""
+    vals = np.einsum('ti,ij,tj->t', U, G, U, optimize=True)
+    return np.maximum(vals, 0.0)
+
+# The following two methods rely on the implementation mentioned
+# in the paper Error Estimates for POD-DL-ROM by Brivio
+def _proj_with_matrix(U, V, G):
+    """
+    G-orthonormal projection onto span(V):
+      Y = V^T G U^T   (done timewise) and U_proj = V Y
+    Shapes:
+      U   : [T, N_h]
+      V   : [N_h, N]
+      G   : [N_h, N_h]
+    Returns U_proj with shape [T, N_h]
+    """
+    Y = np.einsum('ih,hj,tj->ti', V.T, G, U, optimize=True)
+    U_proj = np.einsum('hi,ti->th', V, Y, optimize=True)
+    return U_proj
+
+def _gnorm_sq(u: np.ndarray, G: np.ndarray) -> float:
+    """Squared G-norm of a single state u ∈ R^{N_h}."""
+    return float(u @ (G @ u))
+
+def _proj_with_matrix_stat(u: np.ndarray, V: np.ndarray, G: np.ndarray) -> np.ndarray:
+    """
+    Project u onto span(V) in the G-inner product:
+        P_G = V V^T G
+      u: [N_h], V: [N_h, N'], G: [N_h, N_h]
+    """
+    GTu = V.T @ (G @ u)
+    return V @ GTu
+
+def _ensure_np(x):
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().numpy()
+    return np.asarray(x)
+
+def pod_dl_error_decomposition(
+    fw_pod_fn,                    
+    samples,
+    example_name: str,
+    G: np.ndarray
+):
+    """
+      E_R, E_S, E_POD, E_POD_inf, E_NN and bounds.
+    """
+    A_P = np.load(training_data_path(example_name) / f'N_ambient_{example_name}.npz')['ambient'].astype(np.float32)
+    train_blob = np.load(training_data_path(example_name) / f'full_order_training_data_{example_name}.npz') 
+    S_train_all = train_blob['solution'].astype(np.float32)
+
+    # Unexplained variance on TRAIN via G-orth projection onto A_P
+    uv_train = []
+    for U in S_train_all:                                  # U: [T, N_h]
+        U_proj = _proj_with_matrix(U, A_P, G)              # [T, N_h]
+        d_sq = _g_sq_timeseries(U - U_proj, G)             # [T]
+        uv_train.append(float(d_sq.mean()))
+    unexplained_var_train = float(np.mean(uv_train))        # scalar
+
+    # TEST aggregates
+    rel_terms_num, rel_terms_den = [], []
+    nn_terms = []
+    uv_test = []
+    norms_test = []     # <-- snapshot-wise now
+
+    for (mu_i, nu_i, U_ref) in samples:
+        U_ref = np.asarray(U_ref, dtype=np.float32)        # [T, N_h]
+        U_pred = np.asarray(fw_pod_fn(
+            torch.as_tensor(mu_i, dtype=torch.float32).unsqueeze(0) if np.ndim(mu_i) == 1 else mu_i,
+            torch.as_tensor(nu_i, dtype=torch.float32).unsqueeze(0) if np.ndim(nu_i) == 1 else nu_i
+        ), dtype=np.float32)                               # [T, N_h]
+
+        Tm = min(U_ref.shape[0], U_pred.shape[0])
+        U_ref = U_ref[:Tm]; U_pred = U_pred[:Tm]
+
+        # norms & residuals per time
+        ref_sq = _g_sq_timeseries(U_ref, G)                # [T]
+        res_sq = _g_sq_timeseries(U_ref - U_pred, G)       # [T]
+
+        # POD projection of TEST and "NN-only" deviation
+        U_proj = _proj_with_matrix(U_ref, A_P, G)          # [T, N_h]
+        nn_sq  = _g_sq_timeseries(U_pred - U_proj, G)      # [T]
+        uv_sq  = _g_sq_timeseries(U_ref - U_proj, G)       # [T]
+
+        rel_terms_num.append(float(res_sq.sum()))
+        rel_terms_den.append(float(ref_sq.sum()))
+        nn_terms.append(float(np.mean(nn_sq)))
+        uv_test.append(float(np.mean(uv_sq)))
+
+        # snapshot-wise collection for m/M (time sensitive)
+        norms_test.extend([float(np.sqrt(v)) for v in ref_sq])
+
+    total_num = float(np.sum(rel_terms_num))
+    total_den = float(np.sum(rel_terms_den))
+    E_R = float(np.sqrt(total_num) / (np.sqrt(total_den) + 1e-24))
+
+    m = float(np.min(norms_test))
+    M = float(np.max(norms_test))
+
+    uv_test_mean = float(np.mean(uv_test))
+    E_POD      = float((unexplained_var_train ** 0.5) / (m + 1e-24))
+    E_POD_inf  = float((uv_test_mean ** 0.5) / (m + 1e-24)) 
+    E_S        = float((abs(uv_test_mean - unexplained_var_train) ** 0.5) / (m + 1e-24))
+    E_NN       = float(np.sqrt(np.mean(nn_terms) / (np.mean(rel_terms_den) / len(samples) + 1e-24)))
+    upper_bnd  = float(E_S + E_POD + E_NN)
+    lower_bnd  = float((m / (M + 1e-24)) * E_POD_inf)
+
+    return {
+        "m": m, "M": M,
+        "E_R": E_R,
+        "E_S": E_S,
+        "E_POD": E_POD,
+        "E_POD_inf": E_POD_inf,
+        "E_NN": E_NN,
+        "upper_bound": upper_bnd,
+        "lower_bound": lower_bnd,
+    }
+
+
+def dod_dl_error_decomposition(
+    dod_matrix,
+    fw_dod_fn,                          
+    samples,
+    N_prime,
+    example_name: str,                       
+    G: np.ndarray,
+    T_end: float = 1.0,
+):
+    """
+      E_R, E_S, E_DOD, E_DOD_inf, E_NN and bounds, averaged over (mu, t).
+    """
+    base = training_data_path(example_name)
+    # ambient POD matrix A: [N_h, N_A]
+    A = np.load(base / f'N_A_ambient_{example_name}.npz')['ambient'].astype(np.float32)
+
+    # training FOM set to compute "unexplained variance" on TRAIN
+    train_npz = np.load(base / f'full_order_training_data_{example_name}.npz')
+    S_train = train_npz['solution'].astype(np.float32)   # [Ns_train, T, N_h]
+    Mu_train = train_npz['mu'].astype(np.float32)        # [Ns_train, dim_mu]
+
+    # decide device for dod_matrix inputs
+    device = (next(dod_matrix.parameters()).device
+              if hasattr(dod_matrix, "parameters") else torch.device("cpu"))
+
+    def mu_to_tensor(mu_np):
+        mu_t = torch.as_tensor(mu_np, dtype=torch.float32, device=device)
+        return mu_t.unsqueeze(0) if mu_t.ndim == 1 else mu_t
+
+    def t_to_tensor(t_idx: int, Tm: int):
+        # map index -> physical/normalized time
+        t_val = 0.0 if Tm <= 1 else (t_idx / (Tm - 1)) * T_end
+        return torch.tensor([t_val], dtype=torch.float32, device=device)
+
+    # unexplained variance on TRAIN via time-resolved DOD projector 
+    uv_train_vals = []
+    for mu_np, U in zip(Mu_train, S_train):
+        Tm = U.shape[0]
+        mu_t = mu_to_tensor(mu_np)
+        for t_idx in range(Tm):
+            u = U[t_idx]                               # [N_h]
+            t_tensor = t_to_tensor(t_idx, Tm)          # [1]
+            tilde_V = dod_matrix(mu_t, t_tensor)       # [N_A, N']
+            tilde_V = _ensure_np(tilde_V).astype(np.float32)
+            V = A @ tilde_V                            # [N_h, N']
+            u_proj = _proj_with_matrix_stat(u, V, G)
+            uv_train_vals.append(_gnorm_sq(u - u_proj, G))
+    unexplained_var_train = float(np.mean(uv_train_vals))
+
+    # test accumulators 
+    num_R, den_R = [], []
+    nn_ratios = []     
+    uv_test_vals = []
+    test_norms = []
+
+    for (mu_i, nu_i, U_ref) in samples:
+        U_ref = _ensure_np(U_ref).astype(np.float32)    # [T, N_h]
+        U_pred = _ensure_np(fw_dod_fn(
+            torch.as_tensor(mu_i, dtype=torch.float32, device=device).unsqueeze(0)
+                if np.ndim(mu_i) == 1 else
+            torch.as_tensor(mu_i, dtype=torch.float32, device=device),
+            torch.as_tensor(nu_i, dtype=torch.float32, device=device).unsqueeze(0)
+                if np.ndim(nu_i) == 1 else
+            torch.as_tensor(nu_i, dtype=torch.float32, device=device)
+        )).astype(np.float32)                            # [T, N_h]
+
+        Tm = min(U_ref.shape[0], U_pred.shape[0])
+        mu_t = mu_to_tensor(mu_i)
+
+        for t_idx in range(Tm):
+            u = U_ref[t_idx]; y = U_pred[t_idx]
+            t_tensor = t_to_tensor(t_idx, Tm)
+            tilde_V = dod_matrix(mu_t, t_tensor)        # [N_A, N']
+            tilde_V = _ensure_np(tilde_V).astype(np.float32)
+            V = A @ tilde_V                              # [N_h, N']
+
+            u_proj = _proj_with_matrix_stat(u, V, G)
+
+            ref_sq = _gnorm_sq(u, G)
+            res_sq = _gnorm_sq(y - u, G)
+            nn_sq  = _gnorm_sq(y - u_proj, G)
+            uv_sq  = _gnorm_sq(u - u_proj, G)
+
+            num_R.append(res_sq)
+            den_R.append(ref_sq)
+            nn_ratios.append(nn_sq / (ref_sq + 1e-24))
+            uv_test_vals.append(uv_sq)
+            test_norms.append(np.sqrt(ref_sq))
+
+    # aggregate over (mu, t)
+    E_R = float(np.sqrt(np.sum(num_R)) / (np.sqrt(np.sum(den_R)) + 1e-24))
+    m   = float(np.min(test_norms))
+    M   = float(np.max(test_norms))
+
+    # load in tail sum of singular values for fixed (\mu, t)
+    path = training_data_path(example_name) / f"pod_singular_values_{example_name}.npz"
+    if path.exists():
+        blob = np.load(path, allow_pickle=False)
+        sigma_sup = np.asarray(blob['sigma_mu_t_sup'], dtype=np.float64).reshape(-1)
+        N_A_file = int(sigma_sup.shape[0])
+        if N_prime >= N_A_file:
+            tail_sum = 0.0
+        else:
+            tail_sum = float(np.sum(sigma_sup[N_prime:]))
+    else:
+        raise FileExistsError('Singular values not found.')
+
+    uv_test_mean = float(np.mean(uv_test_vals))
+    E_DOD_inf  = float(np.sqrt(tail_sum) / (m + 1e-24))
+    E_DOD      = float(np.sqrt(unexplained_var_train) / (m + 1e-24))
+    E_S        = float(np.sqrt(abs(uv_test_mean - unexplained_var_train)) / (m + 1e-24))
+    E_NN       = float(np.sqrt(np.mean(nn_ratios)))
+    upper_bnd  = float(E_S + E_DOD + E_NN)
+    lower_bnd  = float((m / (M + 1e-24)) * E_DOD_inf)
+
+    return {
+        "m": m, "M": M,
+        "E_R": E_R,
+        "E_S": E_S,
+        "E_DOD": E_DOD,
+        "E_DOD_inf": E_DOD_inf,
+        "E_NN": E_NN,
+        "upper_bound": upper_bnd,
+        "lower_bound": lower_bnd,
+    }
+
+def append_error_decomp_csv(
+    csv_path: str,
+    example_name: str,
+    model_name: str,
+    metrics: dict,
+    P,
+    test_samples: int,
+    dedup: bool = True
+) -> bool:
+    """
+    Appends a single row with error-decomposition metrics.
+    Returns True if a row was written, False if skipped (due to dedup).
+    """
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+
+    if model_name.lower() == "pod-dl-rom":
+        dim_field = "N"
+        dim_val = int(P.N)
+        specific = {
+            "N": dim_val,
+            "E_POD": f"{metrics['E_POD']:.6e}",
+            "E_POD_inf": f"{metrics['E_POD_inf']:.6e}",
+        }
+        fieldnames = [
+            "example","model","test_samples","N","m","M",
+            "E_R","E_S","E_POD","E_POD_inf","E_NN",
+            "upper_bound","lower_bound"
+        ]
+    else:  # "dod-dl-rom"
+        dim_field = "N_prime"
+        dim_val = int(P.N_prime)
+        specific = {
+            "N_prime": dim_val,
+            "E_DOD": f"{metrics['E_DOD']:.6e}",
+            "E_DOD_inf": f"{metrics['E_DOD_inf']:.6e}",
+        }
+        fieldnames = [
+            "example","model","test_samples","N_prime","m","M",
+            "E_R","E_S","E_DOD","E_DOD_inf","E_NN",
+            "upper_bound","lower_bound"
+        ]
+
+    common = {
+        "example": example_name,
+        "model": model_name,
+        "test_samples": test_samples,
+        "m": f"{metrics['m']:.6e}",
+        "M": f"{metrics['M']:.6e}",
+        "E_R": f"{metrics['E_R']:.6e}",
+        "E_S": f"{metrics['E_S']:.6e}",
+        "E_NN": f"{metrics['E_NN']:.6e}",
+        "upper_bound": f"{metrics['upper_bound']:.6e}",
+        "lower_bound": f"{metrics['lower_bound']:.6e}",
+    }
+    row = {**common, **specific}
+
+    exists = os.path.exists(csv_path)
+    if dedup and exists:
+        with open(csv_path, newline="") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                if (
+                    r.get("example") == example_name
+                    and r.get("model") == model_name
+                    and r.get(dim_field) == str(dim_val)
+                ):
+                    return False 
+
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not exists:
+            writer.writeheader()
+        writer.writerow(row)
+
+    return True
