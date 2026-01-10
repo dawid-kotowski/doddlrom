@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="master_project_1",
+    name="doddlrom",
     version="0.1",
-    packages=find_packages(),
+    packages=find_packages(include=["core", "utils"]),
     author="Dawid Kotowski",
     author_email="dkotowsk@uni-muenster.de",
     description="Implements variants of the DOD-DL-ROM. Additionally some examples are provided",
