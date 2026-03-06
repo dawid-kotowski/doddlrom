@@ -1,7 +1,6 @@
 from typing import Optional
 
 import numpy as np
-import torch
 from utils.paths import training_data_path
 
 

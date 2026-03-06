@@ -1,5 +1,3 @@
-from typing import Optional
-
 import numpy as np
 import torch
 from utils.paths import training_data_path
@@ -7,8 +5,24 @@ from core.analytic.shift import _apply_shift,_load_shift
 from core import reduced_order_models as rom
 
 
-def _project_reduced(A: np.ndarray, G: np.ndarray, U: np.ndarray) -> np.ndarray:
-    """Project full-order U[t, :] into reduced coordinates with A^T G."""
+def g_project(A: np.ndarray, G: np.ndarray, U: np.ndarray) -> np.ndarray:
+    """Project U onto span(A) with respect to the G-inner product, in full space."""
+    # Allow A to come in transposed form.
+    if A.shape[0] != G.shape[0] and A.shape[1] == G.shape[0]:
+        A = A.T
+    if U.ndim == 1:
+        y = A.T @ (G @ U)              # [N]
+        return A @ y                   # [N_h]
+    Y = np.einsum('ih,hj,tj->ti', A.T, G, U, optimize=True)  # [T, N]
+    return np.einsum('hi,ti->th', A, Y, optimize=True)       # [T, N_h]
+
+
+def g_project_reduced(A: np.ndarray, G: np.ndarray, U: np.ndarray) -> np.ndarray:
+    """Reduced coordinates Y = A^T G U (timewise)."""
+    if A.shape[0] != G.shape[0] and A.shape[1] == G.shape[0]:
+        A = A.T
+    if U.ndim == 1:
+        return A.T @ (G @ U)
     return np.einsum('ih,hj,tj->ti', A.T, G, U, optimize=True)
 
 
@@ -107,7 +121,7 @@ def projector_check(
         abs_err = []
         for mu, nu, sol in samples:
             U = _apply_shift(sol.astype(np.float32), ut0)
-            Y = _project_reduced(A, G, U)  # [T, N]
+            Y = g_project_reduced(A, G, U)  # [T, N]
             Y_norm = _normalize_reduced(Y, sol_min, sol_max)
             Y_den = _denormalize_reduced(Y_norm, example_name, reduction_tag, device)
             U_hat = np.einsum('hi,ti->th', A, Y_den, optimize=True)
@@ -129,7 +143,7 @@ def projector_check(
         abs_err = []
         for mu, nu, sol in samples:
             U = _apply_shift(sol.astype(np.float32), ut0)
-            Y = _project_reduced(A, G, U)  # [T, N_A]
+            Y = g_project_reduced(A, G, U)  # [T, N_A]
             Y_norm = _normalize_reduced(Y, sol_min, sol_max)
             Y_den = _denormalize_reduced(Y_norm, example_name, reduction_tag, device)
             U_hat = np.einsum('hi,ti->th', A, Y_den, optimize=True)
@@ -153,7 +167,7 @@ def projector_check(
         abs_err = []
         for mu, nu, sol in samples:
             U = _apply_shift(sol.astype(np.float32), ut0)
-            Y = _project_reduced(A, G, U)          # [T, N_A]
+            Y = g_project_reduced(A, G, U)          # [T, N_A]
             Y_norm = _normalize_reduced(Y, sol_min, sol_max)
 
             alpha, Y_proj = _dod_projector(Y_norm, np.asarray(mu), innerDOD_model, example_name, device)
