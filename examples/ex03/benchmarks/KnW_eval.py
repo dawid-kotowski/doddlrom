@@ -1,7 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from utils.paths import training_data_path
 
-path = 'examples/ex03/training_data/pod_singular_values_ex03.npz'
+example_name = 'ex03'
+
+path = training_data_path(example_name) / f'pod_singular_values_{example_name}.npz'
 data = np.load(path)
 
 sigma_global = data['sigma_global_NA'].astype(float)     # [N_A]

@@ -139,7 +139,7 @@ def main():
     parser.add_argument('--epochs', type=int, default=None)
     parser.add_argument('--restarts', type=int, default=None)
     parser.add_argument('--with-stationary', action='store_true', default=False)
-    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--N', type=int, default=None)
     parser.add_argument('--N-prime', type=int, default=None)
     parser.add_argument('--Ns', type=int, default=None)

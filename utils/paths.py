@@ -15,12 +15,12 @@ def get_work_dir() -> Path:
     Priority:
       1) $WORK if set
       2) .env value if python-dotenv loaded it into env
-      3) $HOME/palma_work as a safe local default
+      3) $HOME/academia/code/master-project/remote as a safe local default
     """
     work = os.environ.get("WORK")
     if not work or not work.strip():
         home = os.environ.get("HOME", str(Path("~").expanduser()))
-        work = str(Path(home) / "palma_work")
+        work = str(Path(home) / "academia/code/master-project/remote")
     return Path(work).expanduser().resolve()
 
 WORK = get_work_dir()

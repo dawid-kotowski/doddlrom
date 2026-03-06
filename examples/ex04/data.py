@@ -1,5 +1,5 @@
 '''
-Data Gathering Script for example 02.
+Data Gathering Script for example 04.
 The usage of N and Nt can break the learning,
 when not considered!!
 ====================================
@@ -11,7 +11,7 @@ IMPORTANT: The usage of specified N and Nt can break the learning,
 
 Run Programm 
 ------------------------------
-python3 examples/ex03/data.py 
+python3 examples/ex04/data.py 
 [OPTIONALS]
 --N "reduction number for POD"
 --Ns "number of TOTAL parameter samples"
@@ -22,7 +22,7 @@ python3 examples/ex03/data.py
 import argparse
 from pymor.basic import *
 import numpy as np
-from core.configs.parameters import Ex02Parameters  
+from core.configs.parameters import Ex04Parameters  
 from utils.paths import training_data_path
 
 '''
@@ -71,8 +71,8 @@ def main():
     parser.add_argument('--Nt', type=int, default=None)
     args = parser.parse_args()
 
-    example_name = 'ex02'
-    P = Ex02Parameters()
+    example_name = 'ex04'
+    P = Ex04Parameters()
 
     if args.N is not None: P.N = args.N
     if args.Ns is not None: P.Ns = args.Ns
@@ -86,22 +86,16 @@ def main():
 
     # Define the advection function dependent on 'mu'
     def advection_function(x, mu):
-        theta = mu['mu'][2]
-        speed = 0.8 + 0.6 * theta
-        vx = speed * np.cos(2*np.pi*theta)
-        vy = speed * np.sin(2*np.pi*theta)
-        return np.array([[vx, vy] for _ in range(x.shape[0])])
-
-    # Define the rhs
+        mu_value = mu['mu'][2]
+        return np.array([[np.cos(np.pi/(100*mu_value)), np.sin(np.pi/(100*mu_value))] for _ in range(x.shape[0])])
+        
+    # Define rhs 
     def rhs_function(x, mu):
-        cx = mu['mu'][0]
-        cy = mu['mu'][1]
-        nu = mu['nu']
+        mu_values_1 = mu['mu'][0]
+        mu_values_2 = mu['mu'][1]
         x0 = x[:, 0]
         x1 = x[:, 1]
-        A_nu = 1.0 + 5.0 * (nu - 0.0035)
-        sigma = 0.07
-        values = A_nu * np.exp(-((x0 - cx)**2 + (x1 - cy)**2) / sigma**2)
+        values = 10 * np.exp(-((x0 - mu_values_1)**2 + (x1 - mu_values_2)**2) / 0.07**2)
         return values
 
     # Define the stationary problem
@@ -112,11 +106,12 @@ def main():
     stationary_problem = StationaryProblem(
         domain=RectDomain(),
         rhs=rhs_generic_function,
-        diffusion = ExpressionFunction('1', 2),
+        diffusion=LincombFunction([ExpressionFunction('1', 2)],
+                                [ProjectionParameterFunctional('nu', 1)]),
         advection=advection_generic_function,
         neumann_data=ConstantFunction(0, 2),
         dirichlet_data=None,
-        name='nonlinear_wind_ex02'
+        name='nonlinear_wind_ex04'
     )
 
     # Define the instationary problem
@@ -124,25 +119,16 @@ def main():
         T=1.,
         initial_data=ConstantFunction(0, 2),
         stationary_part=stationary_problem,
-        name='nonlinear_wind_ex02'
+        name='nonlinear_wind_ex04'
     )
 
     # Discretize the problem
     fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt)
 
-    # Discretize the stationary problem
-    stat_fom, stat_fom_data = discretize_stationary_cg(stationary_problem, diameter=P.diameter)
-
     # Define the parameter space with ranges for 'mu' and 'nu'
     parameter_space = fom.parameters.space({
         'mu': (0.3, 0.7),
-        'nu': (0.002, 0.005)
-    })
-
-    # --- stationary FOM & shift ---
-    stat_parameter_space = stat_fom.parameters.space({
-        'mu': (0.3, 0.7),
-        'nu': (0.002, 0.005)
+        'nu': (0.004, 0.005)
     })
 
     # Generate training and validation sets
@@ -153,20 +139,14 @@ def main():
     mu_arr = np.array([p['mu'] for p in training_set], dtype=np.float32)
     nu_arr = np.array([p['nu'] for p in training_set], dtype=np.float32)
 
-    # Solve all stationary samples; make both a shifted solution_set for POD and a raw array for saving
-    stat_mu = np.array([p['mu'] for p in training_set], dtype=np.float32)
-    stat_nu = np.array([p['nu'] for p in training_set], dtype=np.float32)
-
     # Enforce Dirichlet shift
     u_t_0 = fom.solve(parameter_space.sample_uniformly(1)[0])
     u_t_0_np = u_t_0.to_numpy().astype(np.float32)
-    u_0 = stat_fom.solve(stat_parameter_space.sample_uniformly(1)[0])
-    u_0_np = u_0.to_numpy().astype(np.float32)
 
     tdir = training_data_path(example_name)
 
     np.savez_compressed(tdir / f"dirichlet_shift_{example_name}.npz", 
-                        u0=u_0_np, ut0 = u_t_0_np)
+                        ut0 = u_t_0_np)
 
     '''
     --------------------------
@@ -226,47 +206,6 @@ def main():
     np.savez_compressed(tdir / f'N_reduced_training_data_{example_name}.npz',
                         mu=mu_arr, nu=nu_arr, solution=reduced_P)
 
-    '''
-    ----------------------------
-    Stationary Data 
-    ----------------------------
-    '''
-
-    stat_solutions = []
-    shifted_stat_solutions = []
-    shifted_stat_solutions_pymor = stat_fom.solution_space.empty()
-
-    for mu_nu in training_set:
-        stat_solution = stat_fom.solve(mu_nu)  # [Nh]
-        shifted_stat_solution = stat_solution - u_0
-        shifted_stat_solutions_pymor.append(shifted_stat_solution)
-        shifted_stat_solutions.append(shifted_stat_solution.to_numpy().astype(np.float32))
-        stat_solutions.append(stat_solution.to_numpy().astype(np.float32))
-
-    shifted_stat_solutions = np.stack(shifted_stat_solutions, axis=0)  # [Ns, Nh]
-    stat_solutions = np.stack(stat_solutions, axis=0)                  # [Ns, Nh]
-
-    # Save compact stationary FOM data (raw, unshifted)
-    np.savez_compressed(tdir / f'stationary_training_data_{example_name}.npz',
-                        mu=stat_mu, nu=stat_nu, solution=stat_solutions)
-
-    stat_G = stat_fom.h1_0_semi_product.matrix.toarray().astype(np.float32)  # [Nh, Nh]
-    np.savez_compressed(tdir / f'stationary_gram_matrix_{example_name}.npz', gram=stat_G)
-
-    # --- stationary POD/ambient/gram ---
-    stat_pod_modes, stat_singular_values = pod(
-        shifted_stat_solutions_pymor, product=stat_fom.h1_0_semi_product, modes=P.N
-    )
-    stat_A = stat_pod_modes.to_numpy().T.astype(np.float32)  # [Nh, N]
-    ensure_modes(stat_A, stat_G, P.N)
-    np.savez_compressed(tdir / f'stationary_ambient_matrix_{example_name}.npz',
-                        ambient=stat_A)
-
-    # --- reduced stationary data: [Ns, N] ---
-    GA_stat = (stat_G @ stat_A).astype(np.float32)  # [Nh, N]
-    stat_reduced = shifted_stat_solutions @ GA_stat  # [Ns, N]
-    np.savez_compressed(tdir / f'reduced_stationary_training_data_{example_name}.npz',
-                        mu=stat_mu, nu=stat_nu, solution=stat_reduced)
 
     '''
     -------------------------
@@ -335,7 +274,6 @@ def main():
 
     _save_norm(example_name, "N_A_reduced", mu_arr, nu_arr, reduced)
     _save_norm(example_name, "N_reduced",   mu_arr, nu_arr, reduced_P)
-    _save_norm(example_name, "reduced_stationary", stat_mu, stat_nu, stat_reduced)
 
 
 if __name__ == '__main__':

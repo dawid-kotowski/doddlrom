@@ -6,7 +6,7 @@ JUMP="dkotowsk@sshjump.uni-muenster.de"
 DEST="dkotowsk@myri"
 # -------------------------------
 
-LOCAL_WORK="${WORK:-$HOME/palma_work}"
+LOCAL_WORK="${WORK:-$HOME/academia/code/master-project/remote}"
 mkdir -p "$LOCAL_WORK"
 
 echo "==> Fetching remote ~/files  -->  local $LOCAL_WORK"

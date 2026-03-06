@@ -3,12 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as func
 import torch.optim as optim
 import os
-import csv
 import numpy as np
 import math
 import copy
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
+from core.analytic.write import append_error_decomp_csv
 from utils.paths import training_data_path
 
 
@@ -2130,7 +2130,7 @@ def pod_dl_error_decomposition(
     rel_terms_num, rel_terms_den = [], []
     nn_terms = []
     uv_test = []
-    norms_test = []     # <-- snapshot-wise now
+    norms_test = []
 
     for (mu_i, nu_i, U_ref) in samples:
         U_ref = np.asarray(U_ref, dtype=np.float32)        # [T, N_h]
@@ -2163,7 +2163,7 @@ def pod_dl_error_decomposition(
     total_den = float(np.sum(rel_terms_den))
     E_R = float(np.sqrt(total_num) / (np.sqrt(total_den) + 1e-24))
 
-    m = float(np.min(norms_test))
+    m = float(np.min(norms_test) if np.min(norms_test) > 1e-15 else 1e-15)
     M = float(np.max(norms_test))
 
     uv_test_mean = float(np.mean(uv_test))
@@ -2201,7 +2201,6 @@ def dod_dl_error_decomposition(
     base = training_data_path(example_name)
     # ambient POD matrix A: [N_h, N_A]
     A = np.load(base / f'N_A_ambient_{example_name}.npz')['ambient'].astype(np.float32)
-
     # training FOM set to compute "unexplained variance" on TRAIN
     train_npz = np.load(base / f'full_order_training_data_{example_name}.npz')
     S_train = train_npz['solution'].astype(np.float32)   # [Ns_train, T, N_h]
@@ -2239,7 +2238,7 @@ def dod_dl_error_decomposition(
     num_R, den_R = [], []
     nn_ratios = []     
     uv_test_vals = []
-    test_norms = []
+    norms_test = []
 
     for (mu_i, nu_i, U_ref) in samples:
         U_ref = _ensure_np(U_ref).astype(np.float32)    # [T, N_h]
@@ -2273,12 +2272,12 @@ def dod_dl_error_decomposition(
             den_R.append(ref_sq)
             nn_ratios.append(nn_sq / (ref_sq + 1e-24))
             uv_test_vals.append(uv_sq)
-            test_norms.append(np.sqrt(ref_sq))
+            norms_test.append(np.sqrt(ref_sq))
 
     # aggregate over (mu, t)
     E_R = float(np.sqrt(np.sum(num_R)) / (np.sqrt(np.sum(den_R)) + 1e-24))
-    m   = float(np.min(test_norms))
-    M   = float(np.max(test_norms))
+    m = float(np.min(norms_test) if np.min(norms_test) > 1e-15 else 1e-15)
+    M   = float(np.max(norms_test))
 
     # load in tail sum of singular values for fixed (\mu, t)
     path = training_data_path(example_name) / f"pod_singular_values_{example_name}.npz"
@@ -2312,78 +2311,3 @@ def dod_dl_error_decomposition(
         "lower_bound": lower_bnd,
     }
 
-def append_error_decomp_csv(
-    csv_path: str,
-    example_name: str,
-    model_name: str,
-    metrics: dict,
-    P,
-    test_samples: int,
-    dedup: bool = True
-) -> bool:
-    """
-    Appends a single row with error-decomposition metrics.
-    Returns True if a row was written, False if skipped (due to dedup).
-    """
-    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
-
-    if model_name.lower() == "pod-dl-rom":
-        dim_field = "N"
-        dim_val = int(P.N)
-        specific = {
-            "N": dim_val,
-            "E_POD": f"{metrics['E_POD']:.6e}",
-            "E_POD_inf": f"{metrics['E_POD_inf']:.6e}",
-        }
-        fieldnames = [
-            "example","model","test_samples","N","m","M",
-            "E_R","E_S","E_POD","E_POD_inf","E_NN",
-            "upper_bound","lower_bound"
-        ]
-    else:  # "dod-dl-rom"
-        dim_field = "N_prime"
-        dim_val = int(P.N_prime)
-        specific = {
-            "N_prime": dim_val,
-            "E_DOD": f"{metrics['E_DOD']:.6e}",
-            "E_DOD_inf": f"{metrics['E_DOD_inf']:.6e}",
-        }
-        fieldnames = [
-            "example","model","test_samples","N_prime","m","M",
-            "E_R","E_S","E_DOD","E_DOD_inf","E_NN",
-            "upper_bound","lower_bound"
-        ]
-
-    common = {
-        "example": example_name,
-        "model": model_name,
-        "test_samples": test_samples,
-        "m": f"{metrics['m']:.6e}",
-        "M": f"{metrics['M']:.6e}",
-        "E_R": f"{metrics['E_R']:.6e}",
-        "E_S": f"{metrics['E_S']:.6e}",
-        "E_NN": f"{metrics['E_NN']:.6e}",
-        "upper_bound": f"{metrics['upper_bound']:.6e}",
-        "lower_bound": f"{metrics['lower_bound']:.6e}",
-    }
-    row = {**common, **specific}
-
-    exists = os.path.exists(csv_path)
-    if dedup and exists:
-        with open(csv_path, newline="") as f:
-            reader = csv.DictReader(f)
-            for r in reader:
-                if (
-                    r.get("example") == example_name
-                    and r.get("model") == model_name
-                    and r.get(dim_field) == str(dim_val)
-                ):
-                    return False 
-
-    with open(csv_path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if not exists:
-            writer.writeheader()
-        writer.writerow(row)
-
-    return True
