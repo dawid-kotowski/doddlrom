@@ -135,7 +135,7 @@ def build_trainers_and_models(P, train_valid_set_N_A, train_valid_set_N, bs):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--example', type=str, required=True)
-    parser.add_argument('--profiles', nargs='+', default=['test1', 'test2', 'test3', 'test4', 'test5'])
+    parser.add_argument('--profiles', nargs='+', default=['test1', 'test2', 'test3', 'test4', 'test5','test6', 'test7', 'test8', 'test9', 'test10','test11', 'test12', 'test13', 'test14', 'test15'])
     parser.add_argument('--epochs', type=int, default=None)
     parser.add_argument('--restarts', type=int, default=None)
     parser.add_argument('--batch-size', type=int, default=32)
