@@ -17,7 +17,7 @@ sigma_global = np.maximum(sigma_global, 1e-16)
 sigma_sup    = np.maximum(sigma_sup,    1e-16)
 
 N_A = sigma_global.shape[0]
-n_vals = np.arange(1, 10, dtype=int)
+n_vals = np.arange(1, 20, dtype=int)
 
 S_global = np.array([np.sum(sigma_global[n+1:]) for n in n_vals])
 S_sup    = np.array([np.sum(sigma_sup[n+1:])    for n in n_vals])

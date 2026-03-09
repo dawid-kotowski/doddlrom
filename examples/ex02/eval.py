@@ -29,33 +29,49 @@ training_data = [(mu[i], nu[i], solution[i]) for i in sel]
 
 # Define Full Order Model again
 def advection_function(x, mu):
-    theta = mu['mu'][2]
-    speed = 0.8 + 0.6 * theta
+    t = float(mu['t'])
+    theta = float(mu['mu'][2]) + 0.25 * np.sin(2 * np.pi * t)
+    a = 0.6
+    speed = (0.8 + 0.6 * theta)
     vx = speed * np.cos(2*np.pi*theta)
     vy = speed * np.sin(2*np.pi*theta)
     return np.array([[vx, vy] for _ in range(x.shape[0])])
 
 # Define the rhs
 def rhs_function(x, mu):
-    cx = mu['mu'][0]
-    cy = mu['mu'][1]
-    nu = mu['nu']
-    x0 = x[:, 0]
-    x1 = x[:, 1]
-    A_nu = 1.0 + 5.0 * (nu - 0.0035)
-    sigma = 0.07
-    values = A_nu * np.exp(-((x0 - cx)**2 + (x1 - cy)**2) / sigma**2)
-    return values
+        cx = mu['mu'][0]
+        cy = mu['mu'][1]
+        nu = mu['nu']
+
+        x0 = x[:,0]
+        x1 = x[:,1]
+
+        sigma = 0.03
+
+        g1 = np.exp(-((x0-cx)**2 + (x1-cy)**2)/sigma**2)
+        g2 = np.exp(-((x0-(cx+0.15))**2 + (x1-cy)**2)/sigma**2)
+        g3 = np.exp(-((x0-cx)**2 + (x1-(cy+0.15))**2)/sigma**2)
+        g4 = np.exp(-((x0-(cx-0.15))**2 + (x1-(cy-0.15))**2)/sigma**2)
+
+        # ν-dependent coefficients
+        a1 = 1 + 4*(nu-0.0035)
+        a2 = np.sin(200*nu)
+        a3 = np.cos(150*nu)
+        a4 = (nu-0.0035)**2 * 2000
+
+        values = a1*g1 + a2*g2 + a3*g3 + a4*g4
+
+        return values
 
 # Define the stationary problem
 # Note, that the Dirichlet Boundary conditions are NOT enforced here, so the Dirichlet shift can be skipped!
-mu_param = Parameters({'mu': 3, 'nu': 1})
+mu_param = Parameters({'mu': 3, 'nu': 1, 't': 1})
 advection_generic_function = GenericFunction(advection_function, dim_domain=2, shape_range=(2,), parameters=mu_param)
 rhs_generic_function = GenericFunction(rhs_function, dim_domain=2, shape_range=(), parameters=mu_param)
 stationary_problem = StationaryProblem(
     domain=RectDomain(),
     rhs=rhs_generic_function,
-    diffusion = ExpressionFunction('1', 2),
+    diffusion = ExpressionFunction('0.01', 2),
     advection=advection_generic_function,
     neumann_data=ConstantFunction(0, 2),
     dirichlet_data=None,

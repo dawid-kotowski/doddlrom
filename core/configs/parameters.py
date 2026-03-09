@@ -967,7 +967,7 @@ class Ex02Parameters:
     generalrestarts: int = 3
     generalpatience: int = 40
 
-    dod_epochs: int = 300
+    dod_epochs: int = 900
     dod_restarts: int = 3
     dod_patience: int = 40
 

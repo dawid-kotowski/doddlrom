@@ -24,7 +24,7 @@ DOD_trainer = rom.innerDODTrainer(
     trainer["epochs"],
     trainer["restarts"],
     learning_rate=1e-3,
-    batch_size=128,
+    batch_size=16,
     patience=trainer["patience"],
 )
 

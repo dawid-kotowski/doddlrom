@@ -85,9 +85,12 @@ def main():
     '''
 
     # Define the advection function dependent on 'mu'
+    # Define Full Order Model again
     def advection_function(x, mu):
-        theta = mu['mu'][2]
-        speed = 0.8 + 0.6 * theta
+        t = float(mu['t'])
+        theta = float(mu['mu'][2]) + 0.25 * np.sin(2 * np.pi * t)
+        a = 0.6
+        speed = (0.8 + 0.6 * theta)
         vx = speed * np.cos(2*np.pi*theta)
         vy = speed * np.sin(2*np.pi*theta)
         return np.array([[vx, vy] for _ in range(x.shape[0])])
@@ -97,22 +100,36 @@ def main():
         cx = mu['mu'][0]
         cy = mu['mu'][1]
         nu = mu['nu']
-        x0 = x[:, 0]
-        x1 = x[:, 1]
-        A_nu = 1.0 + 5.0 * (nu - 0.0035)
-        sigma = 0.07
-        values = A_nu * np.exp(-((x0 - cx)**2 + (x1 - cy)**2) / sigma**2)
+
+        x0 = x[:,0]
+        x1 = x[:,1]
+
+        sigma = 0.03
+
+        g1 = np.exp(-((x0-cx)**2 + (x1-cy)**2)/sigma**2)
+        g2 = np.exp(-((x0-(cx+0.15))**2 + (x1-cy)**2)/sigma**2)
+        g3 = np.exp(-((x0-cx)**2 + (x1-(cy+0.15))**2)/sigma**2)
+        g4 = np.exp(-((x0-(cx-0.15))**2 + (x1-(cy-0.15))**2)/sigma**2)
+
+        # ν-dependent coefficients
+        a1 = 1 + 4*(nu-0.0035)
+        a2 = np.sin(200*nu)
+        a3 = np.cos(150*nu)
+        a4 = (nu-0.0035)**2 * 2000
+
+        values = a1*g1 + a2*g2 + a3*g3 + a4*g4
+
         return values
 
     # Define the stationary problem
     # Note, that the Dirichlet Boundary conditions are NOT enforced here, so the Dirichlet shift can be skipped!
-    mu_param = Parameters({'mu': 3, 'nu': 1})
+    mu_param = Parameters({'mu': 3, 'nu': 1, 't': 1})
     advection_generic_function = GenericFunction(advection_function, dim_domain=2, shape_range=(2,), parameters=mu_param)
     rhs_generic_function = GenericFunction(rhs_function, dim_domain=2, shape_range=(), parameters=mu_param)
     stationary_problem = StationaryProblem(
         domain=RectDomain(),
         rhs=rhs_generic_function,
-        diffusion = ExpressionFunction('1', 2),
+        diffusion = ExpressionFunction('0.01', 2),
         advection=advection_generic_function,
         neumann_data=ConstantFunction(0, 2),
         dirichlet_data=None,
@@ -126,7 +143,6 @@ def main():
         stationary_part=stationary_problem,
         name='nonlinear_wind_ex02'
     )
-
     # Discretize the problem
     fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt)
 
@@ -136,18 +152,24 @@ def main():
     # Define the parameter space with ranges for 'mu' and 'nu'
     parameter_space = fom.parameters.space({
         'mu': (0.3, 0.7),
-        'nu': (0.002, 0.005)
+        'nu': (0.002, 0.005),
+        't':  (0.0, P.T)
     })
 
     # --- stationary FOM & shift ---
     stat_parameter_space = stat_fom.parameters.space({
         'mu': (0.3, 0.7),
-        'nu': (0.002, 0.005)
+        'nu': (0.002, 0.005),
+        't':  (0.0, P.T)
     })
 
     # Generate training and validation sets
     sample_size_per_param = int(np.ceil(np.power(P.Ns, 1 / 4)))
-    training_set = parameter_space.sample_uniformly(sample_size_per_param)
+    training_set = parameter_space.sample_uniformly({
+        'mu': sample_size_per_param,
+        'nu': sample_size_per_param,
+        't': 1
+    })
 
     # Collect parameter arrays
     mu_arr = np.array([p['mu'] for p in training_set], dtype=np.float32)
@@ -227,48 +249,6 @@ def main():
                         mu=mu_arr, nu=nu_arr, solution=reduced_P)
 
     '''
-    ----------------------------
-    Stationary Data 
-    ----------------------------
-    '''
-
-    stat_solutions = []
-    shifted_stat_solutions = []
-    shifted_stat_solutions_pymor = stat_fom.solution_space.empty()
-
-    for mu_nu in training_set:
-        stat_solution = stat_fom.solve(mu_nu)  # [Nh]
-        shifted_stat_solution = stat_solution - u_0
-        shifted_stat_solutions_pymor.append(shifted_stat_solution)
-        shifted_stat_solutions.append(shifted_stat_solution.to_numpy().astype(np.float32))
-        stat_solutions.append(stat_solution.to_numpy().astype(np.float32))
-
-    shifted_stat_solutions = np.stack(shifted_stat_solutions, axis=0)  # [Ns, Nh]
-    stat_solutions = np.stack(stat_solutions, axis=0)                  # [Ns, Nh]
-
-    # Save compact stationary FOM data (raw, unshifted)
-    np.savez_compressed(tdir / f'stationary_training_data_{example_name}.npz',
-                        mu=stat_mu, nu=stat_nu, solution=stat_solutions)
-
-    stat_G = stat_fom.h1_0_semi_product.matrix.toarray().astype(np.float32)  # [Nh, Nh]
-    np.savez_compressed(tdir / f'stationary_gram_matrix_{example_name}.npz', gram=stat_G)
-
-    # --- stationary POD/ambient/gram ---
-    stat_pod_modes, stat_singular_values = pod(
-        shifted_stat_solutions_pymor, product=stat_fom.h1_0_semi_product, modes=P.N
-    )
-    stat_A = stat_pod_modes.to_numpy().T.astype(np.float32)  # [Nh, N]
-    ensure_modes(stat_A, stat_G, P.N)
-    np.savez_compressed(tdir / f'stationary_ambient_matrix_{example_name}.npz',
-                        ambient=stat_A)
-
-    # --- reduced stationary data: [Ns, N] ---
-    GA_stat = (stat_G @ stat_A).astype(np.float32)  # [Nh, N]
-    stat_reduced = shifted_stat_solutions @ GA_stat  # [Ns, N]
-    np.savez_compressed(tdir / f'reduced_stationary_training_data_{example_name}.npz',
-                        mu=stat_mu, nu=stat_nu, solution=stat_reduced)
-
-    '''
     -------------------------
     Singular value exports 
     -------------------------
@@ -335,7 +315,6 @@ def main():
 
     _save_norm(example_name, "N_A_reduced", mu_arr, nu_arr, reduced)
     _save_norm(example_name, "N_reduced",   mu_arr, nu_arr, reduced_P)
-    _save_norm(example_name, "reduced_stationary", stat_mu, stat_nu, stat_reduced)
 
 
 if __name__ == '__main__':
