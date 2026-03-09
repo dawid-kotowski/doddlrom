@@ -12,11 +12,11 @@ P.assert_consistent()
 trainer_defaults = P.trainer_defaults()  
 
 # --- Data --------------------------------------------------------------------
-train_valid_data = rom.FetchTrainAndValidSet(0.8, example_name, 'N_reduced')
+train_valid_data = rom.FetchTrainAndValidSet(0.8, example_name, 'N_A_reduced')
 
 # --- DOD basis network -------------------------------------------------------
 innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs())
-innerDOD_model.load_state_dict(torch.load(state_dicts_path(example_name) / f'/DOD_Module.pth'))
+innerDOD_model.load_state_dict(torch.load(state_dicts_path(example_name) / f'DOD_Module.pth'))
 innerDOD_model.eval()
 
 # --- DOD-DL -----------------------------------------------------------------

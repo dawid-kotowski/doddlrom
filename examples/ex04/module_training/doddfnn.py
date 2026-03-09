@@ -15,7 +15,7 @@ train_valid_data = rom.FetchTrainAndValidSet(0.8, example_name, 'N_A_reduced')
 
 # --- DOD model (pretrained basis) -------------------------------------------
 innerDOD_model = rom.innerDOD(**P.make_innerDOD_kwargs())
-innerDOD_model.load_state_dict(torch.load(state_dicts_path(example_name) / f'/DOD_Module.pth'))
+innerDOD_model.load_state_dict(torch.load(state_dicts_path(example_name) / f'DOD_Module.pth'))
 innerDOD_model.eval()
 
 # --- DFNN  ------------------------------------------------------------------

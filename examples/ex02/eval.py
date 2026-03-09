@@ -29,35 +29,48 @@ training_data = [(mu[i], nu[i], solution[i]) for i in sel]
 
 # Define Full Order Model again
 def advection_function(x, mu):
-    mu_value = mu['mu'][2]
-    return np.array([[np.cos(np.pi/(100*mu_value)), np.sin(np.pi/(100*mu_value))] for _ in range(x.shape[0])])
+    theta = mu['mu'][2]
+    speed = 0.8 + 0.6 * theta
+    vx = speed * np.cos(2*np.pi*theta)
+    vy = speed * np.sin(2*np.pi*theta)
+    return np.array([[vx, vy] for _ in range(x.shape[0])])
 
+# Define the rhs
 def rhs_function(x, mu):
-    mu_values_1 = mu['mu'][0]
-    mu_values_2 = mu['mu'][1]
+    cx = mu['mu'][0]
+    cy = mu['mu'][1]
+    nu = mu['nu']
     x0 = x[:, 0]
     x1 = x[:, 1]
-    values = 10 * np.exp(-((x0 - mu_values_1)**2 + (x1 - mu_values_2)**2) / 0.07**2)
+    A_nu = 1.0 + 5.0 * (nu - 0.0035)
+    sigma = 0.07
+    values = A_nu * np.exp(-((x0 - cx)**2 + (x1 - cy)**2) / sigma**2)
     return values
 
+# Define the stationary problem
+# Note, that the Dirichlet Boundary conditions are NOT enforced here, so the Dirichlet shift can be skipped!
 mu_param = Parameters({'mu': 3, 'nu': 1})
 advection_generic_function = GenericFunction(advection_function, dim_domain=2, shape_range=(2,), parameters=mu_param)
 rhs_generic_function = GenericFunction(rhs_function, dim_domain=2, shape_range=(), parameters=mu_param)
 stationary_problem = StationaryProblem(
     domain=RectDomain(),
     rhs=rhs_generic_function,
-    diffusion=LincombFunction([ExpressionFunction('1', 2)],
-                              [ProjectionParameterFunctional('nu', 1)]),
+    diffusion = ExpressionFunction('1', 2),
     advection=advection_generic_function,
     neumann_data=ConstantFunction(0, 2),
-    name='advection_problem'
+    dirichlet_data=None,
+    name='nonlinear_wind_ex02'
 )
+
+# Define the instationary problem
 problem = InstationaryProblem(
     T=1.,
     initial_data=ConstantFunction(0, 2),
     stationary_part=stationary_problem,
-    name='advection_problem'
+    name='nonlinear_wind_ex02'
 )
+
+# Discretize the problem
 fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt)
 
 #endregion
