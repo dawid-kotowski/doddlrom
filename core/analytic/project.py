@@ -170,17 +170,16 @@ def projector_check(
             Y = g_project_reduced(A, G, U)          # [T, N_A]
             Y_norm = _normalize_reduced(Y, sol_min, sol_max)
 
-            alpha, Y_proj = _dod_projector(Y_norm, np.asarray(mu), innerDOD_model, example_name, device)
+            _, Y_proj_norm = _dod_projector(Y_norm, np.asarray(mu), innerDOD_model, example_name, device)
+            Y_proj = _denormalize_reduced(Y_proj_norm, example_name, reduction_tag, device)
+            U_hat = np.einsum('hi,ti->th', A, Y_proj, optimize=True)
 
-            # Projection loss in N' (equivalently residual in N_A because V is orthonormal)
-            ref_sq = _euclid_sq_timeseries(Y_norm)
-            proj_sq = _euclid_sq_timeseries(alpha)
-            res_sq = np.maximum(ref_sq - proj_sq, 0.0)
+            err_sq = _g_sq_timeseries(U - U_hat, G)
+            ref_sq = _g_sq_timeseries(U, G)
+            abs_err.append(float(np.sqrt(err_sq.mean())))
+            rel_err.append(float(np.sqrt(err_sq.sum()) / (np.sqrt(ref_sq.sum()) + 1e-24)))
 
-            abs_err.append(float(np.sqrt(res_sq.mean())))
-            rel_err.append(float(np.sqrt(res_sq.sum()) / (np.sqrt(ref_sq.sum()) + 1e-24)))
-
-        print("[DOD projection loss in N' (normalized N_A space, shifted)]")
+        print("[A^T G -> norm -> inner^T -> inner -> denorm -> A (shifted)]")
         print(f"Absolute Error: {np.mean(abs_err):.3e}  Relative Error: {np.mean(rel_err):.3e}")
         print("----------------------------------------")
         return
