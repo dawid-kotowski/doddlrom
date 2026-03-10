@@ -7,55 +7,66 @@ example_name = 'ex02'
 path = training_data_path(example_name) / f'pod_singular_values_{example_name}.npz'
 data = np.load(path)
 
-sigma_global = data['sigma_global_NA'].astype(float)     # [N_A]
-# Use precomputed sup if present; if not, sup over (mu,t) from sigma_mu_t
-sigma_sup = (data['sigma_mu_t_sup'].astype(float)
-             if 'sigma_mu_t_sup' in data
-             else np.max(data['sigma_mu_t'].astype(float), axis=(0,1)))
+sigma_global = data['sigma_global_NA'].astype(float)
+sigma_sup = data['sigma_mu_t_sup'].astype(float) if 'sigma_mu_t_sup' in data else np.max(data['sigma_mu_t'].astype(float), axis=(0, 1))
 
-sigma_global = np.maximum(sigma_global, 1e-16)
-sigma_sup    = np.maximum(sigma_sup,    1e-16)
+eps = 1e-16
+fit_cutoff = 1e-8
+n_plot_max = 50
 
-N_A = sigma_global.shape[0]
-n_vals = np.arange(1, 20, dtype=int)
+sigma_global = np.maximum(sigma_global, eps)
+sigma_sup = np.maximum(sigma_sup, eps)
 
-S_global = np.array([np.sum(sigma_global[n+1:]) for n in n_vals])
-S_sup    = np.array([np.sum(sigma_sup[n+1:])    for n in n_vals])
+n_max_available = max(1, min(sigma_global.shape[0], sigma_sup.shape[0]) - 2)
+n_max = min(n_plot_max, n_max_available)
+n_vals = np.arange(1, n_max + 1, dtype=int)
 
-# Fit window (skip a few points at both ends)
-drop_head = max(2, int(0.02 * len(n_vals)))
-drop_tail = max(2, int(0.02 * len(n_vals)))
-fit_slice = slice(drop_head, len(n_vals)-drop_tail)
+S_global = np.array([np.sum(sigma_global[n + 1:]) for n in n_vals], dtype=float)
+S_sup = np.array([np.sum(sigma_sup[n + 1:]) for n in n_vals], dtype=float)
 
-x_fit = n_vals[fit_slice].astype(float)
-y_global_fit = np.maximum(S_global[fit_slice], 1e-16)
-y_sup_fit    = np.maximum(S_sup[fit_slice],    1e-16)
 
-# log–log linear regression: log S ≈ a + b log n, with alpha = -b
-slope_g, intercept_g = np.polyfit(np.log(x_fit), np.log(y_global_fit), 1)
-slope_s, intercept_s = np.polyfit(np.log(x_fit), np.log(y_sup_fit), 1)
-alpha = -slope_g
-beta  = -slope_s
+def fit_loglog(x, y, cutoff):
+    mask = y > cutoff
+    if np.count_nonzero(mask) < 2:
+        mask = y > 0.0
+    if np.count_nonzero(mask) < 2:
+        return np.nan, np.nan
+    return np.polyfit(np.log(x[mask]), np.log(y[mask]), 1)
+
+
+x_fit = n_vals.astype(float)
+slope_g, intercept_g = fit_loglog(x_fit, S_global, fit_cutoff)
+slope_s, intercept_s = fit_loglog(x_fit, S_sup, fit_cutoff)
+
+alpha = -slope_g if np.isfinite(slope_g) else np.nan
+beta = -slope_s if np.isfinite(slope_s) else np.nan
 
 print(f"Estimated alpha (global tail ~ n^(-alpha)): {alpha:.3f}")
 print(f"Estimated beta  (sup tail ~ n^(-beta))   : {beta:.3f}")
 
-# Fitted lines for plotting
-Sg_fit_line = np.exp(intercept_g) * n_vals**slope_g
-Ss_fit_line = np.exp(intercept_s) * n_vals**slope_s
+Sg_fit_line = np.exp(intercept_g) * x_fit ** slope_g if np.isfinite(slope_g) else None
+Ss_fit_line = np.exp(intercept_s) * x_fit ** slope_s if np.isfinite(slope_s) else None
 
-# Plot 1: Global tail
 plt.figure()
-plt.loglog(n_vals, S_global, label='Global tail sum S(n)')
-plt.loglog(n_vals, Sg_fit_line, linestyle='--', label=f'Fit: n^({slope_g:.2f}) → α≈{alpha:.2f}')
-plt.xlabel('n'); plt.ylabel('Tail sum S(n)')
+plt.loglog(n_vals, np.maximum(S_global, eps), label='Global tail sum S(n)')
+if Sg_fit_line is not None:
+    plt.loglog(n_vals, np.maximum(Sg_fit_line, eps), linestyle='--', label=f'Fit: n^({slope_g:.2f}) -> alpha~{alpha:.2f}')
+plt.xlabel('n')
+plt.ylabel('Tail sum S(n)')
 plt.title('Global singular-values tail (log-log)')
-plt.legend(); plt.tight_layout(); plt.show()
+plt.xlim(1, n_plot_max)
+plt.legend()
+plt.tight_layout()
+plt.show()
 
-# Plot 2: Supremum tail
 plt.figure()
-plt.loglog(n_vals, S_sup, label='Sup tail sum S_sup(n)')
-plt.loglog(n_vals, Ss_fit_line, linestyle='--', label=f'Fit: n^({slope_s:.2f}) → β≈{beta:.2f}')
-plt.xlabel('n'); plt.ylabel('Tail sum S_sup(n)')
-plt.title('Sup over (μ,t) singular-values tail (log-log)')
-plt.legend(); plt.tight_layout(); plt.show()
+plt.loglog(n_vals, np.maximum(S_sup, eps), label='Sup tail sum S_sup(n)')
+if Ss_fit_line is not None:
+    plt.loglog(n_vals, np.maximum(Ss_fit_line, eps), linestyle='--', label=f'Fit: n^({slope_s:.2f}) -> beta~{beta:.2f}')
+plt.xlabel('n')
+plt.ylabel('Tail sum S_sup(n)')
+plt.title('Sup over (mu,t) singular-values tail (log-log)')
+plt.xlim(1, n_plot_max)
+plt.legend()
+plt.tight_layout()
+plt.show()

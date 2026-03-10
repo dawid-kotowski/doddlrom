@@ -135,7 +135,7 @@ def build_trainers_and_models(P, train_valid_set_N_A, train_valid_set_N, bs):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--example', type=str, required=True)
-    parser.add_argument('--profiles', nargs='+', default=['test1', 'test2', 'test3', 'test4', 'test5','test6', 'test7', 'test8', 'test9', 'test10','test11', 'test12', 'test13', 'test14', 'test15'])
+    parser.add_argument('--profiles', nargs='+', default=['test1', 'test2', 'test3', 'test4', 'test5','test6', 'test7', 'test8', 'test9', 'test10','test11', 'test12', 'test13', 'test14', 'test15','test16', 'test17', 'test18', 'test19', 'test20'])
     parser.add_argument('--epochs', type=int, default=None)
     parser.add_argument('--restarts', type=int, default=None)
     parser.add_argument('--batch-size', type=int, default=32)
@@ -162,13 +162,15 @@ def main():
 
     # metrics file
     csv_path = outdir / 'rom_sweep.csv'
-    first_write = not csv_path.exists()
+    first_write = (not csv_path.exists()) or csv_path.stat().st_size == 0
     with open(csv_path, 'a', newline='') as fcsv:
         writer = csv.DictWriter(fcsv, fieldnames=[
             'profile','rom','epochs','restarts','val_loss','params_total','params_nonzero',
             'forward_ms','abs_L2G','rel_L2G', 'Ns', 'Nt'
         ])
-        if first_write: writer.writeheader()
+        if first_write:
+            writer.writeheader()
+            fcsv.flush()
 
         for profile in args.profiles:
             P = load_parameters(example_name, profile=profile)
@@ -259,6 +261,7 @@ def main():
                     'Nt': int(P.Nt)
                 }
                 writer.writerow(row)
+                fcsv.flush()
                 print(json.dumps(row))
 
 if __name__ == "__main__":

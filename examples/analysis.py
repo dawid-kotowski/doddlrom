@@ -135,27 +135,15 @@ def plot_shared_params_vs_error(
 def plot_knw(
     example_name,
     outdir,
-    zero_tol: float = 1e-14,
-    head_frac: float = 0.02,
-    tail_frac: float = 0.02,
+    fit_cutoff: float = 1e-8,
+    eps: float = 1e-16,
+    n_plot_max: int = 50,
     linestyles: tuple[str, ...] = ("-", "--"),
     markers: tuple[str, ...] = ("o", "s"),
     show_r2: bool = True,
 ):
-    """
-    Plot tail sums S(n) = sum_{k>n} sigma_k on semilogy (linear x, log y)
-    with the same optical style as your shared_params_vs_error:
-      - scatter points (colored markers)
-      - same-colored fit line with custom linestyle
-      - modern palette
-
-    Fits S(n) ~ c * n^{-alpha} on a trimmed, non-near-zero window.
-    """
-    from pathlib import Path
-    import numpy as np
-    import matplotlib.pyplot as plt
-
-    outdir = Path(outdir); outdir.mkdir(parents=True, exist_ok=True)
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
     path = Path(training_data_path(example_name) / f"pod_singular_values_{example_name}.npz")
     data = np.load(path)
 
@@ -167,69 +155,63 @@ def plot_knw(
                  if 'sigma_mu_t_sup' in data.files
                  else np.max(np.asarray(data['sigma_mu_t'], dtype=float), axis=(0, 1)))
 
-    sigma_global = np.maximum(sigma_global, 0.0)
-    sigma_sup    = np.maximum(sigma_sup,    0.0)
+    sigma_global = np.maximum(sigma_global, eps)
+    sigma_sup = np.maximum(sigma_sup, eps)
 
-    N_A = int(sigma_global.shape[0])
-    n_vals = np.arange(1, N_A, dtype=int)
+    n_max_available = max(1, min(sigma_global.shape[0], sigma_sup.shape[0]) - 2)
+    n_max = min(n_plot_max, n_max_available)
+    n_vals = np.arange(1, n_max + 1, dtype=int)
 
-    def tail_sums(sig):
-        tail = np.cumsum(sig[::-1])[::-1]
-        S = np.zeros_like(n_vals, dtype=float)
-        valid = n_vals + 1 < len(tail)
-        S[valid] = tail[n_vals[valid] + 1]
-        return S
+    S_global = np.array([np.sum(sigma_global[n + 1:]) for n in n_vals], dtype=float)
+    S_sup = np.array([np.sum(sigma_sup[n + 1:]) for n in n_vals], dtype=float)
 
-    S_global = tail_sums(sigma_global)
-    S_sup    = tail_sums(sigma_sup)
-
-    def choose_fit_indices(S):
-        mask = S > zero_tol
-        if not np.any(mask):
-            return np.array([], dtype=int)
-        first = np.where(mask)[0][0]
-        last  = np.where(mask)[0][-1]
-        length = last - first + 1
-        drop_h = int(max(0, round(head_frac * length)))
-        drop_t = int(max(0, round(tail_frac * length)))
-        lo, hi = first + drop_h, last - drop_t
-        if lo > hi: lo, hi = first, last
-        return np.arange(lo, hi + 1, dtype=int)
-
-    def fit_power_law(n, S):
-        idx = choose_fit_indices(S)
-        if idx.size == 0:
-            return None
-        x = n[idx].astype(float)
-        y = np.maximum(S[idx], zero_tol)
+    def fit_loglog(x, y, cutoff):
+        mask = y > cutoff
+        if np.count_nonzero(mask) < 2:
+            mask = y > 0.0
+        if np.count_nonzero(mask) < 2:
+            return np.nan, np.nan, None
+        x = x[mask].astype(float)
+        y = y[mask].astype(float)
         lx, ly = np.log(x), np.log(y)
-        slope, intercept = np.polyfit(lx, ly, 1)   # log S = a + b log n
-        alpha = -slope
-        c = np.exp(intercept)
+        slope, intercept = np.polyfit(lx, ly, 1)
+        r2 = None
         yhat = intercept + slope * lx
-        R2 = 1 - np.sum((ly - yhat)**2)/np.sum((ly - ly.mean())**2) if show_r2 and lx.size > 1 else None
-        return {"alpha": float(alpha), "c": float(c), "idx": idx, "R2": (None if R2 is None else float(R2))}
+        denom = np.sum((ly - ly.mean()) ** 2)
+        if show_r2 and lx.size > 1 and denom > 0:
+            r2 = 1 - np.sum((ly - yhat) ** 2) / denom
+        return float(slope), float(intercept), (None if r2 is None else float(r2))
 
-    fit_g = fit_power_law(n_vals, S_global)
-    fit_s = fit_power_law(n_vals, S_sup)
+    x_fit = n_vals.astype(float)
+    slope_g, intercept_g, r2_g = fit_loglog(x_fit, S_global, fit_cutoff)
+    slope_s, intercept_s, r2_s = fit_loglog(x_fit, S_sup, fit_cutoff)
+    alpha = -slope_g if np.isfinite(slope_g) else np.nan
+    beta = -slope_s if np.isfinite(slope_s) else np.nan
+    Sg_fit_line = np.exp(intercept_g) * x_fit ** slope_g if np.isfinite(slope_g) else None
+    Ss_fit_line = np.exp(intercept_s) * x_fit ** slope_s if np.isfinite(slope_s) else None
 
-    def draw_panel(xn, S, fit, title, fname, color, ls, mk, ylabel):
+    def draw_panel(xn, S, fit_line, slope, exponent, r2, fit_name, title, fname, color, ls, mk, ylabel):
         plt.figure()
-        mask_sc = S > 0
-        plt.semilogy(xn[mask_sc], S[mask_sc],
-                     linestyle="none", marker=mk, markersize=6,
-                     markerfacecolor=color, markeredgecolor=color, alpha=0.85, label=None)
-
-        if fit is not None:
-            jj = fit["idx"]
-            S_fit = fit["c"] * (xn[jj] ** (-fit["alpha"]))
-            label = (rf"Fit: $S\approx c\,n^{{-\alpha}}$, "
-                     rf"$\alpha\approx{fit['alpha']:.2f}$" +
-                     (rf", $R^2={fit['R2']:.2f}$" if fit["R2"] is not None else ""))
-            plt.semilogy(xn[jj], S_fit, linestyle=ls, color=color, linewidth=2.0, label=label)
-
-        plt.xlabel('n'); plt.ylabel(ylabel)
+        plt.loglog(
+            xn,
+            np.maximum(S, eps),
+            linestyle="none",
+            marker=mk,
+            markersize=6,
+            markerfacecolor=color,
+            markeredgecolor=color,
+            alpha=0.85,
+            label=None,
+        )
+        if fit_line is not None:
+            label = f"Fit: n^({slope:.2f}) -> {fit_name}~{exponent:.2f}"
+            if r2 is not None:
+                label = f"{label}, $R^2$={r2:.2f}"
+            plt.loglog(xn, np.maximum(fit_line, eps), linestyle=ls, color=color, linewidth=2.0, label=label)
+        plt.xlabel('n')
+        plt.ylabel(ylabel)
         plt.title(title)
+        plt.xlim(1, n_plot_max)
         plt.grid(True, which="both", linestyle=":", alpha=0.4)
         plt.legend()
         plt.tight_layout()
@@ -242,13 +224,13 @@ def plot_knw(
     mk_g = markers[0 % len(markers)]
     mk_s = markers[1 % len(markers)]
 
-    draw_panel(n_vals, S_global, fit_g,
+    draw_panel(n_vals, S_global, Sg_fit_line, slope_g, alpha, r2_g, "alpha",
                title='Global singular-values tail',
                fname="knw_global.png",
                color=c_g, ls=ls_g, mk=mk_g,
                ylabel='Tail sum $S(n)$')
 
-    draw_panel(n_vals, S_sup, fit_s,
+    draw_panel(n_vals, S_sup, Ss_fit_line, slope_s, beta, r2_s, "beta",
                title='Sup over $(\\mu,t)$ singular-values tail',
                fname="knw_sup.png",
                color=c_s, ls=ls_s, mk=mk_s,

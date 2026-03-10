@@ -15,7 +15,7 @@ from core.analytic.decomposition import pod_dl_error_decomposition, dod_dl_error
 from utils.paths import training_data_path
 
 
-# Initialize weights
+# Some NN Helpers
 def initialize_weights(m):
     if isinstance(m, nn.Conv2d):
         nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu', a=0.1)
@@ -35,6 +35,34 @@ def initialize_weights(m):
     elif isinstance(m, (nn.BatchNorm2d, nn.BatchNorm1d)):
         nn.init.ones_(m.weight)
         nn.init.zeros_(m.bias)
+
+def _make_adamw(params, lr, weight_decay, use_cuda):
+    kwargs = {"lr": lr, "weight_decay": weight_decay}
+    if use_cuda and "fused" in optim.AdamW.__init__.__code__.co_varnames:
+        kwargs["fused"] = True
+    return optim.AdamW(params, **kwargs)
+
+def _make_plateau(optimizer, patience, min_lr):
+    return optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=0.5,
+        patience=patience,
+        threshold=1e-4,
+        threshold_mode="rel",
+        cooldown=1,
+        min_lr=min_lr,
+    )
+
+def _step_plateau(scheduler, optimizer, metric):
+    prev_lr = optimizer.param_groups[0]["lr"]
+    scheduler.step(metric)
+    return optimizer.param_groups[0]["lr"] < prev_lr
+
+def _update_patience(prev_val_loss, val_loss, epochs_no_improve, lr_reduced):
+    if prev_val_loss is None or val_loss < prev_val_loss or lr_reduced:
+        return val_loss, 0
+    return val_loss, epochs_no_improve + 1
 
 def _freeze(m):
     m.eval()
@@ -315,14 +343,12 @@ class innerDODTrainer:
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.AdamW(params, 
-                                    lr=self.learning_rate, weight_decay=1e-4)
-            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
-                                                                       T_0=100, 
-                                                                       T_mult=2, 
-                                                                       eta_min=1e-7)
+            optimizer = _make_adamw(params, self.learning_rate, 1e-4, use_cuda)
+            lr_patience = max(2, (self.patience + 1) // 2)
+            scheduler = _make_plateau(optimizer, lr_patience, 1e-7)
 
             epochs_no_improve = 0
+            prev_val_loss = None
             best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
@@ -359,17 +385,18 @@ class innerDODTrainer:
                         val_num += batch_loss.item() * B
                         val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(epoch)
+                lr_reduced = _step_plateau(scheduler, optimizer, val_loss)
 
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = copy.deepcopy(self.model.state_dict())
-                    epochs_no_improve = 0
-                else:
-                    epochs_no_improve += 1
-                    if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
-                        break
+
+                prev_val_loss, epochs_no_improve = _update_patience(
+                    prev_val_loss, val_loss, epochs_no_improve, lr_reduced
+                )
+                if epochs_no_improve >= self.patience:
+                    tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
+                    break
 
                 tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
                         f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
@@ -570,14 +597,12 @@ class DFNNTrainer:
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.AdamW(params, 
-                                    lr=self.learning_rate, weight_decay=1e-4)
-            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
-                                                                       T_0=100, 
-                                                                       T_mult=2, 
-                                                                       eta_min=1e-7)
+            optimizer = _make_adamw(params, self.learning_rate, 1e-4, use_cuda)
+            lr_patience = max(2, (self.patience + 1) // 2)
+            scheduler = _make_plateau(optimizer, lr_patience, 1e-7)
 
             epochs_no_improve = 0
+            prev_val_loss = None
             best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
@@ -615,16 +640,17 @@ class DFNNTrainer:
                         val_num += batch_loss.item() * B
                         val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(epoch)
+                lr_reduced = _step_plateau(scheduler, optimizer, val_loss)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = copy.deepcopy(self.model.state_dict())
-                    epochs_no_improve = 0
-                else:
-                    epochs_no_improve += 1
-                    if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
-                        break
+
+                prev_val_loss, epochs_no_improve = _update_patience(
+                    prev_val_loss, val_loss, epochs_no_improve, lr_reduced
+                )
+                if epochs_no_improve >= self.patience:
+                    tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
+                    break
 
                 tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
                         f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
@@ -936,13 +962,12 @@ class DOD_DL_ROMTrainer:
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
             
-            optimizer = optim.AdamW(params, 
-                                    lr=self.learning_rate, weight_decay=1e-4)
-            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
-                                                                       T_0=100, 
-                                                                       T_mult=2)
+            optimizer = _make_adamw(params, self.learning_rate, 1e-4, use_cuda)
+            lr_patience = max(2, (self.patience + 1) // 2)
+            scheduler = _make_plateau(optimizer, lr_patience, 1e-7)
 
             epochs_no_improve = 0
+            prev_val_loss = None
             best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
@@ -984,7 +1009,7 @@ class DOD_DL_ROMTrainer:
                         val_num += batch_loss.item() * B
                         val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(epoch)
+                lr_reduced = _step_plateau(scheduler, optimizer, val_loss)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = {
@@ -992,12 +1017,13 @@ class DOD_DL_ROMTrainer:
                         "decoder": copy.deepcopy(self.de_model.state_dict()),
                         "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
                     }
-                    epochs_no_improve = 0
-                else:
-                    epochs_no_improve += 1
-                    if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
-                        break
+
+                prev_val_loss, epochs_no_improve = _update_patience(
+                    prev_val_loss, val_loss, epochs_no_improve, lr_reduced
+                )
+                if epochs_no_improve >= self.patience:
+                    tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
+                    break
 
                 tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
                         f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
@@ -1116,14 +1142,12 @@ class POD_DL_ROMTrainer:
             self.en_model.apply(initialize_weights)
             self.de_model.apply(initialize_weights)
             
-            optimizer = optim.AdamW(params, 
-                                    lr=self.learning_rate, weight_decay=1e-4)
-            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
-                                                                       T_0=100, 
-                                                                       T_mult=2, 
-                                                                       eta_min=1e-7)
+            optimizer = _make_adamw(params, self.learning_rate, 1e-4, use_cuda)
+            lr_patience = max(2, (self.patience + 1) // 2)
+            scheduler = _make_plateau(optimizer, lr_patience, 1e-7)
 
             epochs_no_improve = 0
+            prev_val_loss = None
             best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
@@ -1165,7 +1189,7 @@ class POD_DL_ROMTrainer:
                         val_num += batch_loss.item() * B
                         val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(epoch)
+                lr_reduced = _step_plateau(scheduler, optimizer, val_loss)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = {
@@ -1173,12 +1197,13 @@ class POD_DL_ROMTrainer:
                         "decoder": copy.deepcopy(self.de_model.state_dict()),
                         "coeff_model": copy.deepcopy(self.coeff_model.state_dict())
                     }
-                    epochs_no_improve = 0
-                else:
-                    epochs_no_improve += 1
-                    if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
-                        break
+
+                prev_val_loss, epochs_no_improve = _update_patience(
+                    prev_val_loss, val_loss, epochs_no_improve, lr_reduced
+                )
+                if epochs_no_improve >= self.patience:
+                    tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
+                    break
 
                 tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
                         f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
@@ -1390,14 +1415,12 @@ class statDODTrainer:
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.AdamW(params, 
-                                    lr=self.learning_rate, weight_decay=1e-4)
-            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
-                                                                       T_0=100, 
-                                                                       T_mult=2, 
-                                                                       eta_min=1e-7)
+            optimizer = _make_adamw(params, self.learning_rate, 1e-4, use_cuda)
+            lr_patience = max(2, (self.patience + 1) // 2)
+            scheduler = _make_plateau(optimizer, lr_patience, 1e-7)
 
             epochs_no_improve = 0
+            prev_val_loss = None
             best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
@@ -1434,16 +1457,17 @@ class statDODTrainer:
                         val_num += batch_loss.item() * B
                         val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(epoch)
+                lr_reduced = _step_plateau(scheduler, optimizer, val_loss)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = copy.deepcopy(self.model.state_dict())
-                    epochs_no_improve = 0
-                else:
-                    epochs_no_improve += 1
-                    if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
-                        break
+
+                prev_val_loss, epochs_no_improve = _update_patience(
+                    prev_val_loss, val_loss, epochs_no_improve, lr_reduced
+                )
+                if epochs_no_improve >= self.patience:
+                    tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
+                    break
 
                 tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
                         f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
@@ -1537,14 +1561,12 @@ class statHadamardNNTrainer:
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.AdamW(params, 
-                                    lr=self.learning_rate, weight_decay=1e-4)
-            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
-                                                                       T_0=100, 
-                                                                       T_mult=2, 
-                                                                       eta_min=1e-7)
+            optimizer = _make_adamw(params, self.learning_rate, 1e-4, use_cuda)
+            lr_patience = max(2, (self.patience + 1) // 2)
+            scheduler = _make_plateau(optimizer, lr_patience, 1e-7)
 
             epochs_no_improve = 0
+            prev_val_loss = None
             best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
@@ -1582,16 +1604,17 @@ class statHadamardNNTrainer:
                         val_num += batch_loss.item() * B
                         val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(epoch)
+                lr_reduced = _step_plateau(scheduler, optimizer, val_loss)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = copy.deepcopy(self.model.state_dict())
-                    epochs_no_improve = 0
-                else:
-                    epochs_no_improve += 1
-                    if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
-                        break
+
+                prev_val_loss, epochs_no_improve = _update_patience(
+                    prev_val_loss, val_loss, epochs_no_improve, lr_reduced
+                )
+                if epochs_no_improve >= self.patience:
+                    tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
+                    break
 
                 tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
                         f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
@@ -1764,14 +1787,12 @@ class CoLoRATrainer():
             if use_cuda: torch.cuda.manual_seed_all(seed)
 
             self.model.apply(initialize_weights)
-            optimizer = optim.AdamW(params, 
-                                    lr=self.learning_rate, weight_decay=1e-4)
-            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 
-                                                                       T_0=100, 
-                                                                       T_mult=2, 
-                                                                       eta_min=1e-7)
+            optimizer = _make_adamw(params, self.learning_rate, 1e-4, use_cuda)
+            lr_patience = max(2, (self.patience + 1) // 2)
+            scheduler = _make_plateau(optimizer, lr_patience, 1e-7)
 
             epochs_no_improve = 0
+            prev_val_loss = None
             best_loss_restart = float('inf')
 
             for epoch in tqdm(range(self.epochs), desc=f"Epochs [Restart {restart_idx + 1}]", leave=False):
@@ -1809,16 +1830,17 @@ class CoLoRATrainer():
                         val_num += batch_loss.item() * B
                         val_den += B
                 val_loss = val_num / max(1, val_den)
-                scheduler.step(epoch)
+                lr_reduced = _step_plateau(scheduler, optimizer, val_loss)
                 if val_loss < best_loss_restart:
                     best_loss_restart = val_loss
                     best_snapshot = copy.deepcopy(self.model.state_dict())
-                    epochs_no_improve = 0
-                else:
-                    epochs_no_improve += 1
-                    if epochs_no_improve >= self.patience:
-                        tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
-                        break
+
+                prev_val_loss, epochs_no_improve = _update_patience(
+                    prev_val_loss, val_loss, epochs_no_improve, lr_reduced
+                )
+                if epochs_no_improve >= self.patience:
+                    tqdm.write(f"Early stopping at epoch {epoch+1} (no improvement).")
+                    break
 
                 tqdm.write(f"Restart {restart_idx+1} | Epoch {epoch+1} | "
                         f"train {(train_num/max(1,train_den)):.6f} | val {val_loss:.6f}")
