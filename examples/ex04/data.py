@@ -84,60 +84,65 @@ def main():
     --------------------------
     '''
 
-    # Define the advection function dependent on 'mu'
-    def advection_function(x, mu):
-        mu_value = mu['mu'][2]
-        return np.array([[np.cos(np.pi/(100*mu_value)), np.sin(np.pi/(100*mu_value))] for _ in range(x.shape[0])])
-        
-    # Define rhs 
-    def rhs_function(x, mu):
-        mu_values_1 = mu['mu'][0]
-        mu_values_2 = mu['mu'][1]
-        x0 = x[:, 0]
-        x1 = x[:, 1]
-        values = 10 * np.exp(-((x0 - mu_values_1)**2 + (x1 - mu_values_2)**2) / 0.07**2)
-        return values
+    from core.bindings.fom import discretize
 
-    # Define the stationary problem
-    # Note, that the Dirichlet Boundary conditions are NOT enforced here, so the Dirichlet shift can be skipped!
-    mu_param = Parameters({'mu': 3, 'nu': 1})
-    advection_generic_function = GenericFunction(advection_function, dim_domain=2, shape_range=(2,), parameters=mu_param)
-    rhs_generic_function = GenericFunction(rhs_function, dim_domain=2, shape_range=(), parameters=mu_param)
-    stationary_problem = StationaryProblem(
-        domain=RectDomain(),
-        rhs=rhs_generic_function,
-        diffusion=LincombFunction([ExpressionFunction('1', 2)],
-                                [ProjectionParameterFunctional('nu', 1)]),
-        advection=advection_generic_function,
-        neumann_data=ConstantFunction(0, 2),
-        dirichlet_data=None,
-        name='nonlinear_wind_ex04'
-    )
+    default_config = {
+        "extraIntOrders": 2,
+        "reduction": 1e-20,
+        "rescaling": False,
+        "rescalingOut": 1.0,
+        "grid.dim": 2,
+        "grid.yasp_x": P.grid_size,
+        "grid.yasp_y": P.grid_size,
+        "time.time": 0.0,
+        "time.dt": P.dt,
+        "time.T": P.T,
+        "problem.discontinuousInflow": False,
+        "problem.nInflowBumps": 4,
+        "problem.eta": 0.2,
+        "problem.non-parametric.fixedReaction": 1.0,
+        "problem.non-parametric.fixedSource": 0.0,
+        "problem.non-parametric.fixedInflow": 1.0,
+        "problem.non-parametric.fixedReactionWashcoat": 0.5,
+        "problem.non-parametric.fixedReactionCoating": 0.1,
+        "problem.non-parametric.fixedInflowScaling": 1.0,
+        "problem.non-parametric.fixedInflowOffset": 0.0,
+        "problem.parametric.openingHeight": 0.25,
+        "problem.parametric.coatingHeight": 0.125,
+        "problem.parametric.minPermeability": 0.2,
+        "problem.parametric.coatingPermeability": 0.05,
+        "problem.parametric.inflowAngle": 0,
+        "darcy.reduction": 1e-12,
+        "darcy.analytic.discontinuous": True,
+        "darcy.analytic.compact": True,
+        "darcy.analytic.width": 0.5,
+        "visualization.subsampling": 8,
+        "visualization.subsamplingVelocity": 5,
+        "visualization.subsamplingDG": 5,
+    }
 
-    # Define the instationary problem
-    problem = InstationaryProblem(
-        T=1.,
-        initial_data=ConstantFunction(0, 2),
-        stationary_part=stationary_problem,
-        name='nonlinear_wind_ex04'
-    )
-
-    # Discretize the problem
-    fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt)
+    fom = discretize(default_config)
 
     # Define the parameter space with ranges for 'mu' and 'nu'
     parameter_space = fom.parameters.space({
-        'mu': (0.3, 0.7),
-        'nu': (0.004, 0.005)
+        'mu': (0.2, 0.8),
+        'nu': (1e-4, 1e-2)
     })
 
     # Generate training and validation sets
-    sample_size_per_param = int(np.ceil(np.power(P.Ns, 1 / 4)))
+    sample_size_per_param = int(np.ceil(np.power(P.Ns, 1 / 5)))
     training_set = parameter_space.sample_uniformly(sample_size_per_param)
 
     # Collect parameter arrays
     mu_arr = np.array([p['mu'] for p in training_set], dtype=np.float32)
     nu_arr = np.array([p['nu'] for p in training_set], dtype=np.float32)
+
+    # Solve all stationary samples; make both a shifted solution_set for POD and a raw array for saving
+    stat_mu = np.array([p['mu'] for p in training_set], dtype=np.float32)
+    stat_nu = np.array([p['nu'] for p in training_set], dtype=np.float32)
+
+    # Create an empty list to hold the training data
+    solution_set = fom.solution_space.empty()
 
     # Enforce Dirichlet shift
     u_t_0 = fom.solve(parameter_space.sample_uniformly(1)[0])
@@ -147,6 +152,7 @@ def main():
 
     np.savez_compressed(tdir / f"dirichlet_shift_{example_name}.npz", 
                         ut0 = u_t_0_np)
+
 
     '''
     --------------------------
@@ -169,7 +175,7 @@ def main():
     solutions = np.stack(solutions, axis=0)                  # [Ns, Nt, Nh]
 
     # Gram matrix (compact)
-    G = fom.h1_0_semi_product.matrix.toarray().astype(np.float32)  # [Nh, Nh]
+    G = fom.l2_product.matrix.toarray().astype(np.float32)  # [Nh, Nh]
     np.savez_compressed(tdir / f'gram_matrix_{example_name}.npz', gram=G)
 
     # Save compact FOM data
@@ -177,13 +183,13 @@ def main():
                         mu=mu_arr, nu=nu_arr, solution=solutions)
 
     # --- Ambient for DOD-based ROMs ---
-    pod_modes, singular_values = pod(shifted_solutions_pymor, product=fom.h1_0_semi_product, modes=P.N_A)
+    pod_modes, singular_values = pod(shifted_solutions_pymor, product=fom.l2_product, modes=P.N_A)
     A = pod_modes.to_numpy().T.astype(np.float32)            # [Nh, N_A]
     ensure_modes(A, G, P.N_A)
     np.savez_compressed(tdir / f'N_A_ambient_{example_name}.npz', ambient=A)
 
     # --- Ambient for POD-based ROMs ---
-    pod_modes_N, singular_values_N = pod(shifted_solutions_pymor, product=fom.h1_0_semi_product, modes=P.N)
+    pod_modes_N, singular_values_N = pod(shifted_solutions_pymor, product=fom.l2_product, modes=P.N)
     A_P = pod_modes_N.to_numpy().T.astype(np.float32)  # [Nh, N]
     ensure_modes(A_P, G, P.N)
     np.savez_compressed(tdir / f'N_ambient_{example_name}.npz', ambient=A_P)
@@ -256,7 +262,7 @@ def main():
             for traj in nu_trajectories:
                 snapshots.append(traj[t_idx])
 
-            _, sv = pod(snapshots, product=fom.h1_0_semi_product, modes=P.N_A)
+            _, sv = pod(snapshots, product=fom.l2_product, modes=P.N_A)
             sv = np.asarray(sv, dtype=np.float32)
             if sv.shape[0] < P.N_A:
                 sv = np.pad(sv, (0, P.N_A - sv.shape[0]))

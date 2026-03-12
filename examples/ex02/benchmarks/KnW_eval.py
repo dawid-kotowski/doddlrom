@@ -12,7 +12,7 @@ sigma_sup = data['sigma_mu_t_sup'].astype(float) if 'sigma_mu_t_sup' in data els
 
 eps = 1e-16
 fit_cutoff = 1e-8
-n_plot_max = 50
+n_plot_max = 100
 
 sigma_global = np.maximum(sigma_global, eps)
 sigma_sup = np.maximum(sigma_sup, eps)

@@ -1,0 +1,10 @@
+# Strict, pip-portable runtime lock for doddlrom.
+# Keep this file to direct dependencies only; do not pin conda-only transitive packages.
+# Generated/curated on 2026-03-11 from the known working stack.
+
+numpy==1.24.3
+scipy==1.10.1
+matplotlib==3.9.4
+pymor==2023.2.0
+torch==2.0.1
+tqdm==4.67.1

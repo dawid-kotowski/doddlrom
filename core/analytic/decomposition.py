@@ -70,7 +70,7 @@ def pod_dl_error_decomposition(
     total_den = float(np.sum(rel_terms_den))
     E_R = float(np.sqrt(total_num) / (np.sqrt(total_den) + 1e-24))
 
-    m = float(np.min(norms_test) if np.min(norms_test) > 1e-15 else 1e-15)
+    m = float(np.quantile(norms_test, 0.1))
     M = float(np.max(norms_test))
 
     uv_test_mean = float(np.mean(uv_test))
@@ -176,13 +176,13 @@ def dod_dl_error_decomposition(
 
             num_R.append(res_sq)
             den_R.append(ref_sq)
-            nn_ratios.append(nn_sq / (ref_sq + 1e-24))
+            nn_ratios.append(nn_sq)
             uv_test_vals.append(uv_sq)
             norms_test.append(np.sqrt(ref_sq))
 
     # aggregate over (mu, t)
     E_R = float(np.sqrt(np.sum(num_R)) / (np.sqrt(np.sum(den_R)) + 1e-24))
-    m = float(np.min(norms_test) if np.min(norms_test) > 1e-15 else 1e-15)
+    m = float(np.quantile(norms_test, 0.1))
     M   = float(np.max(norms_test))
 
     # load in tail sum of singular values for fixed (\mu, t)
@@ -202,7 +202,7 @@ def dod_dl_error_decomposition(
     E_DOD_inf  = float(np.sqrt(tail_sum) / (m + 1e-24))
     E_DOD      = float(np.sqrt(unexplained_var_train) / (m + 1e-24))
     E_S        = float(np.sqrt(abs(uv_test_mean - unexplained_var_train)) / (m + 1e-24))
-    E_NN       = float(np.sqrt(np.mean(nn_ratios)))
+    E_NN       = float(np.sqrt(np.mean(nn_ratios)) / (m + 1e-24))
     upper_bnd  = float(E_S + E_DOD + E_NN)
     lower_bnd  = float((m / (M + 1e-24)) * E_DOD_inf)
 

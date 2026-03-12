@@ -999,7 +999,7 @@ EX02_PRESETS: Dict[str, Dict[str, Any]] = {
 @dataclass
 class Ex02Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
-    N_A: int = 32
+    N_A: int = 50
     N: int = 16
     N_prime: int = 4
     n: int = 2
@@ -1053,11 +1053,11 @@ class Ex02Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 30
+    generalepochs: int = 300
     generalrestarts: int = 3
     generalpatience: int = 10
 
-    dod_epochs: int = 90
+    dod_epochs: int = 900
     dod_restarts: int = 3
     dod_patience: int = 10
 
@@ -2033,15 +2033,14 @@ EX04_PRESETS: Dict[str, Dict[str, Any]] = {
 class Ex04Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
     N_A: int = 101
-    N: int = 4        # already did 32, 16, 8
-    N_prime: int = 2  # already did 16, 8, 4
+    N: int = 4
+    N_prime: int = 2
     n: int = 4
-    Nt: int = 30
-    Ns: int = 900
-    T: float = 3.0
-    diameter: float = 0.01
-    parameter_mu_dim: int = 1
-    parameter_nu_dim: int = 1
+    Nt: int = 40
+    Ns: int = 4**5
+    T: float = 8.0
+    dt: float = T/Nt,
+    grid_size: int = 40
 
     # -------- innerDOD ------------------------------------------------------
     preprocess_dim: int = 2
