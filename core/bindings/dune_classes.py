@@ -179,7 +179,7 @@ class DuneDarcyFlowModel(Model):
         return self.solution_space.make_array(trajectory)
 
     def visualize(self, U, **kwargs):
-        filename = kwargs.get("filename", "solution")
+        filename = str(kwargs.get("filename", "solution"))
         if hasattr(U, "vectors"):
             self.solver.visualize([v.impl_ for v in U.vectors], filename)
         else:

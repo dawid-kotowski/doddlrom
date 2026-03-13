@@ -2019,7 +2019,6 @@ def forward_wrappers(P, device, models, example_name):
     
     shifts = np.load(training_data_path(example_name) / f'dirichlet_shift_{example_name}.npz')
     ut0 = torch.tensor(shifts['ut0'], dtype=torch.float32, device=device)  # [Nt, Nh]
-    u0 = torch.tensor(shifts['u0'], dtype=torch.float32, device=device).squeeze(0)  # [Nh]
 
     def dod_dfnn(mu_i, nu_i):
         return dod_dfnn_forward(ut0, A_t, models["DOD+DFNN"]["inner"], models["DOD+DFNN"]["coeff"],
@@ -2037,6 +2036,7 @@ def forward_wrappers(P, device, models, example_name):
 
     is_stationary = (training_data_path(example_name) / f"stationary_ambient_matrix_{example_name}.npz").exists()
     if is_stationary:
+        u0 = torch.tensor(shifts['u0'], dtype=torch.float32, device=device).squeeze(0)  # [Nh]
         stat_A_P = np.load(training_data_path(example_name) / f'stationary_ambient_matrix_{example_name}.npz')['ambient']
         stat_A_P_t = torch.tensor(stat_A_P, dtype=torch.float32, device=device)
         stat_G = np.load(training_data_path(example_name) / f'stationary_gram_matrix_{example_name}.npz')['gram']

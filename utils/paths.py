@@ -49,3 +49,6 @@ def state_dicts_path(example: str) -> Path:
 
 def benchmarks_path(example: str) -> Path:
     return ensure_dir(work_path("benchmarks", example))
+
+def vtk_path(example: str) -> Path:
+    return ensure_dir(work_path("benchmark/vtk", example))

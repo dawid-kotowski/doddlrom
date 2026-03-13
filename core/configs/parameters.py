@@ -2034,8 +2034,8 @@ class Ex04Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
     N_A: int = 32
     N: int = 8
-    N_prime: int = 2
-    n: int = 2
+    N_prime: int = 4
+    n: int = 4
     Nt: int = 20
     Ns: int = 4**4
     T: float = 8.0
@@ -2078,13 +2078,13 @@ class Ex04Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 2
-    generalrestarts: int = 1
-    generalpatience: int = 40
+    generalepochs: int = 300
+    generalrestarts: int = 3
+    generalpatience: int = 10
 
-    dod_epochs: int = 3
-    dod_restarts: int = 1
-    dod_patience: int = 40
+    dod_epochs: int = 900
+    dod_restarts: int = 3
+    dod_patience: int = 10
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"
