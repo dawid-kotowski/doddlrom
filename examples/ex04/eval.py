@@ -27,38 +27,31 @@ training_data = [(mu[i], nu[i], solution[i]) for i in sel]
 
 
 # Define Full Order Model again
-def advection_function(x, mu):
-    mu_value = mu['mu'][2]
-    return np.array([[np.cos(np.pi/(100*mu_value)), np.sin(np.pi/(100*mu_value))] for _ in range(x.shape[0])])
+from core.bindings.fom import discretize
 
-def rhs_function(x, mu):
-    mu_values_1 = mu['mu'][0]
-    mu_values_2 = mu['mu'][1]
-    x0 = x[:, 0]
-    x1 = x[:, 1]
-    values = 10 * np.exp(-((x0 - mu_values_1)**2 + (x1 - mu_values_2)**2) / 0.07**2)
-    return values
+default_config = {
+    "reduction": 1e-20,
+    "grid.dim": 2,
+    "grid.yasp_x": P.grid_size,
+    "grid.yasp_y": P.grid_size,
+    "time.time": 0.0,
+    "time.dt": P.dt,
+    "time.solverSteps": 0.01,
+    "time.T": P.T,
+    "problem.eta": 0.2,
+    "problem.inflowVelocity" : 1.0,
+    "problem.non-parametric.openingHeight": 0.3,
+    "problem.parametric.coatingHeight": 0.0,
+    "problem.parametric.minPermeability": 0.0,
+    "problem.parametric.coatingPermeability": 0.0,
+    "problem.parametric.inflowAngle": 0.0,
+    "darcy.reduction": 1e-12,
+    "visualization.subsampling": 8,
+    "visualization.subsamplingVelocity": 5,
+    "visualization.subsamplingDG": 5,
+}
 
-mu_param = Parameters({'mu': 3, 'nu': 1})
-advection_generic_function = GenericFunction(advection_function, dim_domain=2, shape_range=(2,), parameters=mu_param)
-rhs_generic_function = GenericFunction(rhs_function, dim_domain=2, shape_range=(), parameters=mu_param)
-stationary_problem = StationaryProblem(
-    domain=RectDomain(),
-    rhs=rhs_generic_function,
-    diffusion=LincombFunction([ExpressionFunction('1', 2)],
-                              [ProjectionParameterFunctional('nu', 1)]),
-    advection=advection_generic_function,
-    neumann_data=ConstantFunction(0, 2),
-    name='advection_problem'
-)
-problem = InstationaryProblem(
-    T=1.,
-    initial_data=ConstantFunction(0, 2),
-    stationary_part=stationary_problem,
-    name='advection_problem'
-)
-fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt)
-
+fom = discretize(default_config)
 #endregion
 
 # --- Set up solutions --------------------------------------------------------------

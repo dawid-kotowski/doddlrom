@@ -35,6 +35,7 @@ def load_parameters(example_name: str, profile: str):
         "ex01": "Ex01Parameters",
         "ex02": "Ex02Parameters",
         "ex03": "Ex03Parameters",
+        "ex04": "Ex04Parameters"
     }
     try:
         cls_name = CLASS_BY_EXAMPLE[example_name]

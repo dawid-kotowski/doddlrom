@@ -8,6 +8,30 @@ from pymor.parameters.base import Parameters
 from pymor.vectorarrays.list import CopyOnWriteVector, ListVectorSpace
 
 
+class DuneMatrix:
+    def __init__(self, matrix):
+        self.impl_ = matrix
+
+    def __getattr__(self, name):
+        return getattr(self.impl_, name)
+
+    @property
+    def shape(self):
+        return self.impl_.shape
+
+    def mv(self, x, y):
+        self.impl_.mv(x, y)
+
+    def toarray(self, dtype=np.float64):
+        dense = np.zeros(self.shape, dtype=dtype)
+        for i, row in self.impl_.enumerate:
+            for j, block in row.enumerate:
+                if block.rows != 1 or block.cols != 1:
+                    raise NotImplementedError("Only scalar block matrices are supported.")
+                dense[i, j] = block[0][0]
+        return dense
+
+
 class WrappedDuneVector(CopyOnWriteVector):
     def __init__(self, vector):
         assert isinstance(vector, DuneVector)
@@ -99,7 +123,7 @@ class DuneL2Product(Operator):
 
     def __init__(self, solver):
         self.solver = solver
-        self.matrix = solver.getL2MassMatrix()
+        self.matrix = DuneMatrix(solver.getL2MassMatrix())
         self.source = DuneVectorSpace(solver.dim_source, id="STATE")
         self.range = DuneVectorSpace(solver.dim_range, id="STATE")
 
@@ -126,15 +150,14 @@ class DuneDarcyFlowModel(Model):
         self.solution_space = DuneVectorSpace(solver.dim_range, id="STATE")
         self._base_parameter = np.array(
             [
-                float(config.get("problem.parametric.openingHeight", 0.0)),
                 float(config.get("problem.parametric.coatingHeight", 0.0)),
+                float(config.get("problem.parametric.inflowAngle", 0.0)),
                 float(config.get("problem.parametric.minPermeability", 0.0)),
                 float(config.get("problem.parametric.coatingPermeability", 0.0)),
-                float(config.get("problem.parametric.inflowAngle", 0.0)),
             ],
             dtype=np.float64,
         )
-        self.parameter_indices = parameter_indices or {"mu": (0, 1, 4), "nu": (2, 3)}
+        self.parameter_indices = parameter_indices or {"mu": (0, 1), "nu": (2, 3)}
         super().__init__(products=products, error_estimator=error_estimator, name=name)
         self.parameters_own = Parameters({k: len(v) for k, v in self.parameter_indices.items()})
 

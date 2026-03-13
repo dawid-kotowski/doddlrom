@@ -87,35 +87,22 @@ def main():
     from core.bindings.fom import discretize
 
     default_config = {
-        "extraIntOrders": 2,
         "reduction": 1e-20,
-        "rescaling": False,
-        "rescalingOut": 1.0,
         "grid.dim": 2,
         "grid.yasp_x": P.grid_size,
         "grid.yasp_y": P.grid_size,
         "time.time": 0.0,
         "time.dt": P.dt,
+        "time.solverSteps": 0.01,
         "time.T": P.T,
-        "problem.discontinuousInflow": False,
-        "problem.nInflowBumps": 4,
         "problem.eta": 0.2,
-        "problem.non-parametric.fixedReaction": 1.0,
-        "problem.non-parametric.fixedSource": 0.0,
-        "problem.non-parametric.fixedInflow": 1.0,
-        "problem.non-parametric.fixedReactionWashcoat": 0.5,
-        "problem.non-parametric.fixedReactionCoating": 0.1,
-        "problem.non-parametric.fixedInflowScaling": 1.0,
-        "problem.non-parametric.fixedInflowOffset": 0.0,
-        "problem.parametric.openingHeight": 0.25,
-        "problem.parametric.coatingHeight": 0.125,
-        "problem.parametric.minPermeability": 0.2,
-        "problem.parametric.coatingPermeability": 0.05,
-        "problem.parametric.inflowAngle": 0,
+        "problem.inflowVelocity" : 1.0,
+        "problem.non-parametric.openingHeight": 0.3,
+        "problem.parametric.coatingHeight": 0.0,
+        "problem.parametric.minPermeability": 0.0,
+        "problem.parametric.coatingPermeability": 0.0,
+        "problem.parametric.inflowAngle": 0.0,
         "darcy.reduction": 1e-12,
-        "darcy.analytic.discontinuous": True,
-        "darcy.analytic.compact": True,
-        "darcy.analytic.width": 0.5,
         "visualization.subsampling": 8,
         "visualization.subsamplingVelocity": 5,
         "visualization.subsamplingDG": 5,
@@ -125,24 +112,17 @@ def main():
 
     # Define the parameter space with ranges for 'mu' and 'nu'
     parameter_space = fom.parameters.space({
-        'mu': (0.2, 0.8),
-        'nu': (1e-4, 1e-2)
+        'mu': (0.2, 0.4),
+        'nu': (0.2, 0.6)
     })
 
     # Generate training and validation sets
-    sample_size_per_param = int(np.ceil(np.power(P.Ns, 1 / 5)))
+    sample_size_per_param = int(np.ceil(np.power(P.Ns, 1 / 4)))
     training_set = parameter_space.sample_uniformly(sample_size_per_param)
 
     # Collect parameter arrays
     mu_arr = np.array([p['mu'] for p in training_set], dtype=np.float32)
     nu_arr = np.array([p['nu'] for p in training_set], dtype=np.float32)
-
-    # Solve all stationary samples; make both a shifted solution_set for POD and a raw array for saving
-    stat_mu = np.array([p['mu'] for p in training_set], dtype=np.float32)
-    stat_nu = np.array([p['nu'] for p in training_set], dtype=np.float32)
-
-    # Create an empty list to hold the training data
-    solution_set = fom.solution_space.empty()
 
     # Enforce Dirichlet shift
     u_t_0 = fom.solve(parameter_space.sample_uniformly(1)[0])
@@ -268,8 +248,11 @@ def main():
                 sv = np.pad(sv, (0, P.N_A - sv.shape[0]))
             np.maximum(sigma_mu_t_sup, sv, out=sigma_mu_t_sup)
 
+    sigma_global = np.asarray(singular_values, dtype=np.float32)
+    if sigma_global.shape[0] < P.N_A:
+        sigma_global = np.pad(sigma_global, (0, P.N_A - sigma_global.shape[0]))
     np.savez_compressed(tdir / f'pod_singular_values_{example_name}.npz',
-                        sigma_global_NA=singular_values.astype(np.float32),
+                        sigma_global_NA=sigma_global,
                         sigma_mu_t_sup=sigma_mu_t_sup.astype(np.float32))
 
     '''

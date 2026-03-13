@@ -2032,15 +2032,17 @@ EX04_PRESETS: Dict[str, Dict[str, Any]] = {
 @dataclass
 class Ex04Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
-    N_A: int = 101
-    N: int = 4
+    N_A: int = 32
+    N: int = 8
     N_prime: int = 2
-    n: int = 4
-    Nt: int = 40
-    Ns: int = 4**5
+    n: int = 2
+    Nt: int = 20
+    Ns: int = 4**4
     T: float = 8.0
     dt: float = T/Nt,
     grid_size: int = 40
+    parameter_mu_dim: int = 2
+    parameter_nu_dim: int = 2
 
     # -------- innerDOD ------------------------------------------------------
     preprocess_dim: int = 2
@@ -2076,11 +2078,11 @@ class Ex04Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 200
+    generalepochs: int = 2
     generalrestarts: int = 1
     generalpatience: int = 40
 
-    dod_epochs: int = 300
+    dod_epochs: int = 3
     dod_restarts: int = 1
     dod_patience: int = 40
 
@@ -2097,7 +2099,7 @@ class Ex04Parameters:
     def assert_consistent(self) -> None:
         if not (self.N_A >= self.N >= self.n > 0):
             raise ValueError(f"Require N_A >= N >= n > 0, got N_A={self.N_A}, N={self.N}, n={self.n}")
-        if self.N_prime <= 0 or self.Nt <= 0 or self.diameter <= 0:
+        if self.N_prime <= 0 or self.Nt <= 0:
             raise ValueError("N_prime, Nt, diameter must be positive")
         for lst_name in [
             "dod_structure", "df_layers", "dod_dl_df_layers",
