@@ -112,8 +112,8 @@ def main():
 
     # Define the parameter space with ranges for 'mu' and 'nu'
     parameter_space = fom.parameters.space({
-        'mu': (0.2, 0.4),
-        'nu': (0.2, 0.6)
+        'mu': (0., 1.),
+        'nu': (0.4, 0.6)
     })
 
     # Generate training and validation sets
