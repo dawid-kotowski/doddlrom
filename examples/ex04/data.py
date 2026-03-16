@@ -63,7 +63,7 @@ def _save_norm(example_name: str, tag: str, mu: np.ndarray, nu: np.ndarray, sol:
         mu_min=mu_min, mu_max=mu_max, nu_min=nu_min, nu_max=nu_max,
         sol_min=sol_min, sol_max=sol_max
     )
-    
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--N', type=int, default=None)
@@ -93,15 +93,17 @@ def main():
         "grid.yasp_y": P.grid_size,
         "time.time": 0.0,
         "time.dt": P.dt,
-        "time.solverSteps": 0.01,
+        "time.solverSteps": 0.005,
         "time.T": P.T,
         "problem.eta": 0.2,
-        "problem.inflowVelocity" : 1.0,
+        "problem.inflowVelocity" : 10.0,
         "problem.non-parametric.openingHeight": 0.3,
+        "problem.non-parametric.minPermeability": 0.05,
+        "problem.non-parametric.coatingPermeability": 0.2,
         "problem.parametric.coatingHeight": 0.0,
-        "problem.parametric.minPermeability": 0.0,
-        "problem.parametric.coatingPermeability": 0.0,
         "problem.parametric.inflowAngle": 0.0,
+        "problem.parametric.minReaction": 0.0,
+        "problem.parametric.coatingReaction": 0.0,
         "darcy.reduction": 1e-12,
         "visualization.subsampling": 8,
         "visualization.subsamplingVelocity": 5,
@@ -110,10 +112,10 @@ def main():
 
     fom = discretize(default_config)
 
-    # Define the parameter space with ranges for 'mu' and 'nu'
+    # Define the parameter space (actual definition is in cpp Backend of ParameterParser)
     parameter_space = fom.parameters.space({
         'mu': (0., 1.),
-        'nu': (0.4, 0.6)
+        'nu': (0., 1.)
     })
 
     # Generate training and validation sets

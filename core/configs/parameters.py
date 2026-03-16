@@ -2119,14 +2119,14 @@ EX04_PRESETS: Dict[str, Dict[str, Any]] = {
 @dataclass
 class Ex04Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
-    N_A: int = 8
-    N: int = 4
+    N_A: int = 16
+    N: int = 8
     N_prime: int = 2
     n: int = 2
     Nt: int = 20
     Ns: int = 4**4
-    T: float = 8.0
-    dt: float = T/Nt,
+    T: float = 5.0
+    dt: float = T / Nt
     grid_size: int = 60
     parameter_mu_dim: int = 2
     parameter_nu_dim: int = 2

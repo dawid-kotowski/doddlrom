@@ -152,8 +152,8 @@ class DuneDarcyFlowModel(Model):
             [
                 float(config.get("problem.parametric.coatingHeight", 0.0)),
                 float(config.get("problem.parametric.inflowAngle", 0.0)),
-                float(config.get("problem.parametric.minPermeability", 0.0)),
-                float(config.get("problem.parametric.coatingPermeability", 0.0)),
+                float(config.get("problem.parametric.minReaction", 0.0)),
+                float(config.get("problem.parametric.coatingReaction", 0.0)),
             ],
             dtype=np.float64,
         )
