@@ -54,7 +54,7 @@ def train_innerdod(P, example_name, trainer_overrides, bs):
     model = rom.innerDOD(**P.make_innerDOD_kwargs())                # (N_A -> N')
     trainer = rom.innerDODTrainer(P.Nt, model, tv,
                                   trainer_overrides["epochs"], trainer_overrides["restarts"],
-                                  learning_rate=5e-3, batch_size=bs, patience=trainer_overrides["patience"])
+                                  learning_rate=1e-3, batch_size=bs, patience=trainer_overrides["patience"])
     best = trainer.train()
     torch.save(model.state_dict(), state_dicts_path(example_name) / f'DOD_Module.pth')
     return best
@@ -68,7 +68,7 @@ def train_doddfnn(P, example_name, trainer_overrides, bs):
     coeff = rom.DFNN(**P.make_dod_dfnn_DFNN_kwargs())               # (p+q+1 -> N')
     trainer = rom.DFNNTrainer(P.Nt, P.N_A, inner, coeff, tv,
                               trainer_overrides["epochs"], trainer_overrides["restarts"],
-                              learning_rate=3e-3, batch_size=bs, patience=trainer_overrides["patience"])
+                              learning_rate=1e-3, batch_size=bs, patience=trainer_overrides["patience"])
     best = trainer.train()
     state_dict_path = state_dicts_path(example_name) / 'DODFNN_Module.pth'
     torch.save(coeff.state_dict(), state_dict_path)
