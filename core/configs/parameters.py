@@ -2181,13 +2181,17 @@ class Ex04Parameters:
         for k, v in preset.items():
             if hasattr(self, k):
                 setattr(self, k, v)
+        # Keep dt consistent with (T, Nt), including preset overrides.
+        self.dt = self.T / self.Nt
 
     # ----------------- Sanity checks ----------------------------------------
     def assert_consistent(self) -> None:
         if not (self.N_A >= self.N >= self.n > 0):
             raise ValueError(f"Require N_A >= N >= n > 0, got N_A={self.N_A}, N={self.N}, n={self.n}")
-        if self.N_prime <= 0 or self.Nt <= 0:
+        if self.N_prime <= 0 or self.Nt <= 0 or self.T <= 0:
             raise ValueError("N_prime, Nt, diameter must be positive")
+        # Re-sync dt in case Nt/T were changed after construction.
+        self.dt = self.T / self.Nt
         for lst_name in [
             "dod_structure", "df_layers", "dod_dl_df_layers",
             "pod_df_layers", "stat_dod_structure", "stat_phi_n_structure"
