@@ -2119,13 +2119,13 @@ EX04_PRESETS: Dict[str, Dict[str, Any]] = {
 @dataclass
 class Ex04Parameters:
     # -------- Fixed example sizes (problem-level) ----------------------------
-    N_A: int = 16
-    N: int = 8
+    N_A: int = 10
+    N: int = 4
     N_prime: int = 2
     n: int = 2
-    Nt: int = 20
+    Nt: int = 10
     Ns: int = 4**4
-    T: float = 5.0
+    T: float = 2.0
     dt: float = T / Nt
     grid_size: int = 60
     parameter_mu_dim: int = 2
@@ -2165,13 +2165,13 @@ class Ex04Parameters:
     stat_phi_n_structure: List[int] = field(default_factory=lambda: [16, 8])
 
     # -------- Training defaults ---------------------------------------------
-    generalepochs: int = 300
-    generalrestarts: int = 2
-    generalpatience: int = 10
+    generalepochs: int = 200
+    generalrestarts: int = 5
+    generalpatience: int = 20
 
-    dod_epochs: int = 600
-    dod_restarts: int = 2
-    dod_patience: int = 10
+    dod_epochs: int = 400
+    dod_restarts: int = 5
+    dod_patience: int = 20
 
     # -------- Meta -----------------------------------------------------------
     profile: str = "baseline"

@@ -94,6 +94,20 @@ def plot_shared_params_vs_error(
     plt.figure()
     slopes: dict[str, float] = {}
 
+    def robust_loglog_fit(lx: np.ndarray, ly: np.ndarray):
+        n = lx.size
+        if n < 2:
+            return np.nan, np.nan
+        i, j = np.triu_indices(n, k=1)
+        dx = lx[j] - lx[i]
+        valid = dx != 0.0
+        if not np.any(valid):
+            return np.nan, np.nan
+        pair_slopes = (ly[j][valid] - ly[i][valid]) / dx[valid]
+        slope = float(np.median(pair_slopes))
+        intercept = float(np.median(ly - slope * lx))
+        return slope, intercept
+
     for i, model in enumerate(models):
         sub = df[df["rom"] == model]
         x = pd.to_numeric(sub["rel_L2G"], errors="coerce").to_numpy(dtype=float)
@@ -105,7 +119,9 @@ def plot_shared_params_vs_error(
             continue
 
         lx, ly = np.log(x), np.log(y)
-        slope, intercept = np.polyfit(lx, ly, 1)
+        slope, intercept = robust_loglog_fit(lx, ly)
+        if not (np.isfinite(slope) and np.isfinite(intercept)):
+            slope, intercept = np.polyfit(lx, ly, 1)
         slopes[model] = float(slope)
         yhat = intercept + slope * lx
         r2 = 1 - np.sum((ly - yhat) ** 2) / np.sum((ly - ly.mean()) ** 2) if show_r2 and lx.size > 1 else None
