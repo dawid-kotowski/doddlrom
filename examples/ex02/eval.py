@@ -8,7 +8,7 @@ from utils.visualizer import vis_dl_diff, vis_dod_diff, vis_colora
 import numpy as np
 import torch
 
-Nsample = 40
+Nsample = 100
 
 #region --- Configure this run ------------------------------------------------------
 example_name = 'ex02'
@@ -161,24 +161,12 @@ if (sd_dir / "POD_DL_ROM_Module.pth").exists():
 else:
     raise FileNotFoundError("POD-DL-ROM weights not found.")
 
-# CoLoRA (stat -> N, CoLoRA N -> N, POD N -> N_h)
-stat_dod = rom.statDOD(**P.make_statDOD_kwargs()).to(device)
-stat_coeff = rom.statHadamardNN(**P.make_statHadamard_kwargs()).to(device)
-colora_coeff = rom.CoLoRA(**P.make_CoLoRA_kwargs()).to(device)
-if (sd_dir / "stat_DOD_Module.pth").exists():
-    stat_dod = load_sd(stat_dod, sd_dir / "stat_DOD_Module.pth")
-if (sd_dir / "stat_CoeffDOD_Module.pth").exists():
-    stat_coeff = load_sd(stat_coeff, sd_dir  / "stat_CoeffDOD_Module.pth")
-if (sd_dir / "CoLoRA_Module.pth").exists():
-    colora_coeff = load_sd(colora_coeff, sd_dir / "CoLoRA_Module.pth")
-
 torch.set_grad_enabled(False)
 
 models = {
     "DOD+DFNN": {"inner": innerDOD_model, "coeff": dfnn_nprime},
     "DOD-DL-ROM": {"inner": innerDOD_model, "coeff": dod_coeff, "enc": dod_enc, "dec": dod_dec},
-    "POD-DL-ROM": {"coeff": pod_coeff, "enc": pod_enc, "dec": pod_dec},
-    "CoLoRA": {"inner": stat_dod, "inner_coeff": stat_coeff, "coeff": colora_coeff}
+    "POD-DL-ROM": {"coeff": pod_coeff, "enc": pod_enc, "dec": pod_dec}
 }
 fw = rom.forward_wrappers(P, device, models, example_name)
 
@@ -190,10 +178,6 @@ _, dod_dl_residual, dod_dl_sol = rom.evaluate_rom_forward(
                     'DOD-DL-ROM', fw['DOD-DL-ROM'], (mu_i, nu_i), sol, G
                 )
 dod_dl_sol_vec = fom.solution_space.from_numpy(dod_dl_sol)
-_, colora_residual, colora_sol = rom.evaluate_rom_forward(
-                    'CoLoRA', fw['CoLoRA'], (mu_i, nu_i), sol, G
-                )
-colora_sol_vec = fom.solution_space.from_numpy(colora_sol)
 _, dod_dfnn_residual, dod_dfnn_sol = rom.evaluate_rom_forward(
                     'DOD+DFNN', fw['DOD+DFNN'], (mu_i, nu_i), sol, G
                 )

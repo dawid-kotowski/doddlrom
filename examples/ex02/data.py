@@ -146,18 +146,8 @@ def main():
     # Discretize the problem
     fom, fom_data = discretize_instationary_cg(problem, diameter=P.diameter, nt=P.Nt)
 
-    # Discretize the stationary problem
-    stat_fom, stat_fom_data = discretize_stationary_cg(stationary_problem, diameter=P.diameter)
-
     # Define the parameter space with ranges for 'mu' and 'nu'
     parameter_space = fom.parameters.space({
-        'mu': (0.3, 0.7),
-        'nu': (0.002, 0.005),
-        't':  (0.0, P.T)
-    })
-
-    # --- stationary FOM & shift ---
-    stat_parameter_space = stat_fom.parameters.space({
         'mu': (0.3, 0.7),
         'nu': (0.002, 0.005),
         't':  (0.0, P.T)
@@ -175,20 +165,14 @@ def main():
     mu_arr = np.array([p['mu'] for p in training_set], dtype=np.float32)
     nu_arr = np.array([p['nu'] for p in training_set], dtype=np.float32)
 
-    # Solve all stationary samples; make both a shifted solution_set for POD and a raw array for saving
-    stat_mu = np.array([p['mu'] for p in training_set], dtype=np.float32)
-    stat_nu = np.array([p['nu'] for p in training_set], dtype=np.float32)
-
     # Enforce Dirichlet shift
     u_t_0 = fom.solve(parameter_space.sample_uniformly(1)[0])
     u_t_0_np = u_t_0.to_numpy().astype(np.float32)
-    u_0 = stat_fom.solve(stat_parameter_space.sample_uniformly(1)[0])
-    u_0_np = u_0.to_numpy().astype(np.float32)
 
     tdir = training_data_path(example_name)
 
-    np.savez_compressed(tdir / f"dirichlet_shift_{example_name}.npz", 
-                        u0=u_0_np, ut0 = u_t_0_np)
+    np.savez_compressed(tdir / f"dirichlet_shift_{example_name}.npz",
+                        ut0 = u_t_0_np)
 
     '''
     --------------------------

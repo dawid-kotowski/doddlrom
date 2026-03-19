@@ -139,7 +139,7 @@ def main():
     parser.add_argument('--profiles', nargs='+', default=['test1', 'test2', 'test3', 'test4', 'test5','test6', 'test7', 'test8', 'test9', 'test10','test11', 'test12', 'test13', 'test14', 'test15','test16', 'test17', 'test18', 'test19', 'test20'])
     parser.add_argument('--epochs', type=int, default=None)
     parser.add_argument('--restarts', type=int, default=None)
-    parser.add_argument('--batch-size', type=int, default=32)
+    parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--eval-samples', type=int, default=50)
     parser.add_argument('--N', type=int, default=None)
     parser.add_argument('--N-prime', type=int, default=None)
