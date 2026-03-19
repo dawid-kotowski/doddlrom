@@ -156,8 +156,12 @@ def main():
     P.assert_consistent()
     td = P.trainer_defaults()
     tddod = P.dod_trainer_defaults()
-    if args.epochs is not None:   td["epochs"]   = args.epochs
-    if args.restarts is not None: td["restarts"] = args.restarts
+    if args.epochs is not None:
+        td["epochs"] = args.epochs
+        tddod["epochs"] = args.epochs
+    if args.restarts is not None:
+        td["restarts"] = args.restarts
+        tddod["restarts"] = args.restarts
 
     best_inner   = train_innerdod(P, args.example, tddod, bs)
     best_doddfnn = train_doddfnn(P, args.example, td, bs)

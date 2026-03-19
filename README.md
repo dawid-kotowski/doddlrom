@@ -1,169 +1,249 @@
-# DOD-DL-ROM: Deep Orthogonal Decomposition Deep Learning ROMs
+# DOD-DL-ROM
 
-**Deep Learning-Based Reduced Order Modeling Framework for Parametric PDEs**
+Deep-learning reduced-order models for parametric, time-dependent PDEs with dynamic orthogonal decompositions.
 
----
+## What This Repository Contains
+
+This repository provides:
+
+- Data generation pipelines (`examples/ex0*/data.py`) for four PDE settings.
+- Training pipelines for several ROM architectures (`examples/learning.py`, `examples/test.py`).
+- Evaluation scripts (`examples/ex0*/eval.py`) and post-processing (`examples/analysis.py`).
+- Core model implementations in [`core/reduced_order_models.py`](core/reduced_order_models.py).
 
 ## Repository Structure
 
-```
+```text
 doddlrom/
-├── examples/                # Example problems and their data/training outputs
-│   ├── ex01/ ...            # Example 1 (e.g. 2D inviscid Burgers equation)
-│   ├── ex02/ ...            # Example 2 (analogous structure to ex01)
-│   └── ex03/ ...            # Example 3 (analogous structure to ex01)
-├── core/                    # Core library code for ROM models
-│   ├── reduced_order_models.py    # PyTorch architectures and trainer classes 
-│   └── configs/parameters.py     # All hyperparameters for each example
-├── utils/                   # Utility and convenience scripts
-│   ├── send_code.sh         # Syncs the code to a remote server (HPC) via SSH
-│   └── fetch_work.sh        # Fetches result files from remote$WORK directory
-├── environment.yml          # Conda environment specification (dependencies)
-└── setup.py                 # Installation script (pip install configuration)
+├── core/
+│   ├── reduced_order_models.py      # ROM architectures + trainers + forward wrappers
+│   ├── configs/parameters.py         # Example-specific dimensions/hyperparameters
+│   ├── analytic/                     # projection, decomposition, error utilities
+│   └── bindings/                     # DUNE/Python bridge used by ex04
+├── examples/
+│   ├── ex01/                         # 2D advection-diffusion-reaction (stationary+instationary)
+│   ├── ex02/                         # 2D nonlinear advection-diffusion with parametric source
+│   ├── ex03/                         # 1D heat equation with parametric step initial condition
+│   ├── ex04/                         # DUNE DarcyFlow transport example (bindings required)
+│   ├── learning.py                   # train baseline ROMs for one example
+│   ├── test.py                       # profile/sweep benchmarking across ROMs
+│   └── analysis.py                   # plots from benchmark CSV outputs
+├── utils/
+│   ├── paths.py                      # WORK-based output locations
+│   └── visualizer.py                 # plotting helpers used by eval scripts
+├── requirements.lock.txt
+└── setup.py
 ```
 
----
+## Installation
 
-## Installation Guide
+### 1. Python environment
 
-To set up the Python environment, use the provided Conda environment file:
+Recommended: Python `3.10+`.
 
-```
-conda env create -f environment.yml   # creates env (with PyTorch, PyMOR, etc.)
-conda activate doddlrom              # activate the new environment
-```
-
-This will install all required packages (Python ≥3.8, PyTorch ≥2.0, PyMOR ≥2023.1, NumPy, tqdm, etc.).  
-
-**Working Directory ($WORK):**  
-The code expects an environment variable `$WORK` pointing to a directory where large datasets and results will be stored.  
-Before running experiments, export `WORK` to a suitable path (if not set, it defaults to `~/palma_work`).  
-All training data, model checkpoints, and outputs will be saved under `$WORK` in subfolders for each example.
-
-**Utility Scripts:**  
-For cluster users, the `utils/send_code.sh` and `utils/fetch_work.sh` scripts simplify running experiments remotely.  
-Edit the SSH settings at the top of these scripts, then use `send_code.sh` to sync the repository to the remote server and `fetch_work.sh` to download the `$WORK/files` results back to your local `$WORK` directory.
-
----
-
-## Model Descriptions
-
-This repository implements several deep learning ROM architectures for parametric time-dependent PDEs.  
-Each model approximates the high-fidelity solution $u_h(t;\mu,\nu)\in \mathbb{R}^{N_h}$ (with $\mu$ a geometric parameter,$\nu$ a physical parameter, and $t$ time) by a **low-dimensional** representation and reconstruction.
-
-### POD-DL-ROM *(Fresca et al., 2020)*
-Uses a Proper Orthogonal Decomposition matrix $A\in\mathbb{R}^{N_h\times N_A}$ to reduce the full order dimension to $N_A \ll N_h$.  
-An Autoencoder then compresses this POD space to a latent dimension $n$ (Encoder: $N_A \to n$, Decoder: $n \to N_A$), and a feed-forward network $\phi_n$ maps $(\mu,\nu,t)$ to the latent coordinates.  
-The resulting approximation is:
-
-$$
-\hat{u}_h(\mu,\nu,t) \approx A (\psi_{N_A}\circ \phi_n)(\mu,\nu,t)
-$$
-
-where $\psi_{N_A}$ is the decoder.  
-This is essentially the DL-ROM approach of Fresca & Manzoni, combining POD with a deep neural network latent model.
-
----
-
-### DOD-DL-ROM
-Extends the above by learning a **Deep Orthogonal Decomposition** (DOD) basis that varies with $\mu$ and $t$.  
-A neural network $\Phi_{\tilde V}$ produces a time- and parameter-dependent orthonormal basis $V(\mu,t)\in\mathbb{R}^{N_A\times N'}$ (with $N' \ll N_A$).  
-An Autoencoder (Encoder: $N' \to n$, Decoder: $n \to N'$) and a latent coefficient network $\phi_n$ (input $(\mu,\nu,t)$, output $\mathbb{R}^n$) are trained in series.  
-The full-order approximation is:
-
-$$
-\hat{u}_h(\mu,\nu,t) \approx V(\mu,t) \hat{q}_D(\mu,\nu,t),
-$$
-
-where 
-
-$$
-\hat{q}_D = (\psi_{N'} \circ \phi_n)(\mu, \nu, t)
-$$ 
-
-are the decoded coefficients in the time-varying basis.  
-This approach learns a **dynamic** reduced basis along with the parametric latent evolution, providing greater expressivity at the cost of a more complex training procedure.
-
----
-
-### DOD+DFNN
-A simpler variant of DOD-DL-ROM that **omits the autoencoder**.  
-It uses the same learned DOD basis $V(\mu,t)$ of dimension $N'$, but replaces the autoencoder and latent model with a single deep feedforward network $\Phi_{N'}$ that maps $(\mu,\nu,t)$ directly to an $N'$-dimensional coefficient vector.  
-The approximation is:
-
-$$
-\hat{u}_h(\mu,\nu,t) \approx V(\mu,t) \Phi_{N'}(\mu,\nu,t)
-$$
-
-This model (akin to a baseline in the literature) is less expressive than DOD-DL-ROM but easier to train, since it relies on one network to predict coefficients in the adaptive basis (compare, for example, to the approach in Franco *et al.*, 2024).
-
----
-
-### CoLoRA *(Berman & Peherstorfer, 2024)*
-A hybrid approach that leverages a **stationary solution** as a reference.  
-First, a *stationary* DOD basis $V_{\text{stat}}(\mu)$ (time-independent) is learned for the steady-state of the system, and a corresponding coefficient network is trained for the stationary solution.  
-Then a specialized CoLoRA network $\Phi_\alpha$ (a deep feedforward architecture with custom low-rank layers) maps the physical parameters, time, and the pre-computed stationary solution into the solution space.  
-In forward inference, this model produces the full state as:
-
-$$
-\hat{u}_h(\mu,\nu,t) \approx A \Phi_\alpha \big(\nu,\,t,\,\hat{u}^{\,\text{stat}}_{\mu,\nu}\big),
-$$
-
-where $A$ is again a POD basis for the spatial field and $\hat{u}^{\,\text{stat}}_{\mu,\nu}$ is the pre-reduced stationary solution.  
-The CoLoRA-inspired model thus adjusts a low-rank stationary solution to predict the time-evolving solution.  
-*(This architecture is only meaningful when the problem has a well-defined stationary/steady-state component.)*
-
----
-
-## Training Pipeline
-
-A typical workflow to train and evaluate the ROMs on a given example (say **Example 1: inviscid Burgers** problem) is as follows:
-
-### 1. Data Generation
-Solve the full-order model and generate training snapshots using PyMOR.  
-Example for 400 parameter samples and 30 time steps:
-
-```
-python examples/ex01/data.py --Ns 400 --Nt 30
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e .
 ```
 
-This produces compressed NumPy datasets in `examples/ex01/training_data/` (including full-order solutions, POD basis, normalization constants, etc.).
+This installs direct runtime dependencies used by the project scripts (`torch`, `pymor`, `numpy`, `scipy`, `matplotlib`, `pandas`, `meshio`, `tqdm`).
 
-### 2. Model Training
-Train the ROM networks on the generated dataset:
+### 2. Set runtime paths
 
-```
-python examples/learning.py --example ex01_inviscid_burgers --epochs 1000 --restarts 5 --with-stationary
-```
+The project writes/reads data from `$WORK`. Always set it explicitly:
 
-This trains each model (POD-DL-ROM, DOD+DFNN, DOD-DL-ROM, and CoLoRA if `--with-stationary` is set)  
-and saves weights under `examples/ex01/state_dicts/`.
-
-### 3. Testing and Evaluation
-
-```
-python examples/test.py --example ex01_inviscid_burgers
+```bash
+export WORK=/absolute/path/to/your/workdir
 ```
 
-Evaluates each ROM type, producing error CSVs and metrics in `examples/ex01/benchmarks/`.
+Expected layout under `$WORK`:
 
-### 4. Analysis and Plots
+- `$WORK/training_data/<example>`
+- `$WORK/state_dicts/<example>`
+- `$WORK/benchmarks/<example>`
 
+For headless servers, also set:
+
+```bash
+export MPLCONFIGDIR=/tmp/mpl
 ```
-python examples/analysis.py --example ex01_inviscid_burgers
+
+### 3. System tools
+
+- `ex01`/`ex01 eval` use Gmsh via pyMOR meshing. Install `gmsh` system-wide.
+- `ex04` requires additional DUNE-based bindings (see below).
+
+## ex04: DUNE DarcyFlow Bindings (Required Only for ex04 Data/Eval)
+
+`ex04` imports `dune.*` and `dune.darcyflow._darcyflow`. If this binding is missing, `ex04/eval.py` and `ex04/data.py` will fail with `ModuleNotFoundError: No module named 'dune'`.
+
+The bindings come from:
+
+- <https://github.com/dawid-kotowski/darcyflow>
+
+From that repository README:
+
+- `cmake >= 3.16` is required.
+- Build is driven by `dunecontrol all` (optionally with `--opts=<opts-file>` for compiler/CMake flags).
+
+Minimal flow:
+
+```bash
+git clone https://github.com/dawid-kotowski/darcyflow.git
+cd darcyflow
+# configure your DUNE opts if needed
+# then build
+dunecontrol all
 ```
 
-Generates error plots, complexity charts, and singular value decay visualizations  
-in `examples/ex01/benchmarks/analysis/`.
+After build, activate the generated Python-path environment from that build (or manually export the build Python paths), then verify:
 
-> **Note:** Replace `ex01_inviscid_burgers` with the desired example name (`ex02`, `ex03`, etc.).  
-> Ensure `$WORK` is set to the desired storage path before running.
+```bash
+python -c "from dune.darcyflow import _darcyflow; print('dune-darcyflow OK')"
+```
 
----
+## ROM Formulation (Aligned with `core/reduced_order_models.py`)
+
+Let the high-fidelity state be `u_h(t; mu, nu) in R^{N_h}`.
+
+The code stores POD ambient bases:
+
+- `A in R^{N_h x N_A}` for DOD-based models.
+- `A_P in R^{N_h x N}` for POD-based models.
+
+A Dirichlet/initial shift `u_{t,0}` is loaded from `dirichlet_shift_<example>.npz`, and predictions are lifted back to full order as:
+
+- `u_hat = u_{t,0} + A * y` (DOD path), or
+- `u_hat = u_{t,0} + A_P * y` (POD path).
+
+Implemented ROMs:
+
+1. **innerDOD**
+   - Learns a dynamic basis `V(mu, t) in R^{N_A x N'}` with orthonormalized columns (`Orth` block).
+
+2. **DOD+DFNN**
+   - Coefficient net `phi_{N'}(mu, nu, t)` predicts `N'` coefficients directly.
+   - Reduced state: `y = V(mu,t) * phi_{N'}(mu,nu,t)`.
+
+3. **DOD-DL-ROM**
+   - Coefficient net predicts latent `n` vector, decoder maps `n -> N'`.
+   - Reduced state: `y = V(mu,t) * decoder(phi_n(mu,nu,t))`.
+
+4. **POD-DL-ROM**
+   - Coefficient net predicts latent `n`, decoder maps `n -> N` in fixed POD space.
+   - Reduced state: `y = decoder(phi_n(mu,nu,t))`.
+
+5. **CoLoRA** (only meaningful for examples with stationary data)
+   - Uses stationary reduced representation plus layered low-rank updates (`CoLoRA` module).
+   - In this repository workflow, this is available for examples where reduced stationary data is generated (notably `ex01`, and `ex03` if generated).
+
+## Mathematical Example Summary
+
+### ex01 (2D advection-diffusion-reaction on polygon with holes)
+
+- Domain: non-convex polygon with two circular holes.
+- Parameters: `mu` (advection angle), `nu` (diffusion weight).
+- Instationary equation (conceptually):
+  - `u_t - div(kappa(x,nu) grad u) + b(mu) · grad u + c u = 0`
+  - with mixed boundary treatment and Dirichlet shift handling.
+
+### ex02 (2D nonlinear advection-diffusion with parametric source)
+
+- Domain: unit rectangle.
+- Parameters: `mu=(c_x,c_y,theta_0)` and scalar `nu`.
+- Time-varying advection direction from `theta(t)=theta_0 + 0.25 sin(2 pi t)`.
+- RHS: weighted Gaussian mixture with `nu`-dependent amplitudes.
+
+### ex03 (1D heat equation with parametric initial front)
+
+- Domain: interval `[0,1]`, homogeneous Dirichlet boundaries.
+- Parameters: front center `mu`, diffusivity `nu`.
+- PDE: `u_t - nu u_xx = 0`.
+- Initial condition: smoothed step `0.5*(1+tanh((x-mu)/eps))`.
+
+### ex04 (DUNE DarcyFlow transport model)
+
+- Full-order model comes from the external `dune-darcyflow` binding.
+- The local bridge maps parameter blocks as `mu` and `nu` vectors in the DUNE solver interface.
+- Uses `l2_product` Gram matrix (not `h1_0_semi_product`).
+
+## Training and Evaluation Pipeline
+
+Run all commands from the repository root (`doddlrom/`) with the virtualenv active.
+
+### A. Generate data
+
+```bash
+python examples/ex01/data.py
+python examples/ex02/data.py
+python examples/ex03/data.py
+python examples/ex04/data.py   # requires dune-darcyflow bindings
+```
+
+Useful overrides:
+
+- `--Ns` number of parameter samples
+- `--Nt` number of time steps
+- `--N` POD reduction size (where applicable)
+
+### B. Train baseline models (`learning.py`)
+
+```bash
+python examples/learning.py --example ex01 --epochs 200 --restarts 3
+python examples/learning.py --example ex02 --epochs 200 --restarts 1
+python examples/learning.py --example ex03 --epochs 200 --restarts 1
+python examples/learning.py --example ex04 --epochs 200 --restarts 5
+```
+
+Notes:
+
+- `--epochs` and `--restarts` now apply to both innerDOD and downstream ROM stages.
+- Add `--with-stationary` only when stationary reduced data exists (e.g., `ex01`; `ex03` after generating stationary datasets).
+
+### C. Evaluate trained models (`eval.py`)
+
+```bash
+python examples/ex01/eval.py
+python examples/ex02/eval.py
+python examples/ex03/eval.py
+python examples/ex04/eval.py   # requires dune-darcyflow bindings
+```
+
+- Scripts load weights from `$WORK/state_dicts/<example>`.
+- If Qt is unavailable, visualization is skipped and metric/csv output continues.
+
+### D. Run ROM profile sweeps (`test.py`)
+
+```bash
+python examples/test.py --example ex01
+python examples/test.py --example ex02
+python examples/test.py --example ex03
+python examples/test.py --example ex04
+```
+
+This appends to `$WORK/benchmarks/<example>/rom_sweep.csv`.
+
+### E. Generate analysis plots
+
+```bash
+python examples/analysis.py --example ex01
+python examples/analysis.py --example ex02
+python examples/analysis.py --example ex03
+python examples/analysis.py --example ex04
+```
+
+## Practical Notes
+
+- `analysis.py` requires `rom_sweep.csv` and error decomposition CSVs; run `test.py` and `eval.py` first.
+- `ex03/eval.py` requires ex03 training data and weights; if they are not in `$WORK`, it will fail with missing file errors.
+- `ex04/learning.py` can run from precomputed reduced data without DUNE bindings, but `ex04/data.py` and `ex04/eval.py` require the bindings.
 
 ## Authors and Credit
 
-This project was developed by **Dawid Kotowski** as part of his M.Sc. thesis under the supervision of **Prof. Dr. Mario Ohlberger** at the University of Münster.  
+- **Dawid Kotowski** (project author, MSc thesis context at University of Münster).
+- Supervision context: **Prof. Dr. Mario Ohlberger**.
+- Model lineage and inspiration include DL-ROM/POD-DL-ROM and continuous low-rank adaptation literature.
+- `ex04` full-order backend credit: DUNE ecosystem and `darcyflow` binding repository.
 
-The code and methodologies build upon recent research in machine-learning ROMs – notably the DL-ROM frameworks by *Fresca and Manzoni* and the continuous low-rank adaptation ideas by *Berman and Peherstorfer*.  
-Proper credit is due to these works, which inspired the models implemented here.

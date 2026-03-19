@@ -194,9 +194,12 @@ projector_check(training_data, G, example_name, device, 'DOD', innerDOD_model=in
 mu_list = mu_i.cpu().numpy().flatten().tolist()
 nu_list = nu_i.cpu().numpy().flatten().tolist()
 
-vis_dl_diff(fom, u_i, pod_dl_sol_vec, dod_dl_sol_vec, mu_list, nu_list)
-#vis_dod_diff(fom, u_i, dod_dfnn_sol_vec, dod_dl_sol_vec, mu_list, nu_list)
-#vis_colora(fom, u_i, colora_sol_vec, mu_list, nu_list)
+try:
+    vis_dl_diff(fom, u_i, pod_dl_sol_vec, dod_dl_sol_vec, mu_list, nu_list)
+    #vis_dod_diff(fom, u_i, dod_dfnn_sol_vec, dod_dl_sol_vec, mu_list, nu_list)
+    #vis_colora(fom, u_i, colora_sol_vec, mu_list, nu_list)
+except Exception as exc:
+    print(f"[visualization] skipped: {exc}")
 
 # --------- Evaluate Error --------------------------------------
 pod_split = rom.pod_dl_error_decomposition(

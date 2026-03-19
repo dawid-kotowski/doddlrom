@@ -248,15 +248,18 @@ dod_dfnn_sol_vec = fom.solution_space.from_numpy(dod_dfnn_sol)
 #endregion Load Modules
 
 # Visualize
-fom.visualize((u_i, dod_dfnn_sol_vec, u_i - dod_dfnn_sol_vec),
-                legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()}, ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                        'DOD+DFNN', f"Absolute error"))
-fom.visualize((u_i, pod_dl_sol_vec, u_i - pod_dl_sol_vec),
-                legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                        'POD-DL-ROM', f"Absolute error"))
-fom.visualize((u_i, dod_dl_sol_vec, u_i - dod_dl_sol_vec),
-                legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}', 
-                        'DOD-DL-ROM', f"Absolute error"))
+try:
+    fom.visualize((u_i, dod_dfnn_sol_vec, u_i - dod_dfnn_sol_vec),
+                    legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()}, ν = {nu_i.cpu().numpy().flatten().tolist()}',
+                            'DOD+DFNN', f"Absolute error"))
+    fom.visualize((u_i, pod_dl_sol_vec, u_i - pod_dl_sol_vec),
+                    legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}',
+                            'POD-DL-ROM', f"Absolute error"))
+    fom.visualize((u_i, dod_dl_sol_vec, u_i - dod_dl_sol_vec),
+                    legend=(f'FOM for μ = {mu_i.cpu().numpy().flatten().tolist()},  ν = {nu_i.cpu().numpy().flatten().tolist()}',
+                            'DOD-DL-ROM', f"Absolute error"))
+except Exception as exc:
+    print(f"[visualization] skipped: {exc}")
 
 # Evaluate Error
 pod_split = rom.pod_dl_error_decomposition(
