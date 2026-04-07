@@ -246,4 +246,3 @@ python examples/analysis.py --example ex04
 - Supervision context: **Prof. Dr. Mario Ohlberger**.
 - Model lineage and inspiration include DL-ROM/POD-DL-ROM and continuous low-rank adaptation literature.
 - `ex04` full-order backend credit: DUNE ecosystem and `darcyflow` binding repository.
-
