@@ -14,7 +14,35 @@ import numpy as np
 import pandas as pd
 from utils.paths import benchmarks_path, training_data_path
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 from pathlib import Path
+
+
+def preferred_serif_fonts():
+    available_fonts = {font.name for font in font_manager.fontManager.ttflist}
+    candidates = [
+        'Latin Modern Roman',
+        'LM Roman 10',
+        'CMU Serif',
+        'Computer Modern Roman',
+        'STIX Two Text',
+        'STIXGeneral',
+        'DejaVu Serif',
+    ]
+    selected = [font_name for font_name in candidates if font_name in available_fonts]
+    return selected if selected else ['serif']
+
+
+PLOT_TYPOGRAPHY_RC = {
+    'font.family': 'serif',
+    'font.serif': preferred_serif_fonts(),
+    'mathtext.fontset': 'cm',
+    'axes.unicode_minus': False,
+    'axes.labelsize': 17,
+    'xtick.labelsize': 15,
+    'ytick.labelsize': 15,
+    'legend.fontsize': 12,
+}
 
 def load_rom_sweep(example_name):
     path = Path( benchmarks_path(example_name) / f"rom_sweep.csv")
@@ -62,9 +90,8 @@ def plot_params_vs_error(df, example_name, outdir):
         plt.figure()
         plt.loglog(x, y, 'o', label=model)
         plt.loglog(x, fit_line, '-', label=f"Fit slope={slope:.2f}")
-        plt.xlabel(r"$\mathcal{E}_R$ (relative error)")
+        plt.xlabel(r"$\mathcal{E}_R$")
         plt.ylabel("# active weights")
-        plt.title(f"{model}: weights vs. error")
         plt.legend()
         plt.tight_layout()
         plt.savefig(outdir / f"{model}_params_vs_error.png")
@@ -138,9 +165,8 @@ def plot_shared_params_vs_error(
         label = f"{model} fit slope={slope:.2f}" + (f", $R^2$={r2:.2f}" if r2 is not None else "")
         plt.loglog(xs, ys, linestyle=ls, color=c, linewidth=2.0, label=label)
 
-    plt.xlabel(r"$\mathcal{E}_R$ (relative error)")
+    plt.xlabel(r"$\mathcal{E}_R$")
     plt.ylabel("# active weights")
-    plt.title("Comparison: weights vs. error")
     plt.grid(True, which="both", linestyle=":", alpha=0.4)
     plt.legend()
     plt.tight_layout()
@@ -496,11 +522,12 @@ def main():
 
     df = load_rom_sweep(example_name)
 
-    plot_params_vs_error(df, example_name, outdir)
-    plot_shared_params_vs_error(df, example_name, outdir)
-    plot_knw(example_name, outdir)
-    plot_sample_error_curves(example_name, outdir)
-    plot_error_decomposition_figures(example_name, outdir)
+    with plt.rc_context(PLOT_TYPOGRAPHY_RC):
+        plot_params_vs_error(df, example_name, outdir)
+        plot_shared_params_vs_error(df, example_name, outdir)
+        plot_knw(example_name, outdir)
+        plot_sample_error_curves(example_name, outdir)
+        plot_error_decomposition_figures(example_name, outdir)
 
 if __name__ == "__main__":
     main()
