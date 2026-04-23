@@ -88,8 +88,8 @@ def plot_params_vs_error(df, example_name, outdir):
         fit_line = np.exp(intercept) * x**slope
 
         plt.figure()
-        plt.loglog(x, y, 'o', label=model)
-        plt.loglog(x, fit_line, '-', label=f"Fit slope={slope:.2f}")
+        plt.loglog(x, y, 'o', color=plt.cm.cividis(0.15), label=model)
+        plt.loglog(x, fit_line, '-', color=plt.cm.cividis(0.85), label=f"Fit slope={slope:.2f}")
         plt.xlabel(r"$\mathcal{E}_R$")
         plt.ylabel("# active weights")
         plt.legend()
@@ -110,8 +110,7 @@ def plot_shared_params_vs_error(
     y = C * x^slope  ⇔  log y = log C + slope * log x
     """
     outdir.mkdir(parents=True, exist_ok=True)
-    colors = ["#4E79A7","#F28E2B","#E15759","#76B7B2",
-                "#59A14F","#EDC948","#B07AA1","#FF9DA7","#9C755F","#BAB0AC"]
+    colors = [plt.cm.cividis(0.20), plt.cm.cividis(0.52), plt.cm.cividis(0.84)]
 
     models = [m for m in df["rom"].dropna().unique()]
     if not models:
@@ -189,8 +188,7 @@ def plot_knw(
     path = Path(training_data_path(example_name) / f"pod_singular_values_{example_name}.npz")
     data = np.load(path)
 
-    colors = ["#4E79A7","#F28E2B","#E15759","#76B7B2",
-                "#59A14F","#EDC948","#B07AA1","#FF9DA7","#9C755F","#BAB0AC"]
+    colors = plt.cm.cividis(np.linspace(0.12, 0.92, 10))
 
     sigma_global = np.asarray(data['sigma_global_NA'], dtype=float).reshape(-1)
     sigma_sup = (np.asarray(data['sigma_mu_t_sup'], dtype=float).reshape(-1)
@@ -295,8 +293,7 @@ def plot_sample_error_curves(
     """
     outdir.mkdir(parents=True, exist_ok=True)
 
-    colors = ["#4E79A7","#F28E2B","#E15759","#76B7B2",
-                "#59A14F","#EDC948","#B07AA1","#FF9DA7","#9C755F","#BAB0AC"]
+    colors = plt.cm.cividis(np.linspace(0.12, 0.92, 10))
 
     def _fit_fixed_slope_powerlaw(Ns: np.ndarray, Es: np.ndarray, gamma: float):
         mask = (Ns > 0) & (Es > 0) & np.isfinite(Ns) & np.isfinite(Es)
@@ -481,14 +478,14 @@ def plot_error_decomposition_figures(
         plt.figure()
 
         # bottom band: E_NN
-        plt.fill_between(x, zeros, band1_top, facecolor="#8fb3ff", alpha=0.35, label=r"$\mathcal{E}_{\mathrm{NN}}$")
+        plt.fill_between(x, zeros, band1_top, facecolor=plt.cm.cividis(0.20), alpha=0.35, label=r"$\mathcal{E}_{\mathrm{NN}}$")
         # middle band: E_S
-        plt.fill_between(x, band1_top, band2_top, facecolor="#a8e6a1", alpha=0.35, label=r"$\mathcal{E}_S$")
+        plt.fill_between(x, band1_top, band2_top, facecolor=plt.cm.cividis(0.52), alpha=0.35, label=r"$\mathcal{E}_S$")
         # top band: E_POD or E_DOD
-        plt.fill_between(x, band2_top, band3_top, facecolor="#f4a3b4", alpha=0.35, label=P_label)
+        plt.fill_between(x, band2_top, band3_top, facecolor=plt.cm.cividis(0.84), alpha=0.35, label=P_label)
 
         # Lines
-        plt.plot(x, ER, color="red", linewidth=2.0, label=r"$\mathcal{E}_R$")
+        plt.plot(x, ER, color=plt.cm.cividis(0.96), linewidth=2.0, label=r"$\mathcal{E}_R$")
         plt.plot(x, UB, color="black", linestyle="--", linewidth=2.0, label=UB_label)
         plt.plot(x, LB, color="black", linestyle=":", linewidth=2.0, label=rf"$\frac{{m}}{{M}}\,${Pinfty_label}")
 
